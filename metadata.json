@@ -1,0 +1,6 @@
+{
+  "name": "Mingree - Android Influencer & Earning App",
+  "description": "Mobile Android app for Mingree influencer marketing and earnings platform with Creator & Sponsor dashboards, campaign management, wallet & UPI withdrawals, and APK export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
