@@ -133,7 +133,7 @@ export default function Earnings() {
 
   const handleWithdraw = () => {
     const amount = parseFloat(withdrawAmount);
-    if (!user || isNaN(amount) || amount <= 0) {
+    if (!activeUser || isNaN(amount) || amount <= 0) {
       toast.error("Please enter a valid amount");
       return;
     }
@@ -141,7 +141,7 @@ export default function Earnings() {
       toast.error(`Minimum withdrawal amount is ₹${MIN_WITHDRAWAL_AMOUNT}`);
       return;
     }
-    if (amount > parseFloat(user.balance)) {
+    if (amount > parseFloat(activeUser.balance || "0")) {
       toast.error("Insufficient balance");
       return;
     }
@@ -152,17 +152,23 @@ export default function Earnings() {
     withdrawMutation.mutate({ amount, bankAccountId: parseInt(selectedBankAccountId) });
   };
 
-  const currentBalance = activeUser ? parseFloat(activeUser.balance) : 0;
+  const currentBalance = activeUser ? parseFloat(activeUser.balance || "0") : 0;
   const canWithdraw = currentBalance >= MIN_WITHDRAWAL_AMOUNT && bankAccounts.length > 0;
   const pendingWithdrawal = withdrawalRequests.find(r => r.status === "pending");
 
-  const totalEarnings = transactions
-    .filter(t => t.type === 'credit')
-    .reduce((sum, t) => sum + parseFloat(t.net), 0);
+  const totalEarnings = (transactions || [])
+    .filter(t => t && t.type === 'credit')
+    .reduce((sum, t) => {
+      const val = parseFloat(t.net || "0");
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
 
-  const totalTaxes = transactions
-    .filter(t => t.type === 'credit')
-    .reduce((sum, t) => sum + parseFloat(t.tax), 0);
+  const totalTaxes = (transactions || [])
+    .filter(t => t && t.type === 'credit')
+    .reduce((sum, t) => {
+      const val = parseFloat(t.tax || "0");
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
 
 
   const getStatusBadge = (status: string) => {
@@ -199,9 +205,9 @@ export default function Earnings() {
       <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 dark:bg-zinc-950/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full shadow-xs">
         <div className="flex items-center gap-2 min-w-0">
           <h1 className="text-base font-bold text-foreground truncate">Earnings & Wallet</h1>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 whitespace-nowrap">₹{user.balance}</span>
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 whitespace-nowrap">{formatINR(activeUser.balance)}</span>
         </div>
-        {user && <NotificationDropdown userId={user.id} />}
+        {activeUser && <NotificationDropdown userId={activeUser.id} />}
       </header>
 
       <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
@@ -238,7 +244,7 @@ export default function Earnings() {
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
                       <Label>Available Balance</Label>
-                      <p className="text-2xl font-bold text-green-600" data-testid="text-available-balance">{formatINR(user.balance)}</p>
+                      <p className="text-2xl font-bold text-green-600" data-testid="text-available-balance">{formatINR(activeUser.balance)}</p>
                     </div>
                     
                     {bankAccounts.length === 0 && (
@@ -302,7 +308,7 @@ export default function Earnings() {
                             data-testid="input-withdraw-amount"
                           />
                           <p className="text-xs text-muted-foreground">
-                            Maximum: {formatINR(user.balance)}
+                            Maximum: {formatINR(activeUser.balance)}
                           </p>
                         </div>
                         
@@ -348,7 +354,7 @@ export default function Earnings() {
                 <div className="flex justify-between items-start">
                   <div>
                     <p className="text-sm font-medium text-green-700 dark:text-green-400">Wallet Balance</p>
-                    <h3 className="mt-2 text-3xl font-bold text-green-800 dark:text-green-300" data-testid="text-balance">{formatINR(user.balance)}</h3>
+                    <h3 className="mt-2 text-3xl font-bold text-green-800 dark:text-green-300" data-testid="text-balance">{formatINR(activeUser.balance)}</h3>
                   </div>
                   <div className="p-2 bg-green-100 dark:bg-green-900/50 rounded-full">
                     <WalletIcon className="h-6 w-6 text-green-700 dark:text-green-400" />

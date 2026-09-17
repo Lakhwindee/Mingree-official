@@ -187,7 +187,16 @@ export default function Offers() {
 
                           <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
                             <Clock className="h-3 w-3" />
-                            <span>Earned on {format(new Date(notification.createdAt), "MMM d, yyyy")}</span>
+                            <span>
+                              Earned on {(() => {
+                                try {
+                                  const d = new Date(notification.createdAt);
+                                  return isNaN(d.getTime()) ? "Recently" : format(d, "MMM d, yyyy");
+                                } catch {
+                                  return "Recently";
+                                }
+                              })()}
+                            </span>
                           </div>
                         </CardContent>
                       </Card>

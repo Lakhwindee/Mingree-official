@@ -12,8 +12,10 @@ import {
 
 const API_BASE = "/api";
 
-export function formatINR(amount: number | string): string {
-  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+export function formatINR(amount: number | string | null | undefined): string {
+  if (amount === null || amount === undefined || amount === "") return "₹0";
+  const num = typeof amount === 'string' ? parseFloat(amount) : Number(amount);
+  if (isNaN(num) || !isFinite(num)) return "₹0";
   return `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 

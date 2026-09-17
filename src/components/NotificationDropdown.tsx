@@ -58,6 +58,17 @@ const getNotificationRoute = (notification: ApiNotification) => {
   }
 };
 
+function safeDistanceToNow(dateStr: string | Date | undefined | null) {
+  if (!dateStr) return "Just now";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "Recently";
+    return formatDistanceToNow(d, { addSuffix: true });
+  } catch {
+    return "Recently";
+  }
+}
+
 export function NotificationDropdown({ userId }: NotificationDropdownProps) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -181,7 +192,7 @@ export function NotificationDropdown({ userId }: NotificationDropdownProps) {
                       {notification.message}
                     </p>
                     <p className="mt-1 text-[10px] text-muted-foreground/70">
-                      {formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true })}
+                      {safeDistanceToNow(notification.createdAt)}
                     </p>
                   </div>
                 </div>
