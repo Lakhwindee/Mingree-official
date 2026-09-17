@@ -124,29 +124,20 @@ export default function Signup() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to send OTP");
+        throw new Error(data.error || "Failed to send OTP. Please try again.");
       }
 
       setStep("otp");
       setResendTimer(60);
-      if (data.emailConfigured) {
-        toast({
-          title: "OTP Sent to Mail!",
-          description: `A 6-digit verification code was emailed to ${email}`,
-        });
-      } else {
-        toast({
-          title: `Verification Code: ${data.testOtp || "123456"}`,
-          description: "Gmail SMTP credentials not set yet. Enter this code to proceed.",
-          duration: 12000,
-        });
-      }
-    } catch (error) {
-      setStep("otp");
-      setResendTimer(60);
       toast({
-        title: "Test OTP: 123456",
-        description: "Gmail service not configured yet. You can use 123456 to test.",
+        title: "OTP Sent to Mail!",
+        description: `A 6-digit verification code was emailed to ${email}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error Sending OTP",
+        description: error.message || "Failed to send verification code. Please check your email and try again.",
+        variant: "destructive",
       });
     } finally {
       setIsLoading(false);
@@ -165,23 +156,15 @@ export default function Signup() {
 
     setIsLoading(true);
     try {
-      let isVerified = false;
-      try {
-        const verifyResponse = await fetch("/api/auth/verify-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, otp }),
-        });
+      const verifyResponse = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp }),
+      });
 
-        if (verifyResponse.ok) {
-          isVerified = true;
-        }
-      } catch {
-        // Fallback
-      }
-
-      if (!isVerified && otp !== "123456") {
-        throw new Error("Invalid or expired OTP. Use 123456 for test mode.");
+      const verifyData = await verifyResponse.json();
+      if (!verifyResponse.ok) {
+        throw new Error(verifyData.error || "Invalid or expired OTP");
       }
 
       // Clear any existing session before signup to prevent session conflicts

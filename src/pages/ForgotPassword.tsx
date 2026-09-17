@@ -48,29 +48,20 @@ export default function ForgotPassword() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to send reset code");
+        throw new Error(data.error || "Failed to send reset code. Please try again.");
       }
 
       setStep("otp");
       setResendTimer(60);
-      if (data.emailConfigured) {
-        toast({
-          title: "Reset Code Sent to Mail",
-          description: `A 6-digit code has been sent to ${email}`,
-        });
-      } else {
-        toast({
-          title: `Reset Code: ${data.testOtp || "123456"}`,
-          description: "Gmail SMTP not configured yet. Use this code to proceed.",
-          duration: 12000,
-        });
-      }
-    } catch (error) {
-      setStep("otp");
-      setResendTimer(60);
       toast({
-        title: "Test OTP: 123456",
-        description: "Email service not configured yet. Use 123456 to test.",
+        title: "Reset Code Sent to Mail",
+        description: `A 6-digit code has been sent to ${email}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error Sending Reset Code",
+        description: error.message || "Failed to send reset code. Please verify your email and try again.",
+        variant: "destructive",
       });
     } finally {
       setIsLoading(false);
@@ -89,23 +80,15 @@ export default function ForgotPassword() {
 
     setIsLoading(true);
     try {
-      let isVerified = false;
-      try {
-        const response = await fetch("/api/auth/verify-reset-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, otp }),
-        });
+      const response = await fetch("/api/auth/verify-reset-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp }),
+      });
 
-        if (response.ok) {
-          isVerified = true;
-        }
-      } catch {
-        // Fallback
-      }
-
-      if (!isVerified && otp !== "123456") {
-        throw new Error("Invalid or expired code. (Demo code: 123456)");
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Invalid or expired code");
       }
 
       setStep("reset");

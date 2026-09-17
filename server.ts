@@ -199,23 +199,17 @@ app.post("/api/auth/send-otp", async (req, res) => {
         expiresIn: 600,
       });
     } else {
-      // Email configured but failed (e.g. invalid app password)
-      return res.json({
-        message: `Gmail error: ${result.error}. (Use test code: ${otp})`,
-        testOtp: otp,
+      return res.status(500).json({
+        error: `Failed to send email: ${result.error}`,
         emailConfigured: true,
-        error: result.error,
-        expiresIn: 600,
       });
     }
   }
 
   // Not configured in settings or env
-  return res.json({
-    message: `Gmail credentials not set. Use demo OTP: ${otp} to verify.`,
-    testOtp: otp,
+  return res.status(503).json({
+    error: "Email delivery service is not configured. Please configure email settings.",
     emailConfigured: false,
-    expiresIn: 600,
   });
 });
 
@@ -228,11 +222,6 @@ app.post("/api/auth/verify-otp", (req, res) => {
 
   const cleanEmail = email.toLowerCase().trim();
   const cleanOtp = String(otp).trim();
-
-  // Allow standard test demo code
-  if (cleanOtp === "123456") {
-    return res.json({ success: true, message: "OTP verified successfully (test code)" });
-  }
 
   const stored = otpStore.get(cleanEmail);
   if (!stored) {
@@ -277,21 +266,16 @@ app.post("/api/auth/forgot-password", async (req, res) => {
         expiresIn: 600,
       });
     } else {
-      return res.json({
-        message: `Gmail error: ${result.error}. (Use test code: ${otp})`,
-        testOtp: otp,
+      return res.status(500).json({
+        error: `Failed to send email: ${result.error}`,
         emailConfigured: true,
-        error: result.error,
-        expiresIn: 600,
       });
     }
   }
 
-  return res.json({
-    message: `Gmail credentials not set. Use demo code: ${otp}`,
-    testOtp: otp,
+  return res.status(503).json({
+    error: "Email delivery service is not configured. Please configure email settings.",
     emailConfigured: false,
-    expiresIn: 600,
   });
 });
 
@@ -304,10 +288,6 @@ app.post("/api/auth/verify-reset-otp", (req, res) => {
 
   const cleanEmail = email.toLowerCase().trim();
   const cleanOtp = String(otp).trim();
-
-  if (cleanOtp === "123456") {
-    return res.json({ success: true, message: "Reset code verified" });
-  }
 
   const stored = otpStore.get(cleanEmail);
   if (!stored) {
@@ -525,25 +505,25 @@ function saveUserProfile(profile?: Record<string, any>) {
 
 const defaultSponsorProfile: Record<string, any> = {
   id: 2,
-  name: "GlowAura Organics",
-  handle: "@glowaura",
+  name: "Brand Sponsor",
+  handle: "@sponsor",
   email: "brand@mingree.com",
   role: "sponsor",
   followers: 0,
   engagement: "0.0",
   reach: 0,
-  avatar: "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=150",
+  avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
   isVerified: true,
   tier: "Brand Partner",
-  balance: "45000.00",
-  companyName: "GlowAura Organics",
-  gstNumber: "07AAAAA0000A1Z5",
-  instagramUsername: "glowaura_official",
-  instagramProfileUrl: "https://instagram.com/glowaura_official",
-  instagramFollowers: 125000,
-  isInstagramVerified: true,
-  subscriptionPlan: "brand_pro",
-  stars: 500,
+  balance: "0.00",
+  companyName: "Brand Sponsor",
+  gstNumber: "",
+  instagramUsername: null,
+  instagramProfileUrl: null,
+  instagramFollowers: 0,
+  isInstagramVerified: false,
+  subscriptionPlan: "free",
+  stars: 0,
   country: "IN",
   city: "Mumbai",
   totalEarnings: "0.00",
@@ -551,7 +531,7 @@ const defaultSponsorProfile: Record<string, any> = {
   starRewards: 0,
   activeReservations: 0,
   completedSubmissions: 0,
-  campaignsCreated: 6,
+  campaignsCreated: 0,
   createdAt: "2024-01-15T10:00:00.000Z",
 };
 
@@ -574,7 +554,6 @@ let registeredUsers: RegisteredUser[] = [
   {
     id: 1,
     email: "manindersinghjudge@gmail.com",
-    password: "123456",
     name: "Creator",
     role: "creator",
     handle: "@creator",
@@ -584,7 +563,6 @@ let registeredUsers: RegisteredUser[] = [
   {
     id: 99,
     email: "admin@mingree.com",
-    password: "admin123",
     name: "Mingree Administrator",
     role: "admin",
     handle: "@admin",
@@ -594,13 +572,12 @@ let registeredUsers: RegisteredUser[] = [
   {
     id: 2,
     email: "brand@mingree.com",
-    password: "brand123",
-    name: "GlowAura Organics",
+    name: "Brand Sponsor",
     role: "sponsor",
-    handle: "@glowaura",
-    avatar: "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=150",
+    handle: "@sponsor",
+    avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
     tier: "Brand Partner",
-    companyName: "GlowAura Organics"
+    companyName: "Brand Sponsor"
   }
 ];
 
@@ -922,178 +899,7 @@ app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], (re
 const CAMPAIGNS_FILE = path.join(process.cwd(), "campaigns.json");
 const RESERVATIONS_FILE = path.join(process.cwd(), "reservations.json");
 
-const initialCampaignsData = [
-  {
-    id: 1,
-    sponsorId: 2,
-    title: "Summer Resort Wear Launch",
-    brand: "Urban Vibes",
-    brandLogo: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100",
-    payAmount: "2500",
-    type: "Reel",
-    contentTypes: ["Reel", "Story"],
-    promotionStyle: "Try-On Haul",
-    assetUrl: null,
-    assetFileName: null,
-    minFollowers: 20000,
-    description: "Create a 30s stylish reel showcasing 3 outfits from our summer vacation collection. Include swipe-up tags and brand discount coupon code.",
-    tier: "Tier 6",
-    deadline: "2026-12-31",
-    totalSpots: 10,
-    spotsRemaining: 4,
-    status: "active",
-    isPromotional: true,
-    starReward: 2,
-    isApproved: true,
-    targetCountries: ["IN"],
-    targetCities: ["Mumbai", "Delhi", "Bengaluru"],
-    totalBudget: "25000",
-    releasedAmount: "15000",
-    refundedAmount: "0",
-    escrowStatus: "funded",
-    createdAt: "2025-01-10T00:00:00.000Z",
-    campaignType: "paid",
-    productName: "Resort Linen Shirt & Shorts",
-    productValue: "3499",
-    mentions: ["@urbanvibes_in", "#SummerResort25"],
-  },
-  {
-    id: 2,
-    sponsorId: 2,
-    title: "HydraGlow Vitamin C Serum Routine",
-    brand: "GlowAura Organics",
-    brandLogo: "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=100",
-    payAmount: "1800",
-    type: "Reel",
-    contentTypes: ["Reel"],
-    promotionStyle: "Skincare Morning Routine",
-    assetUrl: null,
-    assetFileName: null,
-    minFollowers: 15000,
-    description: "Demonstrate application of HydraGlow Vitamin C serum during your AM routine. Highlight 10% ethyl ascorbic acid and non-sticky texture.",
-    tier: "Tier 5",
-    deadline: "2026-12-31",
-    totalSpots: 15,
-    spotsRemaining: 6,
-    status: "active",
-    isPromotional: false,
-    starReward: 1,
-    isApproved: true,
-    targetCountries: ["IN"],
-    targetCities: ["Mumbai", "Pune", "Bengaluru"],
-    totalBudget: "27000",
-    releasedAmount: "16200",
-    refundedAmount: "0",
-    escrowStatus: "funded",
-    createdAt: "2025-01-12T00:00:00.000Z",
-    campaignType: "paid_with_product",
-    productName: "HydraGlow 30ml Serum",
-    productValue: "899",
-    mentions: ["@glowaura_skin", "#SkinFirstGlow"],
-  },
-  {
-    id: 3,
-    sponsorId: 2,
-    title: "BassPro Wireless ANC Earbuds Review",
-    brand: "AcousticWave",
-    brandLogo: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=100",
-    payAmount: "3500",
-    type: "Reel",
-    contentTypes: ["Reel", "Post"],
-    promotionStyle: "Tech Unboxing & Sound Test",
-    assetUrl: null,
-    assetFileName: null,
-    minFollowers: 25000,
-    description: "Detailed 45s audio test in high noise environment showing 40dB Hybrid ANC. Test gaming low latency mode and battery life.",
-    tier: "Tier 7",
-    deadline: "2026-12-31",
-    totalSpots: 8,
-    spotsRemaining: 2,
-    status: "active",
-    isPromotional: true,
-    starReward: 3,
-    isApproved: true,
-    targetCountries: ["IN"],
-    targetCities: ["All"],
-    totalBudget: "28000",
-    releasedAmount: "21000",
-    refundedAmount: "0",
-    escrowStatus: "funded",
-    createdAt: "2025-01-14T00:00:00.000Z",
-    campaignType: "paid",
-    productName: "BassPro ANC Earbuds",
-    productValue: "4999",
-    mentions: ["@acousticwave", "#SilenceTheNoise"],
-  },
-  {
-    id: 4,
-    sponsorId: 2,
-    title: "Cold Brew Roast Tasting Reel",
-    brand: "BeanCrafters Co.",
-    brandLogo: "https://images.unsplash.com/photo-1509785307050-d4066910ec1e?w=100",
-    payAmount: "1200",
-    type: "Reel",
-    contentTypes: ["Reel"],
-    promotionStyle: "Brewing Guide",
-    assetUrl: null,
-    assetFileName: null,
-    minFollowers: 10000,
-    description: "Brew cold brew using our Arabica medium roast bag with French press or drip bag. Share recipe notes and first sip reaction.",
-    tier: "Tier 4",
-    deadline: "2026-12-31",
-    totalSpots: 20,
-    spotsRemaining: 11,
-    status: "active",
-    isPromotional: false,
-    starReward: 1,
-    isApproved: true,
-    targetCountries: ["IN"],
-    targetCities: ["Delhi NCR", "Chandigarh", "Jaipur"],
-    totalBudget: "24000",
-    releasedAmount: "10800",
-    refundedAmount: "0",
-    escrowStatus: "funded",
-    createdAt: "2025-01-16T00:00:00.000Z",
-    campaignType: "barter",
-    productName: "Artisan Coffee Beans 500g",
-    productValue: "750",
-    mentions: ["@beancrafters", "#CraftedCoffee"],
-  },
-  {
-    id: 5,
-    sponsorId: 2,
-    title: "Seamless Gym Set Workout Challenge",
-    brand: "AeroFit Activewear",
-    brandLogo: "https://images.unsplash.com/photo-1518611012118-696072aa579a?w=100",
-    payAmount: "4000",
-    type: "Reel",
-    contentTypes: ["Reel"],
-    promotionStyle: "HIIT Workout Session",
-    assetUrl: null,
-    assetFileName: null,
-    minFollowers: 30000,
-    description: "Perform your favorite leg day or HIIT workout wearing our Compression V2 set. Emphasize squat-proof fabric and breathable sweat-wicking.",
-    tier: "Tier 7",
-    deadline: "2026-12-31",
-    totalSpots: 6,
-    spotsRemaining: 1,
-    status: "active",
-    isPromotional: true,
-    starReward: 2,
-    isApproved: true,
-    targetCountries: ["IN"],
-    targetCities: ["All"],
-    totalBudget: "24000",
-    releasedAmount: "20000",
-    refundedAmount: "0",
-    escrowStatus: "funded",
-    createdAt: "2025-01-18T00:00:00.000Z",
-    campaignType: "paid",
-    productName: "Seamless Compression V2 Set",
-    productValue: "2999",
-    mentions: ["@aerofit_official", "#BuiltToTrain"],
-  }
-];
+const initialCampaignsData: any[] = [];
 
 function loadCampaigns(): any[] {
   try {
@@ -1215,8 +1021,56 @@ app.get("/api/sponsors/:id/campaigns", (req, res) => {
   cleanReservations();
   const campaigns = loadCampaigns();
   const sponsorId = Number(req.params.id);
-  const filtered = campaigns.filter(c => c.sponsorId === sponsorId || sponsorId === 2);
+  const filtered = campaigns.filter(c => c.sponsorId === sponsorId);
   res.json(filtered);
+});
+
+// POST /api/sponsors/:id/campaigns
+app.post("/api/sponsors/:id/campaigns", (req, res) => {
+  const sponsorId = Number(req.params.id);
+  const data = req.body;
+  const campaigns = loadCampaigns();
+  const newId = campaigns.length > 0 ? Math.max(...campaigns.map((c: any) => c.id || 0)) + 1 : 1;
+
+  const newCampaign = {
+    id: newId,
+    sponsorId,
+    title: data.title || "Untitled Campaign",
+    brand: data.brand || "Brand",
+    brandLogo: data.brandLogo || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100",
+    payAmount: String(data.payAmount || 0),
+    type: data.type || "Reel",
+    contentTypes: data.contentTypes || ["Reel"],
+    promotionStyle: data.promotionStyle || "Review",
+    assetUrl: data.assetUrl || null,
+    assetFileName: data.assetFileName || null,
+    minFollowers: Number(data.minFollowers || 0),
+    description: data.description || "",
+    tier: data.tier || "Tier 1",
+    deadline: data.deadline || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+    totalSpots: Number(data.totalSpots || 10),
+    spotsRemaining: Number(data.totalSpots || 10),
+    status: "active",
+    isPromotional: Boolean(data.isPromotional),
+    starReward: Number(data.starReward || 0),
+    isApproved: true,
+    targetCountries: data.targetCountries || ["IN"],
+    targetCities: data.targetCities || ["All"],
+    totalBudget: String(Number(data.payAmount || 0) * Number(data.totalSpots || 10)),
+    releasedAmount: "0",
+    refundedAmount: "0",
+    escrowStatus: "funded",
+    createdAt: new Date().toISOString(),
+    campaignType: data.campaignType || "paid",
+    productName: data.productName || null,
+    productValue: data.productValue ? String(data.productValue) : null,
+    mentions: data.mentions || [],
+    category: data.category || "General",
+  };
+
+  campaigns.unshift(newCampaign);
+  saveCampaigns(campaigns);
+  res.json(newCampaign);
 });
 
 // GET /api/users/:id/reservations
@@ -2464,28 +2318,7 @@ function loadUserNotifications(): any[] {
   } catch (err) {
     console.error("Error loading user notifications:", err);
   }
-  return [
-    {
-      id: 1,
-      userId: 1,
-      type: "new_campaign",
-      title: "New Campaign Available",
-      message: "Summer Glow Skincare campaign is now open for reservations.",
-      isRead: false,
-      link: "/campaigns",
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: 2,
-      userId: 1,
-      type: "campaign_approved",
-      title: "Submission Approved! 🎉",
-      message: "Urban Vibes has approved your reel draft. ₹2,500 has been credited to your balance.",
-      isRead: true,
-      link: "/earnings",
-      createdAt: new Date(Date.now() - 3600000).toISOString(),
-    }
-  ];
+  return [];
 }
 
 function saveUserNotifications(notifs: any[]) {
@@ -2589,205 +2422,130 @@ app.get("/api/account/status", (req, res) => {
 
 // Admin endpoints
 app.get("/api/admin/stats", (req, res) => {
+  const campaigns = loadCampaigns();
+  const reservations = loadReservations();
+  const totalUsers = registeredUsers.length;
+  const totalCreators = registeredUsers.filter(u => u.role === "creator").length;
+  const totalSponsors = registeredUsers.filter(u => u.role === "sponsor").length;
+  const totalCampaigns = campaigns.length;
+  const activeCampaigns = campaigns.filter((c: any) => c.status === "active").length;
+  const pendingSubmissions = reservations.filter((r: any) => r.status === "submitted").length;
+
   res.json({
-    totalUsers: 142,
-    totalCreators: 118,
-    totalSponsors: 24,
-    totalCampaigns: 38,
-    activeCampaigns: 14,
-    pendingWithdrawals: 3,
-    pendingWithdrawalAmount: "18500",
-    totalWithdrawalsProcessed: "425000",
-    pendingSubmissions: 5,
-    pendingVerifications: 2,
-    totalRevenue: "1284000",
-    totalPaidOut: "925000",
+    totalUsers,
+    totalCreators,
+    totalSponsors,
+    totalCampaigns,
+    activeCampaigns,
+    pendingWithdrawals: 0,
+    pendingWithdrawalAmount: "0.00",
+    totalWithdrawalsProcessed: "0.00",
+    pendingSubmissions,
+    pendingVerifications: 0,
+    totalRevenue: "0.00",
+    totalPaidOut: "0.00",
   });
 });
 
-const adminManagedUsers = [
-  {
-    id: 1,
-    name: currentUserProfile.name || "Aarav Sharma",
-    handle: currentUserProfile.handle || "@aaravcreates",
-    email: currentUserProfile.email || "creator@mingree.com",
-    role: "creator",
-    followers: currentUserProfile.followers || 15400,
-    engagement: "4.8",
-    reach: 32000,
-    avatar: currentUserProfile.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    isVerified: currentUserProfile.isVerified ?? true,
-    tier: currentUserProfile.tier || "Tier 2",
-    balance: currentUserProfile.balance || "12450.00",
-    instagramUsername: currentUserProfile.instagramUsername || "aarav_official",
-    instagramFollowers: currentUserProfile.instagramFollowers || 15400,
-    isInstagramVerified: currentUserProfile.isInstagramVerified ?? true,
-    instagramVerificationStatus: currentUserProfile.instagramVerificationStatus || "verified",
-    subscriptionPlan: currentUserProfile.subscriptionPlan || "free",
-    stars: currentUserProfile.stars || 12,
-    country: "IN",
-    city: currentUserProfile.city || "Mumbai",
-    createdAt: "2024-01-15T10:00:00.000Z",
-  },
-  {
-    id: 2,
-    name: defaultSponsorProfile.name || "GlowAura Organics",
-    handle: defaultSponsorProfile.handle || "@glowaura",
-    email: defaultSponsorProfile.email || "brand@mingree.com",
-    role: "sponsor",
-    followers: 125000,
-    engagement: "5.2",
-    reach: 250000,
-    avatar: defaultSponsorProfile.avatar || "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=150",
-    isVerified: true,
-    tier: "Brand Partner",
-    balance: "45000.00",
-    companyName: "GlowAura Organics",
-    gstNumber: "07AAAAA0000A1Z5",
-    instagramUsername: "glowaura_official",
-    instagramFollowers: 125000,
-    isInstagramVerified: true,
-    subscriptionPlan: "brand_pro",
-    stars: 500,
-    country: "IN",
-    city: "Mumbai",
-    createdAt: "2024-01-10T10:00:00.000Z",
-  },
-  {
-    id: 3,
-    name: "Priya Patel",
-    handle: "@priyabeauty",
-    email: "priya@example.com",
-    role: "creator",
-    followers: 48000,
-    engagement: "6.1",
-    reach: 95000,
-    avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150",
-    isVerified: true,
-    tier: "Tier 3",
-    balance: "28600.00",
-    instagramUsername: "priyabeauty_in",
-    instagramFollowers: 48000,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    subscriptionPlan: "free",
-    stars: 45,
-    country: "IN",
-    city: "Delhi",
-    createdAt: "2024-02-01T10:00:00.000Z",
-  },
-  {
-    id: 4,
-    name: "UrbanFit Tech",
-    handle: "@urbanfit",
-    email: "contact@urbanfit.in",
-    role: "sponsor",
-    followers: 85000,
-    engagement: "3.9",
-    reach: 180000,
-    avatar: "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=150",
-    isVerified: true,
-    tier: "Brand Partner",
-    balance: "90000.00",
-    companyName: "UrbanFit Technologies Pvt Ltd",
-    gstNumber: "27AABCU9603R1ZM",
-    instagramUsername: "urbanfit_india",
-    instagramFollowers: 85000,
-    isInstagramVerified: true,
-    subscriptionPlan: "brand_pro",
-    stars: 200,
-    country: "IN",
-    city: "Bengaluru",
-    createdAt: "2024-02-10T10:00:00.000Z",
-  },
-  {
-    id: 99,
-    name: "Mingree Administrator",
-    handle: "@admin",
-    email: "admin@mingree.com",
-    role: "admin",
-    followers: 0,
-    engagement: "0.0",
-    reach: 0,
-    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-    isVerified: true,
-    tier: "Admin",
-    balance: "500000.00",
-    subscriptionPlan: "admin",
-    stars: 999,
-    country: "IN",
-    createdAt: "2024-01-01T10:00:00.000Z",
-  }
-];
+function getAdminUsersList() {
+  return registeredUsers.map(u => {
+    if (u.id === currentUserProfile.id || (u.role === "creator" && u.email === currentUserProfile.email)) {
+      return {
+        ...currentUserProfile,
+        ...u,
+        id: u.id,
+      };
+    }
+    return {
+      id: u.id,
+      name: u.name,
+      handle: u.handle,
+      email: u.email,
+      role: u.role,
+      followers: 0,
+      engagement: "0.0",
+      reach: 0,
+      avatar: u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+      isVerified: true,
+      tier: u.tier || (u.role === "sponsor" ? "Brand Partner" : "New Creator"),
+      balance: "0.00",
+      instagramUsername: null,
+      instagramFollowers: 0,
+      isInstagramVerified: false,
+      instagramVerificationStatus: "unlinked",
+      subscriptionPlan: "free",
+      stars: 0,
+      country: "IN",
+      city: "",
+      createdAt: new Date().toISOString(),
+    };
+  });
+}
 
 app.get("/api/admin/users", (req, res) => {
+  const users = getAdminUsersList();
   const role = req.query.role as string;
   if (role) {
-    return res.json(adminManagedUsers.filter(u => u.role === role));
+    return res.json(users.filter(u => u.role === role));
   }
-  return res.json(adminManagedUsers);
+  return res.json(users);
 });
 
 app.get("/api/admin/users/pending-verification", (req, res) => {
-  return res.json(adminManagedUsers.filter(u => !u.isVerified));
+  const users = getAdminUsersList();
+  return res.json(users.filter(u => !u.isVerified));
 });
 
 app.get("/api/admin/users/verified-instagram", (req, res) => {
-  res.json(adminManagedUsers.filter(u => u.isInstagramVerified));
+  const users = getAdminUsersList();
+  res.json(users.filter(u => u.isInstagramVerified));
 });
 
 app.post("/api/admin/users/:userId/verify-instagram", (req, res) => {
   const userId = Number(req.params.userId);
-  const target = adminManagedUsers.find(u => u.id === userId);
-  if (target) {
-    target.isInstagramVerified = true;
-    target.instagramVerificationStatus = "verified";
-  }
   if (currentUserProfile.id === userId) {
     currentUserProfile.isInstagramVerified = true;
     currentUserProfile.instagramVerificationStatus = "verified";
     saveUserProfile();
   }
-  res.json({ success: true, user: target || currentUserProfile });
+  res.json({ success: true, user: currentUserProfile });
 });
 
 app.post("/api/admin/users/:userId/reject-instagram", (req, res) => {
   const userId = Number(req.params.userId);
-  const target = adminManagedUsers.find(u => u.id === userId);
-  if (target) {
-    target.isInstagramVerified = false;
-    target.instagramVerificationStatus = "rejected";
-  }
   if (currentUserProfile.id === userId) {
     currentUserProfile.isInstagramVerified = false;
     currentUserProfile.instagramVerificationStatus = "rejected";
     saveUserProfile();
   }
-  res.json({ success: true, user: target || currentUserProfile });
+  res.json({ success: true, user: currentUserProfile });
 });
 
 app.post("/api/admin/users/:userId/verify", (req, res) => {
   const userId = Number(req.params.userId);
-  const target = adminManagedUsers.find(u => u.id === userId);
-  if (target) target.isVerified = true;
+  const target = registeredUsers.find(u => u.id === userId);
+  if (target) (target as any).isVerified = true;
   if (currentUserProfile.id === userId) {
     currentUserProfile.isVerified = true;
     saveUserProfile();
   }
+  saveRegisteredUsers();
   res.json({ success: true, user: target || currentUserProfile });
 });
 
 app.post("/api/admin/users/:userId/ban", (req, res) => {
   const userId = Number(req.params.userId);
-  const target = adminManagedUsers.find(u => u.id === userId);
+  const target = registeredUsers.find(u => u.id === userId);
   if (target) (target as any).isBanned = true;
+  saveRegisteredUsers();
   res.json({ success: true, user: target });
 });
 
 app.post("/api/admin/users/:userId/unban", (req, res) => {
   const userId = Number(req.params.userId);
-  const target = adminManagedUsers.find(u => u.id === userId);
+  const target = registeredUsers.find(u => u.id === userId);
   if (target) (target as any).isBanned = false;
+  saveRegisteredUsers();
   res.json({ success: true, user: target });
 });
 
@@ -2795,162 +2553,85 @@ app.post("/api/admin/users/:userId/award-stars", (req, res) => {
   const userId = Number(req.params.userId);
   const { stars } = req.body;
   const count = Number(stars) || 5;
-  const target = adminManagedUsers.find(u => u.id === userId);
-  if (target) target.stars = (target.stars || 0) + count;
+  const target = registeredUsers.find(u => u.id === userId);
+  if (target) (target as any).stars = ((target as any).stars || 0) + count;
   if (currentUserProfile.id === userId) {
     currentUserProfile.stars = (currentUserProfile.stars || 0) + count;
     saveUserProfile();
   }
+  saveRegisteredUsers();
   res.json({ success: true, user: target || currentUserProfile });
 });
 
 app.patch("/api/admin/users/:userId/status", (req, res) => {
   const userId = Number(req.params.userId);
   const { isVerified, tier, subscriptionPlan } = req.body;
-  const target = adminManagedUsers.find(u => u.id === userId);
+  const target = registeredUsers.find(u => u.id === userId);
   if (target) {
-    if (typeof isVerified === "boolean") target.isVerified = isVerified;
+    if (typeof isVerified === "boolean") (target as any).isVerified = isVerified;
     if (tier) target.tier = tier;
-    if (subscriptionPlan) target.subscriptionPlan = subscriptionPlan;
+    if (subscriptionPlan) (target as any).subscriptionPlan = subscriptionPlan;
+    saveRegisteredUsers();
   }
-  res.json({ success: true, user: target });
+  if (currentUserProfile.id === userId) {
+    if (typeof isVerified === "boolean") currentUserProfile.isVerified = isVerified;
+    if (tier) currentUserProfile.tier = tier;
+    if (subscriptionPlan) currentUserProfile.subscriptionPlan = subscriptionPlan;
+    saveUserProfile();
+  }
+  res.json({ success: true, user: target || currentUserProfile });
 });
 
 // Admin Campaigns Management
-let adminCampaigns = [
-  {
-    id: 1,
-    sponsorId: 2,
-    title: "Summer Resort Wear Launch",
-    brand: "GlowAura Organics",
-    brandLogo: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100",
-    payAmount: "2500",
-    type: "Reel",
-    contentTypes: ["Reel", "Story"],
-    promotionStyle: "Try-On Haul",
-    description: "Create a 30s stylish reel showcasing 3 outfits from our summer vacation collection.",
-    tier: "Tier 2",
-    deadline: "2025-06-30",
-    status: "active",
-    category: "Fashion",
-    totalSlots: 15,
-    availableSlots: 8,
-    createdAt: "2024-02-15T10:00:00.000Z",
-  },
-  {
-    id: 2,
-    sponsorId: 4,
-    title: "Pro Earbuds ANC Unboxing & Review",
-    brand: "UrbanFit Tech",
-    brandLogo: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100",
-    payAmount: "4500",
-    type: "Reel + Post",
-    contentTypes: ["Reel", "Post"],
-    promotionStyle: "Product Review",
-    description: "Honest audio test with noise cancelling demonstration in public setting.",
-    tier: "Tier 3",
-    deadline: "2025-07-15",
-    status: "active",
-    category: "Tech & Gadgets",
-    totalSlots: 10,
-    availableSlots: 4,
-    createdAt: "2024-02-18T10:00:00.000Z",
-  },
-  {
-    id: 3,
-    sponsorId: 2,
-    title: "Eco Glow Vitamin C Serum Campaign",
-    brand: "GlowAura Organics",
-    brandLogo: "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=100",
-    payAmount: "3000",
-    type: "Reel",
-    contentTypes: ["Reel"],
-    promotionStyle: "Morning Routine",
-    description: "Show step-by-step skincare application highlighting skin brightening results.",
-    tier: "Tier 2",
-    deadline: "2025-08-01",
-    status: "pending_approval",
-    category: "Beauty & Skincare",
-    totalSlots: 20,
-    availableSlots: 20,
-    createdAt: "2024-02-25T10:00:00.000Z",
-  }
-];
-
 app.get("/api/admin/campaigns", (req, res) => {
-  res.json(adminCampaigns);
+  const campaigns = loadCampaigns();
+  res.json(campaigns);
 });
 
 app.get("/api/admin/campaigns/pending-approval", (req, res) => {
-  res.json(adminCampaigns.filter(c => c.status === "pending_approval" || c.status === "pending"));
+  const campaigns = loadCampaigns();
+  res.json(campaigns.filter((c: any) => c.status === "pending_approval" || c.status === "pending" || !c.isApproved));
 });
 
 app.post("/api/admin/campaigns/:id/approve", (req, res) => {
   const id = Number(req.params.id);
-  const campaign = adminCampaigns.find(c => c.id === id);
-  if (campaign) campaign.status = "active";
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find((c: any) => c.id === id);
+  if (campaign) {
+    campaign.status = "active";
+    campaign.isApproved = true;
+    saveCampaigns(campaigns);
+  }
   res.json({ success: true, campaign });
 });
 
 app.post("/api/admin/campaigns/:id/reject", (req, res) => {
   const id = Number(req.params.id);
-  const campaign = adminCampaigns.find(c => c.id === id);
-  if (campaign) campaign.status = "rejected";
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find((c: any) => c.id === id);
+  if (campaign) {
+    campaign.status = "rejected";
+    campaign.isApproved = false;
+    saveCampaigns(campaigns);
+  }
   res.json({ success: true, campaign });
 });
 
 app.patch("/api/admin/campaigns/:id/status", (req, res) => {
   const id = Number(req.params.id);
   const { status } = req.body;
-  const campaign = adminCampaigns.find(c => c.id === id);
-  if (campaign && status) campaign.status = status;
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find((c: any) => c.id === id);
+  if (campaign && status) {
+    campaign.status = status;
+    if (status === "active") campaign.isApproved = true;
+    saveCampaigns(campaigns);
+  }
   res.json({ success: true, campaign });
 });
 
 // Withdrawals Management
-let adminWithdrawals = [
-  {
-    id: 101,
-    userId: 1,
-    userName: "Aarav Sharma",
-    userHandle: "@aaravcreates",
-    amount: "4500.00",
-    status: "pending",
-    method: "UPI",
-    upiId: "aarav@oksbi",
-    accountHolder: "Aarav Sharma",
-    requestedAt: "2024-03-01T14:30:00.000Z",
-    processedAt: null,
-  },
-  {
-    id: 102,
-    userId: 3,
-    userName: "Priya Patel",
-    userHandle: "@priyabeauty",
-    amount: "8000.00",
-    status: "pending",
-    method: "Bank Transfer",
-    accountNumber: "987654321012",
-    ifsc: "HDFC0001234",
-    bankName: "HDFC Bank",
-    accountHolder: "Priya Patel",
-    requestedAt: "2024-03-02T09:15:00.000Z",
-    processedAt: null,
-  },
-  {
-    id: 103,
-    userId: 1,
-    userName: "Aarav Sharma",
-    userHandle: "@aaravcreates",
-    amount: "6000.00",
-    status: "approved",
-    method: "UPI",
-    upiId: "aarav@oksbi",
-    accountHolder: "Aarav Sharma",
-    requestedAt: "2024-02-15T11:00:00.000Z",
-    processedAt: "2024-02-15T16:00:00.000Z",
-  }
-];
+let adminWithdrawals: any[] = [];
 
 app.get("/api/admin/withdrawals", (req, res) => {
   res.json(adminWithdrawals);
@@ -2977,250 +2658,84 @@ app.post("/api/admin/withdrawals/:id/reject", (req, res) => {
 });
 
 // Submissions Management
-let adminCampaignGroups = [
-  {
-    campaign: {
-      id: 1,
-      title: "Summer Resort Wear Launch (Tier 2)",
-      tier: "Tier 2",
-      totalSpots: 15,
-      spotsRemaining: 8,
-      deadline: "2025-06-30",
-      payAmount: "2500",
-      isPromotional: false,
-      starReward: 0,
-      status: "active",
-      isApproved: true,
-    },
-    sponsor: {
-      id: 2,
-      name: "GlowAura Organics",
-      email: "brand@mingree.com",
-      companyName: "GlowAura Organics",
-    },
-    stats: {
-      totalReservations: 7,
-      reserved: 2,
-      submitted: 1,
-      approved: 3,
-      rejected: 1,
-      expired: 0,
-      spotsFilledPercent: 47,
-    },
-    submissions: [
-      {
-        reservation: {
-          id: 201,
-          campaignId: 1,
-          userId: 1,
-          status: "submitted",
-          reservedAt: "2024-03-01T10:00:00.000Z",
-          submittedAt: "2024-03-01T16:45:00.000Z",
-        },
-        user: {
-          id: 1,
-          name: "Aarav Sharma",
-          email: "creator@mingree.com",
-          instagramUsername: "aarav_official",
-          tier: 2,
-        },
-        submission: {
-          id: 201,
-          reservationId: 201,
-          link: "https://instagram.com/p/C3x9_summer_reel",
-          clipUrl: null,
-          submittedAt: "2024-03-01T16:45:00.000Z",
-        }
-      },
-      {
-        reservation: {
-          id: 204,
-          campaignId: 1,
-          userId: 3,
-          status: "approved",
-          reservedAt: "2024-02-28T09:00:00.000Z",
-          submittedAt: "2024-02-28T14:30:00.000Z",
-        },
-        user: {
-          id: 3,
-          name: "Priya Patel",
-          email: "priya@example.com",
-          instagramUsername: "priyabeauty_in",
-          tier: 2,
-        },
-        submission: {
-          id: 204,
-          reservationId: 204,
-          link: "https://instagram.com/p/C3y_approved_reel",
-          clipUrl: null,
-          submittedAt: "2024-02-28T14:30:00.000Z",
-        }
-      }
-    ]
-  },
-  {
-    campaign: {
-      id: 2,
-      title: "Pro Earbuds ANC Unboxing & Review (Tier 3)",
-      tier: "Tier 3",
-      totalSpots: 10,
-      spotsRemaining: 4,
-      deadline: "2025-07-15",
-      payAmount: "4500",
-      isPromotional: false,
-      starReward: 0,
-      status: "active",
-      isApproved: true,
-    },
-    sponsor: {
-      id: 4,
-      name: "UrbanFit Tech",
-      email: "contact@urbanfit.in",
-      companyName: "UrbanFit Technologies Pvt Ltd",
-    },
-    stats: {
-      totalReservations: 6,
-      reserved: 2,
-      submitted: 1,
-      approved: 3,
-      rejected: 0,
-      expired: 0,
-      spotsFilledPercent: 60,
-    },
-    submissions: [
-      {
-        reservation: {
-          id: 202,
-          campaignId: 2,
-          userId: 3,
-          status: "submitted",
-          reservedAt: "2024-02-28T10:00:00.000Z",
-          submittedAt: "2024-02-28T12:00:00.000Z",
-        },
-        user: {
-          id: 3,
-          name: "Priya Patel",
-          email: "priya@example.com",
-          instagramUsername: "priyabeauty_in",
-          tier: 3,
-        },
-        submission: {
-          id: 202,
-          reservationId: 202,
-          link: "https://instagram.com/p/C3y0_earbuds_review",
-          clipUrl: null,
-          submittedAt: "2024-02-28T12:00:00.000Z",
-        }
-      }
-    ]
-  }
-];
-
 app.get("/api/admin/submissions/pending", (req, res) => {
-  const pending: any[] = [];
-  adminCampaignGroups.forEach(cg => {
-    cg.submissions.forEach(sub => {
-      if (sub.reservation.status === "submitted") {
-        pending.push({
-          reservation: sub.reservation,
-          user: sub.user,
-          submission: sub.submission,
-          campaign: cg.campaign,
-          sponsor: cg.sponsor,
-        });
-      }
+  const reservations = loadReservations();
+  const campaigns = loadCampaigns();
+  const pending = reservations
+    .filter((r: any) => r.status === "submitted")
+    .map((r: any) => {
+      const camp = campaigns.find((c: any) => c.id === r.campaignId) || r.campaign;
+      return {
+        reservation: r,
+        user: { id: r.userId, name: currentUserProfile.name, email: currentUserProfile.email, instagramUsername: currentUserProfile.instagramUsername, tier: currentUserProfile.tier },
+        submission: { id: r.id, reservationId: r.id, link: r.submissionLink || "", clipUrl: r.clipUrl || null, submittedAt: r.submittedAt },
+        campaign: camp,
+        sponsor: { id: camp?.sponsorId || 2, name: camp?.brand || "Sponsor", email: "sponsor@mingree.com", companyName: camp?.brand || "Sponsor" }
+      };
     });
-  });
   res.json(pending);
 });
 
 app.get("/api/admin/campaign-submissions", (req, res) => {
-  res.json(adminCampaignGroups);
+  const reservations = loadReservations();
+  const campaigns = loadCampaigns();
+  const groups = campaigns.map((camp: any) => {
+    const campReservations = reservations.filter((r: any) => r.campaignId === camp.id);
+    const submissions = campReservations.map((r: any) => ({
+      reservation: r,
+      user: { id: r.userId, name: currentUserProfile.name, email: currentUserProfile.email, instagramUsername: currentUserProfile.instagramUsername, tier: currentUserProfile.tier },
+      submission: { id: r.id, reservationId: r.id, link: r.submissionLink || "", clipUrl: r.clipUrl || null, submittedAt: r.submittedAt }
+    }));
+    return {
+      campaign: camp,
+      sponsor: { id: camp.sponsorId || 2, name: camp.brand || "Sponsor", email: "sponsor@mingree.com", companyName: camp.brand || "Sponsor" },
+      stats: {
+        totalReservations: campReservations.length,
+        reserved: campReservations.filter((r: any) => r.status === "reserved").length,
+        submitted: campReservations.filter((r: any) => r.status === "submitted").length,
+        approved: campReservations.filter((r: any) => r.status === "approved").length,
+        rejected: campReservations.filter((r: any) => r.status === "rejected").length,
+        expired: campReservations.filter((r: any) => r.status === "expired").length,
+        spotsFilledPercent: camp.totalSpots > 0 ? Math.round(((camp.totalSpots - camp.spotsRemaining) / camp.totalSpots) * 100) : 0
+      },
+      submissions
+    };
+  });
+  res.json(groups);
 });
 
 app.post("/api/admin/submissions/:id/approve", (req, res) => {
   const resId = Number(req.params.id);
-  let found = false;
-  adminCampaignGroups.forEach(cg => {
-    cg.submissions.forEach(sub => {
-      if (sub.reservation.id === resId) {
-        sub.reservation.status = "approved";
-        if (cg.stats.submitted > 0) cg.stats.submitted--;
-        cg.stats.approved++;
-        found = true;
-      }
-    });
-  });
+  const reservations = loadReservations();
+  const r = reservations.find((item: any) => item.id === resId);
+  if (r) {
+    r.status = "approved";
+    saveReservations(reservations);
+  }
   res.json({ success: true, message: "Submission approved and payout credited" });
 });
 
 app.post("/api/admin/submissions/:id/reject", (req, res) => {
   const resId = Number(req.params.id);
   const { reason } = req.body;
-  let found = false;
-  adminCampaignGroups.forEach(cg => {
-    cg.submissions.forEach(sub => {
-      if (sub.reservation.id === resId) {
-        sub.reservation.status = "rejected";
-        (sub.reservation as any).rejectReason = reason || "Guidelines not met";
-        if (cg.stats.submitted > 0) cg.stats.submitted--;
-        cg.stats.rejected++;
-        found = true;
-      }
-    });
-  });
+  const reservations = loadReservations();
+  const r = reservations.find((item: any) => item.id === resId);
+  if (r) {
+    r.status = "rejected";
+    r.rejectReason = reason || "Guidelines not met";
+    saveReservations(reservations);
+  }
   res.json({ success: true, message: "Submission rejected" });
 });
 
 // Transactions Ledger
+let adminTransactions: any[] = [];
 app.get("/api/admin/transactions", (req, res) => {
-  res.json([
-    {
-      id: 301,
-      type: "CAMPAIGN_PAYOUT",
-      description: "Payout for Summer Resort Wear Campaign",
-      amount: "2500.00",
-      recipient: "Aarav Sharma (@aaravcreates)",
-      sponsor: "GlowAura Organics",
-      status: "completed",
-      date: "2024-03-01T18:00:00.000Z",
-    },
-    {
-      id: 302,
-      type: "BRAND_DEPOSIT",
-      description: "Wallet deposit via Razorpay / UPI",
-      amount: "50000.00",
-      recipient: "Mingree Escrow Vault",
-      sponsor: "UrbanFit Tech",
-      status: "completed",
-      date: "2024-02-20T10:30:00.000Z",
-    },
-    {
-      id: 303,
-      type: "CREATOR_WITHDRAWAL",
-      description: "UPI withdrawal transfer",
-      amount: "6000.00",
-      recipient: "Aarav Sharma (aarav@oksbi)",
-      sponsor: "Mingree System",
-      status: "completed",
-      date: "2024-02-15T16:00:00.000Z",
-    }
-  ]);
+  res.json(adminTransactions);
 });
 
 // UPI Payments
-let adminUpiPayments = [
-  {
-    id: 401,
-    sponsorId: 2,
-    sponsorName: "GlowAura Organics",
-    amount: "25000.00",
-    utrNumber: "405678912345",
-    status: "pending",
-    screenshotUrl: "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=400",
-    createdAt: "2024-03-02T11:20:00.000Z",
-  }
-];
+let adminUpiPayments: any[] = [];
 
 app.get("/api/admin/upi-payments", (req, res) => {
   res.json(adminUpiPayments);
@@ -3287,41 +2802,7 @@ app.delete("/api/admin/promo-codes/:id", (req, res) => {
 });
 
 // Support tickets
-let adminSupportTickets = [
-  {
-    id: 601,
-    userId: 1,
-    userName: "Aarav Sharma",
-    userEmail: "creator@mingree.com",
-    role: "creator",
-    subject: "Instagram OAuth Verification Sync",
-    message: "I linked my business account and wanted to confirm my reach verification is active.",
-    status: "open",
-    priority: "normal",
-    createdAt: "2024-03-01T10:00:00.000Z",
-    replies: [
-      {
-        id: 1,
-        sender: "admin",
-        message: "Hello Aarav, your Instagram business token is active and verified by Mingree security.",
-        createdAt: "2024-03-01T11:00:00.000Z",
-      }
-    ]
-  },
-  {
-    id: 602,
-    userId: 2,
-    userName: "GlowAura Organics",
-    userEmail: "brand@mingree.com",
-    role: "sponsor",
-    subject: "Custom Brand Campaign Budget Expansion",
-    message: "We are planning to increase our monthly creator budget to Rs 5 Lakhs.",
-    status: "open",
-    priority: "high",
-    createdAt: "2024-03-02T08:30:00.000Z",
-    replies: []
-  }
-];
+let adminSupportTickets: any[] = [];
 
 app.get("/api/admin/support-tickets", (req, res) => {
   res.json(adminSupportTickets);

@@ -30,7 +30,7 @@ export const SponsorDashboard: React.FC<SponsorDashboardProps> = ({
   onNavigateToCampaigns,
 }) => {
   const pendingSubmissions = submissions.filter((s) => s.status === 'submitted');
-  const myCampaigns = campaigns.filter((c) => c.sponsorName === sponsor.companyName || c.brand === 'GlowAura');
+  const myCampaigns = campaigns.filter((c: any) => c.sponsorId === (sponsor as any).id || c.sponsorName === sponsor.companyName || c.brand === sponsor.companyName);
 
   return (
     <div className="p-4 space-y-4 pb-20">
