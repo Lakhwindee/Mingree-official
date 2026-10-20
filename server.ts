@@ -48,8 +48,24 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+const DATA_DIR = process.env.VERCEL ? "/tmp" : process.cwd();
+function getDataFilePath(filename: string): string {
+  const target = path.join(DATA_DIR, filename);
+  if (process.env.VERCEL && !fs.existsSync(target)) {
+    const source = path.join(process.cwd(), filename);
+    if (fs.existsSync(source)) {
+      try {
+        fs.copyFileSync(source, target);
+      } catch (e) {
+        // ignore
+      }
+    }
+  }
+  return target;
+}
+
 // Path for persisted settings (allows admin to update Gmail credentials without container rebuild)
-const SETTINGS_FILE = path.join(process.cwd(), "app_settings.json");
+const SETTINGS_FILE = getDataFilePath("app_settings.json");
 
 function loadSettings(): Record<string, string> {
   try {
@@ -433,7 +449,7 @@ app.post("/api/admin/api-keys", (req, res) => {
 });
 
 // Path for persisted user profile data
-const USER_PROFILE_FILE = path.join(process.cwd(), "user_profile.json");
+const USER_PROFILE_FILE = getDataFilePath("user_profile.json");
 
 const defaultUserProfile: Record<string, any> = {
   id: 1,
@@ -536,7 +552,7 @@ const defaultSponsorProfile: Record<string, any> = {
 };
 
 // Registered Users Store & Persistence
-const USERS_FILE = path.join(process.cwd(), "registered_users.json");
+const USERS_FILE = getDataFilePath("registered_users.json");
 
 interface RegisteredUser {
   id: number;
@@ -896,8 +912,8 @@ app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], (re
 });
 
 // ================= CAMPAIGNS & RESERVATIONS SYSTEM =================
-const CAMPAIGNS_FILE = path.join(process.cwd(), "campaigns.json");
-const RESERVATIONS_FILE = path.join(process.cwd(), "reservations.json");
+const CAMPAIGNS_FILE = getDataFilePath("campaigns.json");
+const RESERVATIONS_FILE = getDataFilePath("reservations.json");
 
 const initialCampaignsData: any[] = [];
 
@@ -2308,7 +2324,7 @@ app.post("/api/admin/security/unlock-identity", (req, res) => {
 });
 
 // Notifications Persistence & Management
-const USER_NOTIFICATIONS_FILE = path.join(process.cwd(), "user_notifications.json");
+const USER_NOTIFICATIONS_FILE = getDataFilePath("user_notifications.json");
 
 function loadUserNotifications(): any[] {
   try {
@@ -2845,7 +2861,7 @@ app.post("/api/admin/newsletter/broadcast", (req, res) => {
 });
 
 // ================= CATEGORIES & GROUPS APIS =================
-const CATEGORY_SUBSCRIPTIONS_FILE = path.join(process.cwd(), "category_subscriptions.json");
+const CATEGORY_SUBSCRIPTIONS_FILE = getDataFilePath("category_subscriptions.json");
 
 interface CategorySubscriptionRecord {
   id: number;
