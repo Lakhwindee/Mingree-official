@@ -59,6 +59,12 @@ function getDataFilePath(filename: string): string {
       } catch (e) {
         // ignore
       }
+    } else {
+      try {
+        fs.writeFileSync(target, "{}", "utf-8");
+      } catch (e) {
+        // ignore
+      }
     }
   }
   return target;
@@ -3169,6 +3175,11 @@ if (!process.env.VERCEL) {
     app.get("*", (req, res, next) => {
       if (req.path.startsWith("/api")) return next();
       res.sendFile(path.join(distPath, "index.html"));
+    });
+  } else {
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api")) return next();
+      res.status(200).send("Mingree Full-Stack App is running successfully!");
     });
   }
 }

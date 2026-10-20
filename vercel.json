@@ -6,7 +6,7 @@
       "src": "server.ts",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["dist/**"]
+        "includeFiles": ["dist/**", "app_settings.json", "user_profile.json"]
       }
     }
   ],
