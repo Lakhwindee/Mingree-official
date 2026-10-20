@@ -1,23 +1,19 @@
 {
   "version": 2,
   "buildCommand": "npm run build",
-  "builds": [
-    {
-      "src": "dist/server.cjs",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "dist/**",
-          "app_settings.json",
-          "user_profile.json"
-        ]
-      }
+  "functions": {
+    "dist/server.cjs": {
+      "includeFiles": [
+        "dist/**",
+        "app_settings.json",
+        "user_profile.json"
+      ]
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/(.*)",
-      "dest": "dist/server.cjs"
+      "source": "/(.*)",
+      "destination": "/dist/server.cjs"
     }
   ]
 }
