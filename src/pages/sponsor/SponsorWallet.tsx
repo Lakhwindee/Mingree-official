@@ -424,6 +424,86 @@ export default function SponsorWallet() {
     }
   };
 
+  const handleCashfreePayment = async () => {
+    const baseAmount = parseFloat(depositAmount);
+    if (isNaN(baseAmount) || baseAmount <= 0) {
+      toast.error("Please enter a valid amount");
+      return;
+    }
+
+    if (!sponsor) {
+      toast.error("Sponsor not found");
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      if (typeof window.Cashfree === 'undefined') {
+        throw new Error("Cashfree SDK failed to load. Please refresh the page.");
+      }
+
+      const orderRes = await fetch("/api/cashfree/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: isTaxExempt ? baseAmount : calculateDepositWithGST(baseAmount).totalPayable,
+          sponsorId: sponsor.id,
+          customerName: sponsor.name,
+          customerEmail: sponsor.email,
+          customerPhone: (sponsor as any).phone || "9999999999",
+          purpose: "wallet_deposit",
+        }),
+      });
+
+      const orderData = await orderRes.json();
+      if (!orderRes.ok || !orderData.success) {
+        throw new Error(orderData.error || "Failed to create Cashfree order");
+      }
+
+      const cashfree = window.Cashfree({
+        mode: "sandbox",
+      });
+
+      const checkoutOptions = {
+        paymentSessionId: orderData.payment_session_id,
+        redirectTarget: "_modal",
+      };
+
+      cashfree.checkout(checkoutOptions).then(async (result: any) => {
+        try {
+          const verifyRes = await fetch("/api/cashfree/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: orderData.order_id,
+              sponsorId: sponsor.id,
+              amount: isTaxExempt ? baseAmount : calculateDepositWithGST(baseAmount).totalPayable,
+              purpose: "wallet_deposit",
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          if (verifyData.success) {
+            toast.success(`Cashfree Payment successful! ₹${verifyData.walletCredit} added to wallet.`);
+            queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
+            queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
+            setDepositAmount("");
+            setIsDepositOpen(false);
+          } else {
+            toast.error(verifyData.error || "Payment verification failed");
+          }
+        } catch {
+          toast.error("Failed to verify Cashfree payment");
+        }
+        setIsProcessing(false);
+      });
+    } catch (error: any) {
+      console.error("Cashfree payment error:", error);
+      toast.error(error.message || "Failed to initiate Cashfree payment");
+      setIsProcessing(false);
+    }
+  };
+
   // Handle Stripe payment for international users
   const handleStripePayment = async () => {
     const baseAmount = parseFloat(depositAmount);
@@ -813,16 +893,27 @@ export default function SponsorWallet() {
                           </div>
                           
                           <Button
-                            className="w-full bg-blue-600"
+                            className="w-full bg-blue-600 mb-2"
                             onClick={handleRazorpayPayment}
                             disabled={isProcessing || !depositAmount}
                             data-testid="button-confirm-deposit"
                           >
                             <CreditCard className="h-4 w-4 mr-2" />
-                            {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)}` : "Pay Now"}
+                            {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)} (Razorpay)` : "Pay with Razorpay"}
                           </Button>
-                          <p className="text-xs text-center text-muted-foreground">
-                            UPI, Cards, Net Banking - Powered by Razorpay
+
+                          <Button
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                            onClick={handleCashfreePayment}
+                            disabled={isProcessing || !depositAmount}
+                            data-testid="button-confirm-cashfree-deposit"
+                          >
+                            <CreditCard className="h-4 w-4 mr-2" />
+                            {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)} (Cashfree)` : "Pay with Cashfree"}
+                          </Button>
+
+                          <p className="text-xs text-center text-muted-foreground mt-2">
+                            UPI, Cards, Net Banking - Powered by Razorpay & Cashfree
                           </p>
                           
                           <div className="flex items-center gap-2 justify-center text-xs text-muted-foreground">

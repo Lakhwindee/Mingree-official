@@ -351,6 +351,77 @@ export default function Subscription() {
     window.location.href = upiLink;
   };
 
+  const handleCashfreeSubscriptionPayment = async () => {
+    if (!user) return;
+    setIsProcessing(true);
+    try {
+      const finalAmount = calculateFinalAmount();
+      const orderRes = await fetch("/api/cashfree/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          amount: finalAmount,
+          userId: user.id,
+          customerName: billingDetails.name || user.name,
+          customerEmail: billingDetails.email || user.email,
+          customerPhone: billingDetails.phone || "9999999999",
+          purpose: "subscription",
+        }),
+      });
+
+      const orderData = await orderRes.json();
+      if (!orderRes.ok || !orderData.success) {
+        throw new Error(orderData.error || "Failed to create Cashfree order");
+      }
+
+      if (typeof window.Cashfree === 'undefined') {
+        throw new Error("Cashfree SDK failed to load. Please refresh the page.");
+      }
+
+      const cashfree = window.Cashfree({
+        mode: "sandbox",
+      });
+
+      const checkoutOptions = {
+        paymentSessionId: orderData.payment_session_id,
+        redirectTarget: "_modal",
+      };
+
+      cashfree.checkout(checkoutOptions).then(async (result: any) => {
+        try {
+          const verifyRes = await fetch("/api/cashfree/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              orderId: orderData.order_id,
+              userId: user.id,
+              amount: finalAmount,
+              purpose: "subscription",
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          if (verifyData.success) {
+            toast.success("Cashfree Payment successful! Pro subscription activated.");
+            queryClient.invalidateQueries({ queryKey: ["subscription"] });
+            queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+            refetchSubscription();
+            setShowCheckout(false);
+          } else {
+            toast.error(verifyData.error || "Payment verification failed");
+          }
+        } catch {
+          toast.error("Failed to verify payment");
+        }
+        setIsProcessing(false);
+      });
+    } catch (error: any) {
+      toast.error(error.message || "Failed to initiate Cashfree payment");
+      setIsProcessing(false);
+    }
+  };
+
   const calculateFinalAmount = () => {
     const basePrice = SUBSCRIPTION_PLANS.pro.price;
     if (promoValidation?.type === "trial") {
@@ -592,6 +663,34 @@ export default function Subscription() {
             </div>
           ) : checkoutStep === "upi" ? (
             <div className="space-y-5">
+              <Card className="bg-gradient-to-r from-indigo-950/60 to-purple-950/60 border-indigo-500/40">
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-5 h-5 text-yellow-400" />
+                      <span className="font-semibold text-white">Instant Online Checkout</span>
+                    </div>
+                    <Badge className="bg-indigo-600 text-white">Recommended</Badge>
+                  </div>
+                  <p className="text-xs text-gray-300">Pay securely via UPI, Credit/Debit Card, Net Banking, or Wallets powered by Cashfree.</p>
+                  <Button
+                    className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold py-3 h-11"
+                    onClick={handleCashfreeSubscriptionPayment}
+                    disabled={isProcessing}
+                    data-testid="button-cashfree-sub-pay"
+                  >
+                    <CreditCard className="w-4 h-4 mr-2" />
+                    {isProcessing ? "Processing..." : `Pay ₹${calculateFinalAmount()} with Cashfree`}
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-gray-700"></div>
+                <span className="flex-shrink mx-3 text-xs text-gray-500 uppercase">Or Manual UPI Transfer</span>
+                <div className="flex-grow border-t border-gray-700"></div>
+              </div>
+
               <Card className="bg-gray-800/50 border-gray-700">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between gap-4">

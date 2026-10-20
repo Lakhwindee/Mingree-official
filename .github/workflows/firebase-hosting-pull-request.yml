@@ -16,4 +16,4 @@ jobs:
         with:
           repoToken: '${{ secrets.GITHUB_TOKEN }}'
           token: '${{ secrets.FIREBASE_TOKEN }}'
-          projectId: gen-lang-client-0314158911
+          projectId: ai-studio-mingreeandroidin-b4114990-d848-40b1-aa42-e9bb90e49b69
