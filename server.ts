@@ -3,7 +3,6 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
-import { createServer as createViteServer } from "vite";
 import { PROMOTION_CATEGORIES } from "./shared/schema";
 import {
   checkRateLimitAndFarming,
@@ -24,6 +23,16 @@ const PORT = process.env.RENDER ? (Number(process.env.PORT) || 3000) : 3000;
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// For Vercel Serverless Function: normalize URL if /api prefix is stripped by rewrite
+if (process.env.VERCEL) {
+  app.use((req, res, next) => {
+    if (req.url && !req.url.startsWith("/api")) {
+      req.url = `/api${req.url.startsWith("/") ? "" : "/"}${req.url}`;
+    }
+    next();
+  });
+}
 
 // Health check endpoint for Render.com deployment and load balancers
 app.get("/api/health", (req, res) => {
@@ -123,6 +132,51 @@ interface StoredOtp {
   name?: string;
 }
 const otpStore = new Map<string, StoredOtp>();
+const OTP_STORE_FILE = getDataFilePath("otp_store.json");
+
+function setOtpRecord(email: string, data: StoredOtp) {
+  otpStore.set(email, data);
+  try {
+    let store: Record<string, StoredOtp> = {};
+    if (fs.existsSync(OTP_STORE_FILE)) {
+      store = JSON.parse(fs.readFileSync(OTP_STORE_FILE, "utf-8"));
+    }
+    store[email] = data;
+    fs.writeFileSync(OTP_STORE_FILE, JSON.stringify(store), "utf-8");
+  } catch (e) {
+    // ignore
+  }
+}
+
+function getOtpRecord(email: string): StoredOtp | undefined {
+  const inMem = otpStore.get(email);
+  if (inMem) return inMem;
+  try {
+    if (fs.existsSync(OTP_STORE_FILE)) {
+      const store: Record<string, StoredOtp> = JSON.parse(fs.readFileSync(OTP_STORE_FILE, "utf-8"));
+      if (store[email]) {
+        otpStore.set(email, store[email]);
+        return store[email];
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return undefined;
+}
+
+function deleteOtpRecord(email: string) {
+  otpStore.delete(email);
+  try {
+    if (fs.existsSync(OTP_STORE_FILE)) {
+      const store: Record<string, StoredOtp> = JSON.parse(fs.readFileSync(OTP_STORE_FILE, "utf-8"));
+      delete store[email];
+      fs.writeFileSync(OTP_STORE_FILE, JSON.stringify(store), "utf-8");
+    }
+  } catch (e) {
+    // ignore
+  }
+}
 
 // Generate 6-digit OTP
 function generateOtp(): string {
@@ -208,7 +262,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
   const otp = generateOtp();
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
 
-  otpStore.set(cleanEmail, { otp, expiresAt, name });
+  setOtpRecord(cleanEmail, { otp, expiresAt, name });
   console.log(`[AUTH] Generated OTP for ${cleanEmail}: ${otp}`);
 
   const creds = getEmailCredentials();
@@ -241,13 +295,13 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const cleanEmail = email.toLowerCase().trim();
   const cleanOtp = String(otp).trim();
 
-  const stored = otpStore.get(cleanEmail);
+  const stored = getOtpRecord(cleanEmail);
   if (!stored) {
     return res.status(400).json({ error: "No OTP requested for this email or it has expired" });
   }
 
   if (Date.now() > stored.expiresAt) {
-    otpStore.delete(cleanEmail);
+    deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "OTP has expired. Please request a new one." });
   }
 
@@ -256,7 +310,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
   }
 
   // OTP verified, clear it
-  otpStore.delete(cleanEmail);
+  deleteOtpRecord(cleanEmail);
   return res.json({ success: true, message: "OTP verified successfully" });
 });
 
@@ -271,7 +325,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   const otp = generateOtp();
   const expiresAt = Date.now() + 10 * 60 * 1000;
 
-  otpStore.set(cleanEmail, { otp, expiresAt, name: "User" });
+  setOtpRecord(cleanEmail, { otp, expiresAt, name: "User" });
   console.log(`[AUTH] Forgot password OTP for ${cleanEmail}: ${otp}`);
 
   const creds = getEmailCredentials();
@@ -301,13 +355,13 @@ app.post("/api/auth/verify-reset-otp", (req, res) => {
   const cleanEmail = email.toLowerCase().trim();
   const cleanOtp = String(otp).trim();
 
-  const stored = otpStore.get(cleanEmail);
+  const stored = getOtpRecord(cleanEmail);
   if (!stored) {
     return res.status(400).json({ error: "Invalid or expired reset code" });
   }
 
   if (Date.now() > stored.expiresAt) {
-    otpStore.delete(cleanEmail);
+    deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "Reset code has expired" });
   }
 
@@ -315,7 +369,7 @@ app.post("/api/auth/verify-reset-otp", (req, res) => {
     return res.status(400).json({ error: "Invalid code" });
   }
 
-  otpStore.delete(cleanEmail);
+  deleteOtpRecord(cleanEmail);
   return res.json({ success: true, message: "Code verified successfully" });
 });
 
@@ -3132,6 +3186,7 @@ app.all("/api/*", (req, res) => {
 // ================= VITE MIDDLEWARE & SERVER START =================
 async function startServer() {
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

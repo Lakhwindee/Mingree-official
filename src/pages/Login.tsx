@@ -34,7 +34,13 @@ export default function Login() {
         credentials: "include",
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Login failed");

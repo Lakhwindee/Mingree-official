@@ -121,7 +121,13 @@ export default function Signup() {
         body: JSON.stringify({ email, name }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error("Server returned an invalid response. Please verify your connection or try again.");
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Failed to send OTP. Please try again.");
@@ -164,7 +170,14 @@ export default function Signup() {
         body: JSON.stringify({ email, otp }),
       });
 
-      const verifyData = await verifyResponse.json();
+      let verifyData: any = {};
+      try {
+        const text = await verifyResponse.text();
+        verifyData = text ? JSON.parse(text) : {};
+      } catch {
+        verifyData = {};
+      }
+
       if (!verifyResponse.ok) {
         throw new Error(verifyData.error || "Invalid or expired OTP");
       }
@@ -203,7 +216,13 @@ export default function Signup() {
         credentials: "include",
       });
 
-      const signupData = await signupResponse.json();
+      let signupData: any = {};
+      try {
+        const sText = await signupResponse.text();
+        signupData = sText ? JSON.parse(sText) : {};
+      } catch {
+        signupData = {};
+      }
 
       if (!signupResponse.ok) {
         throw new Error(signupData.error || "Signup failed");
@@ -252,8 +271,15 @@ export default function Signup() {
         body: JSON.stringify({ email, name }),
       });
 
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
+
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.error || "Failed to resend OTP");
       }
 

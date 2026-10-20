@@ -45,7 +45,13 @@ export default function ForgotPassword() {
         body: JSON.stringify({ email }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Failed to send reset code. Please try again.");
@@ -88,7 +94,14 @@ export default function ForgotPassword() {
         body: JSON.stringify({ email, otp }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
+
       if (!response.ok) {
         throw new Error(data.error || "Invalid or expired code");
       }
@@ -136,7 +149,13 @@ export default function ForgotPassword() {
         body: JSON.stringify({ email, otp, newPassword }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = {};
+      }
 
       if (!response.ok) {
         throw new Error(data.error || "Failed to reset password");
