@@ -1,11 +1,6 @@
 {
   "version": 2,
   "buildCommand": "npm run build",
-  "functions": {
-    "dist/server.cjs": {
-      "includeFiles": "dist/**"
-    }
-  },
   "rewrites": [
     {
       "source": "/(.*)",
