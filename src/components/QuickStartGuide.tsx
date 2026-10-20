@@ -99,10 +99,14 @@ export function QuickStartGuide({ userRole, onComplete }: QuickStartGuideProps) 
 
   useEffect(() => {
     if (step.targetSelector) {
-      const element = document.querySelector(step.targetSelector);
-      if (element) {
-        element.classList.add("guide-highlight");
-        return () => element.classList.remove("guide-highlight");
+      try {
+        const element = document.querySelector(step.targetSelector);
+        if (element) {
+          element.classList.add("guide-highlight");
+          return () => element.classList.remove("guide-highlight");
+        }
+      } catch (err) {
+        console.warn("Guide querySelector error:", err);
       }
     }
   }, [currentStep, step.targetSelector]);

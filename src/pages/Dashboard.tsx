@@ -37,18 +37,23 @@ export default function Dashboard() {
     enabled: !!user,
   });
 
-  // Handle URL query parameters if redirected from external flow
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("instagram_connected") === "true") {
-      const username = params.get("username");
-      toast.success(username ? `Instagram @${username} connected successfully!` : "Instagram connected successfully!");
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      window.history.replaceState({}, "", "/dashboard");
-    } else if (params.get("instagram_error")) {
-      toast.error(`Instagram connection error: ${params.get("instagram_error")}`);
-      window.history.replaceState({}, "", "/dashboard");
-    }
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("instagram_connected") === "true") {
+        const username = params.get("username");
+        toast.success(username ? `Instagram @${username} connected successfully!` : "Instagram connected successfully!");
+        queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+        try {
+          window.history.replaceState({}, "", "/dashboard");
+        } catch {}
+      } else if (params.get("instagram_error")) {
+        toast.error(`Instagram connection error: ${params.get("instagram_error")}`);
+        try {
+          window.history.replaceState({}, "", "/dashboard");
+        } catch {}
+      }
+    } catch {}
   }, [queryClient]);
 
   if (!activeUser) {

@@ -92,18 +92,24 @@ export default function Profile() {
   }, [activeUser]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('instagram_connected') === 'true') {
-      const username = params.get('username');
-      toast.success(username ? `Instagram @${username} connected successfully!` : "Instagram connected successfully!");
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      window.history.replaceState({}, '', '/profile');
-    }
-    const error = params.get('error');
-    if (error) {
-      toast.error(`Instagram connection error: ${error.replace(/_/g, ' ')}`);
-      window.history.replaceState({}, '', '/profile');
-    }
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('instagram_connected') === 'true') {
+        const username = params.get('username');
+        toast.success(username ? `Instagram @${username} connected successfully!` : "Instagram connected successfully!");
+        queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+        try {
+          window.history.replaceState({}, '', '/profile');
+        } catch {}
+      }
+      const error = params.get('error');
+      if (error) {
+        toast.error(`Instagram connection error: ${error.replace(/_/g, ' ')}`);
+        try {
+          window.history.replaceState({}, '', '/profile');
+        } catch {}
+      }
+    } catch {}
 
     // Listen for cross-window message from OAuth popup
     const handleMessage = (event: MessageEvent) => {
@@ -150,8 +156,8 @@ export default function Profile() {
 
       const width = 580;
       const height = 740;
-      const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
-      const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+      const left = Math.floor(window.screenX + Math.max(0, (window.outerWidth - width) / 2));
+      const top = Math.floor(window.screenY + Math.max(0, (window.outerHeight - height) / 2));
 
       let popup: Window | null = null;
       try {
