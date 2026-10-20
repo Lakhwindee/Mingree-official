@@ -3,11 +3,7 @@
   "buildCommand": "npm run build",
   "functions": {
     "dist/server.cjs": {
-      "includeFiles": [
-        "dist/**",
-        "app_settings.json",
-        "user_profile.json"
-      ]
+      "includeFiles": "dist/**"
     }
   },
   "rewrites": [
