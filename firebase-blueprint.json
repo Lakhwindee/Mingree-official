@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and creator/sponsor accounts",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["creator", "sponsor", "admin"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "role"]
+    },
+    "Campaign": {
+      "title": "Campaign",
+      "description": "Campaigns created by sponsors",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "budget": { "type": "number" },
+        "sponsorId": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "title", "sponsorId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles collection"
+    },
+    "/campaigns/{campaignId}": {
+      "schema": { "$ref": "#/entities/Campaign" },
+      "description": "Campaigns collection"
+    }
+  }
+}
