@@ -47,8 +47,7 @@ interface InstagramOAuthState {
 }
 const instagramOAuthStates = new Map<string, InstagramOAuthState>();
 
-// Periodic cleanup of expired states (> 15 minutes)
-setInterval(() => {
+const oauthCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [stateKey, stateVal] of instagramOAuthStates.entries()) {
     if (now - stateVal.createdAt > 15 * 60 * 1000) {
@@ -56,6 +55,9 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000);
+if (oauthCleanupTimer && typeof oauthCleanupTimer.unref === "function") {
+  oauthCleanupTimer.unref();
+}
 
 const DATA_DIR = process.env.VERCEL ? "/tmp" : process.cwd();
 function getDataFilePath(filename: string): string {
@@ -3203,30 +3205,20 @@ async function startServer() {
     }
   }
 
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  }
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 }
 
-if (!process.env.VERCEL) {
+const isDirectRun = Boolean(
+  process.argv[1] &&
+  (process.argv[1].endsWith("server.ts") ||
+   process.argv[1].endsWith("server.cjs") ||
+   process.argv[1].endsWith("server.js"))
+);
+
+if (isDirectRun && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
   startServer();
-} else {
-  // Initialize static middleware for Vercel
-  const distPath = path.join(process.cwd(), "dist");
-  if (fs.existsSync(distPath)) {
-    app.use(express.static(distPath));
-    app.get("*", (req, res, next) => {
-      if (req.path.startsWith("/api")) return next();
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  } else {
-    app.get("*", (req, res, next) => {
-      if (req.path.startsWith("/api")) return next();
-      res.status(200).send("Mingree Full-Stack App is running successfully!");
-    });
-  }
 }
 
 export default app;
