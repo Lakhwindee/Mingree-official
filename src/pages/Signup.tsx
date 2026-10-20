@@ -130,8 +130,10 @@ export default function Signup() {
       setStep("otp");
       setResendTimer(60);
       toast({
-        title: "OTP Sent to Mail!",
-        description: `A 6-digit verification code was emailed to ${email}`,
+        title: data.emailConfigured ? "OTP Sent to Mail!" : "OTP Generated (Demo Mode)",
+        description: data.emailConfigured 
+          ? `A 6-digit verification code was emailed to ${email}`
+          : `Demo OTP code is: ${data.debugOtp} (Configure Gmail in Admin panel for live emails)`,
       });
     } catch (error: any) {
       toast({
