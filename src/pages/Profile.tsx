@@ -49,7 +49,12 @@ import { useAuth } from "@/lib/auth-context";
 
 function getCleanErrorMessage(err: unknown, defaultMsg: string): string {
   if (err instanceof Error && err.message) {
-    if (err.message.includes("pattern") || err.message.includes("SyntaxError")) {
+    if (
+      err.message.includes("pattern") ||
+      err.message.includes("SyntaxError") ||
+      err.message.includes("DOMException") ||
+      err.message.includes("match the expected pattern")
+    ) {
       return defaultMsg;
     }
     return err.message;
@@ -148,17 +153,28 @@ export default function Profile() {
       const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
       const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
 
-      const popup = window.open(
-        popupUrl,
-        isFramed && isMobile ? "_blank" : "instagram_oauth_popup",
-        isFramed && isMobile ? undefined : `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes,status=no,toolbar=no`
-      );
+      let popup: Window | null = null;
+      try {
+        popup = window.open(
+          popupUrl,
+          "instagram_oauth_popup",
+          `width=${width},height=${height},left=${left},top=${top}`
+        );
+      } catch (err) {
+        console.warn("Popup launch error:", err);
+        window.location.href = popupUrl;
+        return;
+      }
 
       if (!popup || popup.closed || typeof popup.closed === "undefined") {
         if (!isFramed) {
           window.location.href = popupUrl;
         } else {
-          window.open(popupUrl, "_blank");
+          try {
+            window.open(popupUrl, "_blank");
+          } catch {
+            window.location.href = popupUrl;
+          }
         }
         return;
       }
@@ -183,7 +199,17 @@ export default function Profile() {
       }, 90000);
     } catch (error: any) {
       setIsConnectingInstagram(false);
-      toast.error(error.message || "Failed to launch Instagram popup. Please try again.");
+      const cleanMsg = getCleanErrorMessage(error, "Redirecting to Meta login...");
+      if (
+        error?.message?.includes("pattern") ||
+        error?.message?.includes("SyntaxError") ||
+        error?.message?.includes("DOMException") ||
+        error?.message?.includes("match the expected pattern")
+      ) {
+        window.location.href = `/api/instagram/login?userId=${user.id}&return_to=/profile`;
+        return;
+      }
+      toast.error(cleanMsg);
     }
   };
 
