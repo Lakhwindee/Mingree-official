@@ -1,4 +1,7 @@
 import { Sidebar } from "@/components/Sidebar";
+import { copyToClipboard } from "@/lib/utils";
+
+
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -263,9 +266,13 @@ export default function Subscription() {
   const { data: upiConfig } = useQuery({
     queryKey: ["upiConfig"],
     queryFn: async () => {
-      const res = await fetch("/api/subscription/upi-config", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load UPI config");
-      return res.json();
+      try {
+        const res = await fetch("/api/subscription/upi-config", { credentials: "include" });
+        if (!res.ok) return { upiId: "mingree@upi", payeeName: "Mingree Media" };
+        return await res.json();
+      } catch {
+        return { upiId: "mingree@upi", payeeName: "Mingree Media" };
+      }
     },
   });
 
@@ -335,20 +342,35 @@ export default function Subscription() {
     }
   };
 
-  const copyUpiId = () => {
-    if (upiConfig?.upiId) {
-      navigator.clipboard.writeText(upiConfig.upiId);
+  const copyUpiId = async () => {
+    const targetUpiId = upiConfig?.upiId || "mingree@upi";
+    const ok = await copyToClipboard(targetUpiId);
+    if (ok) {
       toast.success("UPI ID copied!");
+    } else {
+      toast.error(`UPI ID is: ${targetUpiId}`);
     }
   };
 
-  const openUpiApp = (app: string) => {
+  const openUpiApp = async (app: string) => {
     const finalAmount = calculateFinalAmount();
-    const upiId = upiConfig?.upiId || "";
+    const upiId = upiConfig?.upiId || "mingree@upi";
     const merchantName = "Mingree";
     const note = "Pro Subscription";
     const upiLink = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(merchantName)}&am=${finalAmount}&cu=INR&tn=${encodeURIComponent(note)}`;
-    window.location.href = upiLink;
+
+    try {
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = upiLink;
+      } else {
+        await copyUpiId();
+        toast.info("UPI ID copied! Open your UPI app on mobile to scan/pay.");
+      }
+    } catch {
+      await copyUpiId();
+      toast.info("UPI ID copied! Please paste it in your payment app.");
+    }
   };
 
   const handleCashfreeSubscriptionPayment = async () => {
@@ -379,8 +401,10 @@ export default function Subscription() {
         throw new Error("Cashfree SDK failed to load. Please refresh the page.");
       }
 
+      const configRes = await fetch("/api/cashfree/config").then(r => r.json()).catch(() => ({ mode: "sandbox" }));
+
       const cashfree = window.Cashfree({
-        mode: "sandbox",
+        mode: configRes.mode || configRes.environment || "sandbox",
       });
 
       const checkoutOptions = {

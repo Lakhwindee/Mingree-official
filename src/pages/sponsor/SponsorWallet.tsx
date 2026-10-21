@@ -461,8 +461,10 @@ export default function SponsorWallet() {
         throw new Error(orderData.error || "Failed to create Cashfree order");
       }
 
+      const configRes = await fetch("/api/cashfree/config").then(r => r.json()).catch(() => ({ mode: "sandbox" }));
+
       const cashfree = window.Cashfree({
-        mode: "sandbox",
+        mode: configRes.mode || configRes.environment || "sandbox",
       });
 
       const checkoutOptions = {

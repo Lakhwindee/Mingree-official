@@ -10,6 +10,7 @@ import { Gift, Star, Copy, Check, Tag, Clock, Sparkles, Crown } from "lucide-rea
 import { useState } from "react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { copyToClipboard as copyUtil } from "@/lib/utils";
 
 interface PromoCodeNotification {
   id: number;
@@ -44,13 +45,13 @@ export default function Offers() {
   };
 
   const copyToClipboard = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
+    const ok = await copyUtil(code);
+    if (ok) {
       setCopiedCode(code);
       toast.success("Promo code copied!");
       setTimeout(() => setCopiedCode(null), 2000);
-    } catch (err) {
-      toast.error("Failed to copy");
+    } else {
+      toast.error(`Code is: ${code}`);
     }
   };
 

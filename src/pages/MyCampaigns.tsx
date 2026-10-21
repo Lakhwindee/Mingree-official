@@ -1,4 +1,6 @@
+import { copyToClipboard } from "@/lib/utils";
 import { Sidebar } from "@/components/Sidebar";
+
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -532,8 +534,8 @@ export default function MyCampaigns() {
                             key={idx} 
                             variant="outline" 
                             className="text-xs py-1 px-2 bg-primary/5 text-primary border-primary/20 font-medium cursor-pointer hover:bg-primary/10"
-                            onClick={() => {
-                              navigator.clipboard.writeText(`@${mention}`);
+                            onClick={async () => {
+                              await copyToClipboard(`@${mention}`);
                               toast.success(`Copied @${mention}`);
                             }}
                           >

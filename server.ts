@@ -2802,24 +2802,66 @@ app.get("/api/admin/transactions", (req, res) => {
   res.json(adminTransactions);
 });
 
-// UPI Payments
+// UPI Payments Config & User Submissions
 let adminUpiPayments: any[] = [];
 
-app.get("/api/admin/upi-payments", (req, res) => {
-  res.json(adminUpiPayments);
+app.get("/api/subscription/upi-config", (req, res) => {
+  res.json({
+    upiId: "mingree@upi",
+    payeeName: "Mingree Media",
+    qrCodeUrl: ""
+  });
 });
 
-app.post("/api/admin/upi-payments/:id/approve", (req, res) => {
+app.post("/api/subscription/upi-payment", (req, res) => {
+  const { utrNumber, amount, promoCode } = req.body;
+  if (!utrNumber || !utrNumber.trim()) {
+    return res.status(400).json({ error: "UTR / Transaction Reference Number is required" });
+  }
+
+  const newPayment = {
+    id: Date.now(),
+    paymentId: utrNumber.trim(),
+    amount: Number(amount) || 499,
+    status: "pending",
+    promoCode: promoCode || null,
+    createdAt: new Date().toISOString(),
+    user: {
+      id: currentUserProfile.id || "1",
+      name: currentUserProfile.name || "Creator",
+      email: currentUserProfile.email || "creator@mingree.com",
+      handle: currentUserProfile.instagramHandle || currentUserProfile.handle || "creator"
+    }
+  };
+
+  adminUpiPayments.push(newPayment);
+  res.json({ success: true, message: "UPI Payment submitted successfully for verification", payment: newPayment });
+});
+
+app.get(["/api/admin/pending-upi-payments", "/api/admin/upi-payments"], (req, res) => {
+  const pending = adminUpiPayments.filter(p => p.status === "pending");
+  res.json(pending);
+});
+
+app.post(["/api/admin/pending-upi-payments/:id/approve", "/api/admin/upi-payments/:id/approve"], (req, res) => {
   const id = Number(req.params.id);
   const p = adminUpiPayments.find(item => item.id === id);
-  if (p) p.status = "approved";
+  if (p) {
+    p.status = "approved";
+    currentUserProfile.subscriptionPlan = "pro";
+    currentUserProfile.subscriptionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  }
   res.json({ success: true, payment: p });
 });
 
-app.post("/api/admin/upi-payments/:id/reject", (req, res) => {
+app.post(["/api/admin/pending-upi-payments/:id/reject", "/api/admin/upi-payments/:id/reject"], (req, res) => {
   const id = Number(req.params.id);
+  const { reason } = req.body;
   const p = adminUpiPayments.find(item => item.id === id);
-  if (p) p.status = "rejected";
+  if (p) {
+    p.status = "rejected";
+    p.rejectReason = reason || "Payment verification failed";
+  }
   res.json({ success: true, payment: p });
 });
 
@@ -2829,7 +2871,7 @@ let adminPromoCodes = [
     id: 501,
     code: "LAUNCH50",
     discountPercent: 50,
-    validUntil: "2025-12-31",
+    validUntil: "2026-12-31",
     usageCount: 42,
     maxUsage: 500,
     isActive: true,
@@ -2838,7 +2880,7 @@ let adminPromoCodes = [
     id: 502,
     code: "PROCREATOR",
     discountPercent: 25,
-    validUntil: "2025-09-30",
+    validUntil: "2026-09-30",
     usageCount: 18,
     maxUsage: 200,
     isActive: true,
@@ -2849,12 +2891,58 @@ app.get("/api/admin/promo-codes", (req, res) => {
   res.json(adminPromoCodes);
 });
 
+app.post("/api/promo-codes/validate", (req, res) => {
+  const { code } = req.body;
+  if (!code) {
+    return res.status(400).json({ error: "Promo code is required" });
+  }
+
+  const foundCode = adminPromoCodes.find(
+    (p) => p.code.toUpperCase() === code.trim().toUpperCase() && p.isActive
+  );
+
+  if (!foundCode) {
+    return res.status(404).json({ error: "Invalid or expired promo code" });
+  }
+
+  res.json({
+    valid: true,
+    code: foundCode.code,
+    type: foundCode.discountPercent === 100 ? "trial" : "discount",
+    discountPercent: foundCode.discountPercent,
+    trialDays: 7,
+    afterTrialAction: "continue"
+  });
+});
+
+app.post("/api/promo-codes/apply", (req, res) => {
+  const { code } = req.body;
+  const foundCode = adminPromoCodes.find(
+    (p) => p.code.toUpperCase() === (code || "").trim().toUpperCase() && p.isActive
+  );
+
+  if (!foundCode) {
+    return res.status(400).json({ error: "Invalid promo code" });
+  }
+
+  foundCode.usageCount = (foundCode.usageCount || 0) + 1;
+  currentUserProfile.subscriptionPlan = "pro";
+  currentUserProfile.subscriptionExpiresAt = new Date(
+    Date.now() + 30 * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  res.json({
+    success: true,
+    message: "Promo code applied! Pro subscription activated."
+  });
+});
+
 app.post("/api/admin/promo-codes", (req, res) => {
   const newCode = {
     id: Date.now(),
     code: (req.body.code || "PROMO").toUpperCase(),
     discountPercent: Number(req.body.discountPercent) || 20,
-    validUntil: req.body.validUntil || "2025-12-31",
+    validUntil: req.body.validUntil || "2026-12-31",
     usageCount: 0,
     maxUsage: Number(req.body.maxUsage) || 100,
     isActive: true,
@@ -3073,6 +3161,20 @@ app.post("/api/sponsors/:id/wallet/deposit", (req, res) => {
   });
 });
 
+app.get("/api/cashfree/config", (req, res) => {
+  const settings = loadSettings();
+  const appId = process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "";
+  const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "";
+  const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production";
+
+  res.json({
+    appId,
+    environment: isProd ? "production" : "sandbox",
+    mode: isProd ? "production" : "sandbox",
+    configured: Boolean(appId && secretKey),
+  });
+});
+
 app.post("/api/cashfree/create-order", async (req, res) => {
   try {
     const { amount, sponsorId, userId, customerName, customerEmail, customerPhone, purpose } = req.body;
@@ -3083,9 +3185,9 @@ app.post("/api/cashfree/create-order", async (req, res) => {
 
     const orderId = `cf_order_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     const settings = loadSettings();
-    const appId = process.env.CASHFREE_APP_ID || settings.cashfree_app_id || "";
-    const secretKey = process.env.CASHFREE_SECRET_KEY || settings.cashfree_secret_key || "";
-    const isProd = process.env.CASHFREE_MODE === "production" || settings.cashfree_mode === "production";
+    const appId = process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "";
+    const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "";
+    const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production";
 
     // If Cashfree live/sandbox API keys are available, call Cashfree API
     if (appId && secretKey) {
