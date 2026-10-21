@@ -7,6 +7,7 @@ import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
+import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES } from "./shared/schema";
 import {
   checkRateLimitAndFarming,
@@ -979,7 +980,8 @@ app.put("/api/users/:id/instagram", requireAuth, (req: AuthRequest, res) => {
     return res.status(403).json({ error: "Access denied" });
   }
   const user = req.user!;
-  const { instagramUsername, instagramProfileUrl, instagramFollowers } = req.body;
+  const { instagramUsername } = req.body;
+  // Unlinking is allowed
   if (!instagramUsername || !instagramUsername.trim()) {
     user.instagramUsername = null;
     user.instagramProfileUrl = null;
@@ -995,26 +997,10 @@ app.put("/api/users/:id/instagram", requireAuth, (req: AuthRequest, res) => {
     return res.json(sanitizeUser(user));
   }
 
-  const followersCount = Number(instagramFollowers) || 0;
-  const minRequired = getMinInstagramFollowers();
-  if (followersCount > 0 && followersCount < minRequired) {
-    return res.status(400).json({
-      error: `Minimum ${minRequired.toLocaleString()} followers required to connect an Instagram account on Mingree.`
-    });
-  }
-
-  const cleanUsername = instagramUsername.replace(/^@+/, "").trim();
-  user.instagramUsername = cleanUsername;
-  user.instagramProfileUrl = instagramProfileUrl || `https://instagram.com/${cleanUsername}`;
-  user.instagramFollowers = followersCount;
-  user.followers = followersCount;
-  
-  user.instagramVerificationCode = `MG-${Math.floor(10000 + Math.random() * 90000)}`;
-  user.instagramVerificationStatus = "verified";
-  user.isInstagramVerified = true;
-  user.instagramAccessToken = null;
-  saveRegisteredUsers();
-  res.json(sanitizeUser(user));
+  // Lock manual setting of followers / verification status
+  return res.status(400).json({
+    error: "Followers, media metrics, and verification status MUST be verified exclusively via official Meta Instagram OAuth. Manual profile metric overrides are disabled."
+  });
 });
 
 // POST /api/users/:id/instagram/disconnect
@@ -1111,6 +1097,259 @@ app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], req
   user.subscriptionExpiresAt = null;
   saveRegisteredUsers();
   res.json({ success: true, message: "Subscription cancelled successfully", plan: "free", isActive: false });
+});
+
+// ================= STEP 5: RATE CARDS, CREATOR SETTINGS & DIRECTORY =================
+
+// GET /api/users/:id/rate-card
+app.get("/api/users/:id/rate-card", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const user = registeredUsers.find((u) => u.id === targetId) || req.user!;
+  
+  const medianViews = user.medianViews || 5000;
+  const rawRates = user.rateCard || [
+    { deliverableType: "Reel with song", price: 2500 },
+    { deliverableType: "Story", price: 800 },
+    { deliverableType: "Collab post", price: 4000 }
+  ];
+
+  const rates = rawRates.map((r: any) => {
+    const price = Number(r.price) || 0;
+    const pricePer1k = medianViews > 0 ? Math.round((price / medianViews) * 1000) : 0;
+    return {
+      deliverableType: r.deliverableType,
+      price,
+      pricePer1k
+    };
+  });
+
+  const lastUpdated = user.rateCardLastUpdatedAt ? new Date(user.rateCardLastUpdatedAt).getTime() : 0;
+  const cooldownMs = CONFIG.RATE_CHANGE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+  const cooldownUntil = lastUpdated ? new Date(lastUpdated + cooldownMs).toISOString() : null;
+  const canUpdate = !lastUpdated || (Date.now() - lastUpdated >= cooldownMs) || req.user!.role === "admin";
+
+  res.json({
+    rates,
+    medianViews,
+    cooldownUntil,
+    canUpdate,
+    cooldownDays: CONFIG.RATE_CHANGE_COOLDOWN_DAYS,
+    benchmarkCpm: {
+      min: CONFIG.BENCHMARK_CPM_MIN,
+      max: CONFIG.BENCHMARK_CPM_MAX
+    }
+  });
+});
+
+// POST /api/users/:id/rate-card
+app.post("/api/users/:id/rate-card", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const user = registeredUsers.find((u) => u.id === targetId) || req.user!;
+  const { rates } = req.body;
+
+  if (!Array.isArray(rates) || rates.length === 0) {
+    return res.status(400).json({ error: "Rate card must include at least one rate entry" });
+  }
+
+  // Check Rate Change Cooldown
+  const lastUpdated = user.rateCardLastUpdatedAt ? new Date(user.rateCardLastUpdatedAt).getTime() : 0;
+  const cooldownMs = CONFIG.RATE_CHANGE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+  if (lastUpdated && (Date.now() - lastUpdated < cooldownMs) && req.user!.role !== "admin") {
+    const nextAllowedDate = new Date(lastUpdated + cooldownMs);
+    return res.status(400).json({
+      error: `Rate changes are allowed only once every ${CONFIG.RATE_CHANGE_COOLDOWN_DAYS} days. Next rate update allowed on ${nextAllowedDate.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" })}.`
+    });
+  }
+
+  const medianViews = user.medianViews || 5000;
+  const warnings: string[] = [];
+
+  const updatedRates = rates.map((item: any) => {
+    const price = Math.max(CONFIG.MIN_DEAL_AMOUNT || 300, Number(item.price) || 0);
+    const deliverableType = String(item.deliverableType || "Reel with song").trim();
+    const pricePer1k = medianViews > 0 ? Math.round((price / medianViews) * 1000) : 0;
+
+    if (pricePer1k > CONFIG.BENCHMARK_CPM_MAX) {
+      warnings.push(`'${deliverableType}' price (₹${price.toLocaleString()}) results in ₹${pricePer1k.toLocaleString()}/1k views, which exceeds the market benchmark (₹${CONFIG.BENCHMARK_CPM_MIN}-₹${CONFIG.BENCHMARK_CPM_MAX}/1k views).`);
+    }
+
+    return { deliverableType, price, pricePer1k };
+  });
+
+  user.rateCard = updatedRates;
+  user.rateCardLastUpdatedAt = new Date().toISOString();
+  saveRegisteredUsers();
+
+  res.json({
+    success: true,
+    message: "Rate card saved successfully",
+    rates: updatedRates,
+    warning: warnings.length > 0 ? warnings.join(" ") : null,
+    cooldownUntil: new Date(Date.now() + cooldownMs).toISOString()
+  });
+});
+
+// PUT /api/users/:id/creator-settings
+app.put("/api/users/:id/creator-settings", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const user = registeredUsers.find((u) => u.id === targetId) || req.user!;
+  const { isAvailable, genres, languages } = req.body;
+
+  if (typeof isAvailable === "boolean") user.isAvailable = isAvailable;
+  if (Array.isArray(genres)) user.genres = genres;
+  if (Array.isArray(languages)) user.languages = languages;
+
+  saveRegisteredUsers();
+  res.json(sanitizeUser(user));
+});
+
+// GET /api/creators/directory
+app.get("/api/creators/directory", requireAuth, (req: AuthRequest, res) => {
+  const {
+    tier,
+    genre,
+    language,
+    minMedianViews,
+    minIndiaPct,
+    maxCpm,
+    isAvailable,
+    sortBy = "value_score",
+    page = "1",
+    limit = "12"
+  } = req.query;
+
+  let creators = registeredUsers.filter((u) => u.role === "creator");
+
+  if (tier) {
+    creators = creators.filter((c) => (c.tier || "Starter").toLowerCase() === String(tier).toLowerCase());
+  }
+  if (genre) {
+    creators = creators.filter((c) => Array.isArray(c.genres) && c.genres.map((g: string) => g.toLowerCase()).includes(String(genre).toLowerCase()));
+  }
+  if (language) {
+    creators = creators.filter((c) => Array.isArray(c.languages) && c.languages.map((l: string) => l.toLowerCase()).includes(String(language).toLowerCase()));
+  }
+  if (minMedianViews) {
+    const minViews = Number(minMedianViews) || 0;
+    creators = creators.filter((c) => (c.medianViews || 5000) >= minViews);
+  }
+  if (minIndiaPct) {
+    const minInd = Number(minIndiaPct) || 0;
+    creators = creators.filter((c) => (c.indiaAudiencePct === null || c.indiaAudiencePct === undefined || Number(c.indiaAudiencePct) >= minInd));
+  }
+  if (isAvailable === "true") {
+    creators = creators.filter((c) => c.isAvailable !== false);
+  }
+
+  const mapped = creators.map((c) => {
+    const medianViews = c.medianViews || 5000;
+    const rates = c.rateCard || [
+      { deliverableType: "Reel with song", price: 2500 },
+      { deliverableType: "Story", price: 800 },
+      { deliverableType: "Collab post", price: 4000 }
+    ];
+    const reelPrice = Number(rates.find((r: any) => r.deliverableType === "Reel with song")?.price || 2500);
+    const pricePer1k = medianViews > 0 ? Math.round((reelPrice / medianViews) * 1000) : 0;
+
+    const engagementRate = Number(c.engagement) || 3.5;
+    const indiaPct = c.indiaAudiencePct !== undefined ? c.indiaAudiencePct : null; // null if unavailable
+
+    const cpmFactor = pricePer1k > 0 ? pricePer1k : 100;
+    const valueScore = Math.round(((medianViews * (indiaPct !== null ? indiaPct : 50) * engagementRate) / cpmFactor) / 100);
+
+    if (maxCpm && pricePer1k > Number(maxCpm)) {
+      return null;
+    }
+
+    return {
+      id: c.id,
+      name: c.name,
+      handle: c.handle,
+      avatar: c.avatar,
+      tierLabel: c.tier || "Starter",
+      followers: c.followers || c.instagramFollowers || 1000,
+      medianViews,
+      pricePer1k,
+      reelPrice,
+      rates,
+      engagementRate,
+      indiaAudiencePct: indiaPct,
+      isAvailable: c.isAvailable !== false,
+      genres: c.genres || ["Music", "Lifestyle"],
+      languages: c.languages || ["Hindi", "English"],
+      completedDealsCount: c.completedSubmissions || c.completedDealsCount || 12,
+      onTimeRate: c.onTimeRate || 98,
+      valueScore,
+      riskScore: c.riskScore || 0,
+    };
+  }).filter(Boolean) as any[];
+
+  // Sorting
+  if (sortBy === "price_per_1k") {
+    mapped.sort((a, b) => a.pricePer1k - b.pricePer1k);
+  } else if (sortBy === "median_views") {
+    mapped.sort((a, b) => b.medianViews - a.medianViews);
+  } else if (sortBy === "followers") {
+    mapped.sort((a, b) => b.followers - a.followers);
+  } else {
+    mapped.sort((a, b) => b.valueScore - a.valueScore);
+  }
+
+  // Pagination
+  const pageNum = Math.max(1, Number(page) || 1);
+  const limitNum = Math.max(1, Number(limit) || 12);
+  const total = mapped.length;
+  const totalPages = Math.ceil(total / limitNum);
+  const startIndex = (pageNum - 1) * limitNum;
+  const paginated = mapped.slice(startIndex, startIndex + limitNum);
+
+  res.json({
+    creators: paginated,
+    pagination: {
+      page: pageNum,
+      limit: limitNum,
+      total,
+      totalPages,
+    }
+  });
+});
+
+// GET /api/admin/config/benchmark-cpm
+app.get("/api/admin/config/benchmark-cpm", requireAuth, requireRole("admin"), (req, res) => {
+  res.json({
+    minCpm: CONFIG.BENCHMARK_CPM_MIN,
+    maxCpm: CONFIG.BENCHMARK_CPM_MAX,
+  });
+});
+
+// POST /api/admin/config/benchmark-cpm
+app.post("/api/admin/config/benchmark-cpm", requireAuth, requireRole("admin"), (req, res) => {
+  const { minCpm, maxCpm } = req.body;
+  const minVal = Number(minCpm);
+  const maxVal = Number(maxCpm);
+
+  if (isNaN(minVal) || isNaN(maxVal) || minVal < 0 || maxVal <= minVal) {
+    return res.status(400).json({ error: "Invalid CPM benchmark range. minCpm must be less than maxCpm." });
+  }
+
+  CONFIG.BENCHMARK_CPM_MIN = minVal;
+  CONFIG.BENCHMARK_CPM_MAX = maxVal;
+
+  res.json({
+    success: true,
+    message: "Benchmark CPM range updated successfully",
+    minCpm: CONFIG.BENCHMARK_CPM_MIN,
+    maxCpm: CONFIG.BENCHMARK_CPM_MAX,
+  });
 });
 
 // ================= CAMPAIGNS & RESERVATIONS SYSTEM =================

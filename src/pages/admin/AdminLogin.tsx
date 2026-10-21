@@ -23,7 +23,7 @@ export default function AdminLogin() {
     mutationFn: async (creds?: { email?: string; password?: string }) => {
       const loginEmail = creds?.email ?? email;
       const loginPassword = creds?.password ?? password;
-      const response = await fetch("/api/auth/admin-login", {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: loginEmail, password: loginPassword }),

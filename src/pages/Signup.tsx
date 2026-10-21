@@ -367,7 +367,7 @@ export default function Signup() {
                     data-testid="button-role-sponsor"
                   >
                     <Building2 className="h-4 w-4" />
-                    <span className="font-medium">Brand</span>
+                    <span className="font-medium">Artist / Brand</span>
                   </button>
                 </div>
 
