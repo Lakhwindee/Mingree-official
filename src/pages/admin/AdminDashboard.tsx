@@ -461,7 +461,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                 <Card className="bg-white border-indigo-100">
                   <CardContent className="p-4">
                     <p className="text-sm text-slate-500">Tier</p>
-                    <p className="text-lg font-semibold text-slate-950">Tier {user.tier || "N/A"}</p>
+                    <p className="text-lg font-semibold text-slate-950">{user.tier || "N/A"}</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-white border-indigo-100">
@@ -564,7 +564,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                     <Card className="bg-white border-indigo-100">
                       <CardContent className="p-4">
                         <p className="text-sm text-slate-500">Tier Based on Followers</p>
-                        <p className="text-2xl font-bold text-purple-500">Tier {user.tier || "N/A"}</p>
+                        <p className="text-2xl font-bold text-purple-500">{user.tier || "N/A"}</p>
                       </CardContent>
                     </Card>
                   </div>
@@ -2218,8 +2218,10 @@ function CampaignsTab() {
 
     groups.forEach(group => {
       group.campaigns.sort((a, b) => {
-        const tierA = parseInt(a.tier.replace(/\D/g, '')) || 0;
-        const tierB = parseInt(b.tier.replace(/\D/g, '')) || 0;
+        const strA = typeof a?.tier === 'string' ? a.tier : String(a?.tier || '');
+        const strB = typeof b?.tier === 'string' ? b.tier : String(b?.tier || '');
+        const tierA = parseInt(strA.replace(/\D/g, '')) || 0;
+        const tierB = parseInt(strB.replace(/\D/g, '')) || 0;
         return tierA - tierB;
       });
     });
@@ -2258,8 +2260,10 @@ function CampaignsTab() {
 
     groups.forEach(group => {
       group.campaigns.sort((a, b) => {
-        const tierA = parseInt(a.tier.replace(/\D/g, '')) || 0;
-        const tierB = parseInt(b.tier.replace(/\D/g, '')) || 0;
+        const strA = typeof a?.tier === 'string' ? a.tier : String(a?.tier || '');
+        const strB = typeof b?.tier === 'string' ? b.tier : String(b?.tier || '');
+        const tierA = parseInt(strA.replace(/\D/g, '')) || 0;
+        const tierB = parseInt(strB.replace(/\D/g, '')) || 0;
         return tierA - tierB;
       });
     });

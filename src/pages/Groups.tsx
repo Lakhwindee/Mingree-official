@@ -180,15 +180,15 @@ export default function Groups() {
           {user?.instagramUsername && user?.followers && user.followers >= 500 && (
             <div className="mb-6 rounded-lg border-2 border-green-500/50 bg-green-50 dark:bg-green-950/30 p-4" data-testid="tier-info-banner">
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500 text-white font-bold">
-                  {getUserTierId()}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-500 text-white font-bold text-xs uppercase">
+                  {(TIERS.find(t => t.id === getUserTierId())?.name || "Starter").slice(0, 3)}
                 </div>
                 <div>
                   <p className="font-semibold text-green-700 dark:text-green-400">
-                    Your Current Tier: Tier {getUserTierId()}
+                    Your Current Audience Tier: {TIERS.find(t => t.id === getUserTierId())?.name || "Starter"}
                   </p>
                   <p className="text-sm text-green-600 dark:text-green-500 mt-1">
-                    You can reserve campaigns from your tier and all tiers below! This means you have access to campaigns from Tier 1 to Tier {getUserTierId()}.
+                    You can reserve campaigns matching your audience tier and all accessible tiers below!
                   </p>
                 </div>
               </div>

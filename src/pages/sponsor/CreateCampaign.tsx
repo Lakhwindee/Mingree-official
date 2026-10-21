@@ -728,7 +728,7 @@ export default function CreateCampaign() {
                           }`}
                           data-testid={`tier-${tier.id}`}
                         >
-                          <div className="font-semibold text-sm">{tier.name.replace("Tier ", "T")}</div>
+                          <div className="font-semibold text-sm">{tier.name}</div>
                           <div className="text-[10px] text-muted-foreground">
                             {formatTierRange(tier.minFollowers, tier.maxFollowers)}
                           </div>

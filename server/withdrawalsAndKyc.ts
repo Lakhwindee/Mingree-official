@@ -1,10 +1,17 @@
 import { db } from "./db";
-import { withdrawals, payoutMethods, kyc, wallets, ledgerEntries, notifications, users } from "../shared/schema";
-import { eq, and } from "drizzle-orm";
+import { withdrawals, payoutMethods, kyc, wallets, ledgerEntries, notifications } from "../shared/schema";
+import { eq } from "drizzle-orm";
 import crypto from "crypto";
 import { CONFIG } from "../shared/config";
 import { getOrCreateWallet } from "./walletAndPayments";
 import { recordSecurityEvent } from "./instagramSecurity";
+
+function throwDbUnavailable(err?: any): never {
+  const error: any = new Error("Database unavailable");
+  error.status = 503;
+  if (err?.message) error.detail = err.message;
+  throw error;
+}
 
 const ENC_KEY = crypto.scryptSync(process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "mingree_pan_key_v1", "pan_salt", 32);
 
@@ -33,46 +40,13 @@ export function isValidPan(panText: string): boolean {
   return panRegex.test(panText.trim().toUpperCase());
 }
 
-// In-memory fallbacks when DB is unreachable
-interface MemoryKyc {
-  userId: number;
-  panEncrypted: string;
-  panMasked: string;
-  name: string;
-  status: string;
-}
-
-interface MemoryPayoutMethod {
-  id: number;
-  userId: number;
-  type: string; // UPI | Bank
-  accountDetails: any;
-  isDefault: boolean;
-}
-
-interface MemoryWithdrawal {
-  id: number;
-  userId: number;
-  amount: string;
-  tdsAmount: string;
-  payoutMethodId: number;
-  status: string; // pending | approved | rejected
-  utrRef?: string | null;
-  rejectionReason?: string | null;
-  createdAt: string;
-}
-
-const memoryKycMap = new Map<number, MemoryKyc>();
-const memoryPayoutMethods = new Map<number, MemoryPayoutMethod>();
-const memoryWithdrawals = new Map<number, MemoryWithdrawal>();
-
-// 2. KYC Handler (Save/Verify PAN for Creator)
+// 2. KYC Handler (Save/Verify PAN for Creator) - Database backed
 export async function saveUserKyc(userId: number, pan: string, name: string): Promise<{ success: boolean; maskedPan: string }> {
   if (!isValidPan(pan)) {
-    throw new Error("Invalid PAN format. PAN must be 10 characters (e.g. ABCDE1234F).");
+    throw new Error("Invalid PAN format. Standard format is 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)");
   }
   if (!name || !name.trim()) {
-    throw new Error("Name as per PAN is required.");
+    throw new Error("Name as per PAN card is required");
   }
 
   const cleanPan = pan.trim().toUpperCase();
@@ -94,14 +68,8 @@ export async function saveUserKyc(userId: number, pan: string, name: string): Pr
         status: "active",
       } as any);
     }
-  } catch {
-    memoryKycMap.set(userId, {
-      userId,
-      panEncrypted: encrypted,
-      panMasked: masked,
-      name: name.trim(),
-      status: "active",
-    });
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   return { success: true, maskedPan: masked };
@@ -117,20 +85,13 @@ export async function getUserKyc(userId: number): Promise<{ verified: boolean; n
         maskedPan: "ABCDE••••F",
       };
     }
-  } catch {
-    const mem = memoryKycMap.get(userId);
-    if (mem) {
-      return {
-        verified: true,
-        name: mem.name,
-        maskedPan: mem.panMasked,
-      };
-    }
+    return { verified: false };
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
-  return { verified: false };
 }
 
-// 3. Payout Methods Management
+// 3. Payout Methods Management - Database backed
 export async function addPayoutMethod(userId: number, type: "UPI" | "Bank", details: any, isDefault = true): Promise<any> {
   if (type === "UPI") {
     if (!details.upiId || !details.upiId.includes("@")) {
@@ -142,7 +103,6 @@ export async function addPayoutMethod(userId: number, type: "UPI" | "Bank", deta
     }
   }
 
-  const id = Date.now();
   try {
     if (isDefault) {
       await db.update(payoutMethods).set({ isDefault: false } as any).where(eq(payoutMethods.userId, userId));
@@ -154,27 +114,20 @@ export async function addPayoutMethod(userId: number, type: "UPI" | "Bank", deta
       isDefault,
     } as any).returning();
     return inserted[0];
-  } catch {
-    if (isDefault) {
-      for (const p of memoryPayoutMethods.values()) {
-        if (p.userId === userId) p.isDefault = false;
-      }
-    }
-    const rec = { id, userId, type, accountDetails: details, isDefault };
-    memoryPayoutMethods.set(id, rec);
-    return rec;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 }
 
 export async function getUserPayoutMethods(userId: number): Promise<any[]> {
   try {
     return await db.select().from(payoutMethods).where(eq(payoutMethods.userId, userId));
-  } catch {
-    return Array.from(memoryPayoutMethods.values()).filter((p) => p.userId === userId);
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 }
 
-// 4. Request Withdrawal (Transaction with Available Balance -> Pending Hold)
+// 4. Request Withdrawal (Transaction with Available Balance -> Pending Hold) - Database transaction required
 export async function requestWithdrawal(params: {
   userId: number;
   userRole: string;
@@ -235,17 +188,9 @@ export async function requestWithdrawal(params: {
         status: "pending",
       } as any);
     });
-  } catch {
-    const memW = { userId, balance: newBalance.toFixed(2), escrowHeld: currentW.escrowHeld.toFixed(2) };
-    memoryWithdrawals.set(withdrawalId, {
-      id: withdrawalId,
-      userId,
-      amount: amount.toFixed(2),
-      tdsAmount: "0.00",
-      payoutMethodId,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    });
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   return {
@@ -255,7 +200,7 @@ export async function requestWithdrawal(params: {
   };
 }
 
-// 5. Admin Approve Withdrawal
+// 5. Admin Approve Withdrawal - Database transaction required
 export async function approveWithdrawal(withdrawalId: number, adminUserId: number, utrRef: string): Promise<{ success: boolean; message: string }> {
   if (!utrRef || !utrRef.trim()) {
     throw new Error("Transfer reference / UTR is required to approve withdrawal");
@@ -265,8 +210,8 @@ export async function approveWithdrawal(withdrawalId: number, adminUserId: numbe
   try {
     const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
     if (rows.length > 0) record = rows[0];
-  } catch {
-    record = memoryWithdrawals.get(withdrawalId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!record) throw new Error("Withdrawal request not found");
@@ -298,10 +243,9 @@ export async function approveWithdrawal(withdrawalId: number, adminUserId: numbe
         read: false,
       } as any);
     });
-  } catch {
-    record.status = "approved";
-    record.utrRef = utrRef.trim();
-    memoryWithdrawals.set(withdrawalId, record);
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   recordSecurityEvent({
@@ -322,7 +266,7 @@ export async function approveWithdrawal(withdrawalId: number, adminUserId: numbe
   return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${utrRef.trim()}` };
 }
 
-// 6. Admin Reject Withdrawal (Returns hold amount back to available balance)
+// 6. Admin Reject Withdrawal (Returns hold amount back to available balance) - Database transaction required
 export async function rejectWithdrawal(withdrawalId: number, adminUserId: number, reason: string): Promise<{ success: boolean; message: string }> {
   if (!reason || !reason.trim()) {
     throw new Error("Rejection reason is required");
@@ -332,8 +276,8 @@ export async function rejectWithdrawal(withdrawalId: number, adminUserId: number
   try {
     const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
     if (rows.length > 0) record = rows[0];
-  } catch {
-    record = memoryWithdrawals.get(withdrawalId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!record) throw new Error("Withdrawal request not found");
@@ -376,10 +320,9 @@ export async function rejectWithdrawal(withdrawalId: number, adminUserId: number
         read: false,
       } as any);
     });
-  } catch {
-    record.status = "rejected";
-    record.rejectionReason = reason.trim();
-    memoryWithdrawals.set(withdrawalId, record);
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   recordSecurityEvent({
@@ -400,20 +343,20 @@ export async function rejectWithdrawal(withdrawalId: number, adminUserId: number
   return { success: true, message: `Withdrawal #${withdrawalId} rejected. Funds returned to user's wallet.` };
 }
 
-// 7. Get User Withdrawals History
+// 7. Get User Withdrawals History - Database backed
 export async function getUserWithdrawalHistory(userId: number): Promise<any[]> {
   try {
     return await db.select().from(withdrawals).where(eq(withdrawals.userId, userId));
-  } catch {
-    return Array.from(memoryWithdrawals.values()).filter((w) => w.userId === userId);
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 }
 
-// 8. Get All Withdrawals for Admin Console
+// 8. Get All Withdrawals for Admin Console - Database backed
 export async function getAllWithdrawalsAdmin(): Promise<any[]> {
   try {
     return await db.select().from(withdrawals);
-  } catch {
-    return Array.from(memoryWithdrawals.values());
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 }

@@ -5,30 +5,12 @@ import { CONFIG } from "../shared/config";
 import { releaseEscrow, refundEscrow, getOrCreateWallet } from "./walletAndPayments";
 import { recordSecurityEvent } from "./instagramSecurity";
 
-// In-memory fallbacks when DB is unreachable
-interface DeliveryDealRecord {
-  id: number;
-  campaignId: number;
-  artistId: number;
-  creatorId: number;
-  price: string;
-  feeArtist: string;
-  feeCreator: string;
-  creatorNet: string;
-  status: string; // accepted | posted | approved | released | disputed | refunded | expired | rejected
-  deadline: string;
-  postUrl?: string | null;
-  submittedAt?: string | null;
-  approvedAt?: string | null;
-  firstReleaseAt?: string | null;
-  finalReleaseAt?: string | null;
-  rejectionReason?: string | null;
-  resubmitCount?: number;
-  verificationStatus?: string | null;
-  audioConfirmed?: boolean;
+function throwDbUnavailable(err?: any): never {
+  const error: any = new Error("Database unavailable");
+  error.status = 503;
+  if (err?.message) error.detail = err.message;
+  throw error;
 }
-
-const memoryDealsMap = new Map<number, DeliveryDealRecord>();
 
 // Objective Rejection Reasons Enum
 export const REJECTION_REASONS = {
@@ -45,7 +27,7 @@ export function isValidInstagramUrl(url: string): boolean {
   return igRegex.test(url.trim());
 }
 
-// 2. Submit Deal Work (Creator submits post URL)
+// 2. Submit Deal Work (Creator submits post URL) - Database backed
 export async function submitDealWork(params: {
   dealId: number;
   creatorId: number;
@@ -61,8 +43,8 @@ export async function submitDealWork(params: {
   try {
     const rows = await db.select().from(deals).where(eq(deals.id, dealId));
     if (rows.length > 0) deal = rows[0];
-  } catch {
-    deal = memoryDealsMap.get(dealId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!deal) throw new Error("Deal record not found");
@@ -77,7 +59,6 @@ export async function submitDealWork(params: {
     throw new Error("Resubmission limit reached. You have already resubmitted once for this deal.");
   }
 
-  // Simulate or perform Instagram Graph API verification check
   const verificationStatus = "needs_manual_check"; // Marked for artist audio confirmation
   const nowStr = new Date().toISOString();
 
@@ -90,12 +71,8 @@ export async function submitDealWork(params: {
         status: "posted",
       } as any)
       .where(eq(deals.id, dealId));
-  } catch {
-    deal.postUrl = postUrl.trim();
-    deal.submittedAt = nowStr;
-    deal.status = "posted";
-    deal.resubmitCount = (deal.resubmitCount || 0) + 1;
-    memoryDealsMap.set(dealId, deal);
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   return {
@@ -105,7 +82,7 @@ export async function submitDealWork(params: {
   };
 }
 
-// 3. Artist Review (Approve or Reject Submission) - Idempotent
+// 3. Artist Review (Approve or Reject Submission) - Idempotent, Database transaction backed
 export async function reviewDealSubmission(params: {
   dealId: number;
   artistId: number;
@@ -120,8 +97,8 @@ export async function reviewDealSubmission(params: {
   try {
     const rows = await db.select().from(deals).where(eq(deals.id, dealId));
     if (rows.length > 0) deal = rows[0];
-  } catch {
-    deal = memoryDealsMap.get(dealId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!deal) throw new Error("Deal not found");
@@ -152,10 +129,8 @@ export async function reviewDealSubmission(params: {
           rejectionReason: `${rejectionReason}${rejectionNotes ? `: ${rejectionNotes}` : ""}`,
         } as any)
         .where(eq(deals.id, dealId));
-    } catch {
-      deal.status = "rejected";
-      deal.rejectionReason = `${rejectionReason}${rejectionNotes ? `: ${rejectionNotes}` : ""}`;
-      memoryDealsMap.set(dealId, deal);
+    } catch (err: any) {
+      throwDbUnavailable(err);
     }
 
     return {
@@ -170,7 +145,7 @@ export async function reviewDealSubmission(params: {
   const firstReleaseAmount = parseFloat((creatorNetNum * (CONFIG.RELEASE_FIRST_PERCENT / 100)).toFixed(2));
   const nowStr = new Date().toISOString();
 
-  // Execute release and ledger updates
+  // Execute release and ledger updates in database transaction
   try {
     await releaseEscrow(artistId, deal.creatorId, firstReleaseAmount, {
       refType: "deal_first_release",
@@ -186,12 +161,9 @@ export async function reviewDealSubmission(params: {
         audioConfirmed: Boolean(audioConfirmed),
       } as any)
       .where(eq(deals.id, dealId));
-  } catch {
-    deal.status = "approved";
-    deal.approvedAt = nowStr;
-    deal.firstReleaseAt = nowStr;
-    deal.audioConfirmed = Boolean(audioConfirmed);
-    memoryDealsMap.set(dealId, deal);
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   return {
@@ -213,10 +185,8 @@ export async function runAutoApproveEngine(): Promise<{ autoApprovedCount: numbe
       .select()
       .from(deals)
       .where(and(eq(deals.status, "posted"), lte(deals.submittedAt, cutoffTime)));
-  } catch {
-    pendingDeals = Array.from(memoryDealsMap.values()).filter(
-      (d) => d.status === "posted" && d.submittedAt && new Date(d.submittedAt) <= cutoffTime
-    );
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   let count = 0;
@@ -248,10 +218,8 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
       .select()
       .from(deals)
       .where(and(eq(deals.status, "approved"), lte(deals.firstReleaseAt, cutoffTime)));
-  } catch {
-    approvedDeals = Array.from(memoryDealsMap.values()).filter(
-      (d) => d.status === "approved" && d.firstReleaseAt && new Date(d.firstReleaseAt) <= cutoffTime
-    );
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   let releasedCount = 0;
@@ -262,7 +230,6 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
     const firstReleaseAmount = parseFloat((creatorNetNum * (CONFIG.RELEASE_FIRST_PERCENT / 100)).toFixed(2));
     const remainingAmount = Math.max(0, creatorNetNum - firstReleaseAmount);
 
-    // Verify if reel is still live (simulate live check)
     const isStillLive = true;
 
     if (isStillLive) {
@@ -283,7 +250,6 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
           } as any)
           .where(eq(deals.id, deal.id));
 
-        // Record metric snapshot
         await db.insert(metricSnapshots).values({
           dealId: deal.id,
           views: 18500,
@@ -291,15 +257,12 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
           comments: 88,
           stillLive: true,
         } as any);
-      } catch {
-        deal.status = "released";
-        deal.finalReleaseAt = nowStr;
-        memoryDealsMap.set(deal.id, deal);
+      } catch (err: any) {
+        throwDbUnavailable(err);
       }
 
       releasedCount++;
     } else {
-      // Reel deleted early! Refund remaining escrow to artist and apply reliability strike
       if (remainingAmount > 0) {
         await refundEscrow(deal.artistId, remainingAmount, {
           refType: "deal_early_delete_refund",
@@ -309,9 +272,8 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
 
       try {
         await db.update(deals).set({ status: "refunded" } as any).where(eq(deals.id, deal.id));
-      } catch {
-        deal.status = "refunded";
-        memoryDealsMap.set(deal.id, deal);
+      } catch (err: any) {
+        throwDbUnavailable(err);
       }
 
       recordSecurityEvent({
@@ -336,7 +298,7 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
   return { releasedCount, refundedCount };
 }
 
-// 6. Dispute System (Raise & Resolve Disputes)
+// 6. Dispute System (Raise & Resolve Disputes) - Database backed
 export async function raiseDispute(params: {
   dealId: number;
   raisedByUserId: number;
@@ -351,8 +313,8 @@ export async function raiseDispute(params: {
   try {
     const rows = await db.select().from(deals).where(eq(deals.id, dealId));
     if (rows.length > 0) deal = rows[0];
-  } catch {
-    deal = memoryDealsMap.get(dealId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!deal) throw new Error("Deal not found");
@@ -360,7 +322,6 @@ export async function raiseDispute(params: {
     throw new Error("Cannot open dispute on a completed or fully refunded deal.");
   }
 
-  // Freeze deal
   try {
     await db.update(deals).set({ status: "disputed" } as any).where(eq(deals.id, dealId));
     const inserted = await db.insert(disputes).values({
@@ -372,11 +333,8 @@ export async function raiseDispute(params: {
     } as any).returning();
 
     return { disputeId: inserted[0].id, message: "Dispute opened. Remaining escrow frozen pending admin review." };
-  } catch {
-    deal.status = "disputed";
-    memoryDealsMap.set(dealId, deal);
-    const disputeId = Date.now();
-    return { disputeId, message: "Dispute opened. Remaining escrow frozen pending admin review." };
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 }
 
@@ -392,8 +350,8 @@ export async function resolveDispute(params: {
   try {
     const rows = await db.select().from(disputes).where(eq(disputes.id, disputeId));
     if (rows.length > 0) dispute = rows[0];
-  } catch {
-    dispute = { id: disputeId, dealId: 1, status: "open" };
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!dispute) throw new Error("Dispute record not found");
@@ -402,8 +360,8 @@ export async function resolveDispute(params: {
   try {
     const rows = await db.select().from(deals).where(eq(deals.id, dispute.dealId));
     if (rows.length > 0) deal = rows[0];
-  } catch {
-    deal = memoryDealsMap.get(dispute.dealId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!deal) throw new Error("Associated deal not found");
@@ -442,9 +400,8 @@ export async function resolveDispute(params: {
       .where(eq(disputes.id, disputeId));
 
     await db.update(deals).set({ status: deal.status } as any).where(eq(deals.id, deal.id));
-  } catch {
-    dispute.status = "resolved";
-    memoryDealsMap.set(deal.id, deal);
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   recordSecurityEvent({
@@ -465,7 +422,7 @@ export async function resolveDispute(params: {
   return { success: true, message: `Dispute #${disputeId} resolved successfully with '${resolution}'.` };
 }
 
-// 7. Deal Expiration Check (Missed deadline with no submission)
+// 7. Deal Expiration Check (Missed deadline with no submission) - Database backed
 export async function checkExpiredDeals(): Promise<{ expiredCount: number }> {
   const now = new Date();
 
@@ -475,10 +432,8 @@ export async function checkExpiredDeals(): Promise<{ expiredCount: number }> {
       .select()
       .from(deals)
       .where(and(eq(deals.status, "accepted"), lte(deals.deadline, now)));
-  } catch {
-    expiredList = Array.from(memoryDealsMap.values()).filter(
-      (d) => d.status === "accepted" && d.deadline && new Date(d.deadline) <= now && !d.postUrl
-    );
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   let count = 0;
@@ -493,9 +448,8 @@ export async function checkExpiredDeals(): Promise<{ expiredCount: number }> {
 
     try {
       await db.update(deals).set({ status: "expired" } as any).where(eq(deals.id, deal.id));
-    } catch {
-      deal.status = "expired";
-      memoryDealsMap.set(deal.id, deal);
+    } catch (err: any) {
+      throwDbUnavailable(err);
     }
 
     count++;

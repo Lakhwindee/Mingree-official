@@ -87,9 +87,9 @@ export default function SponsorCampaigns() {
   const campaignGroups = useMemo(() => {
     const groups: Map<string, CampaignGroup> = new Map();
     
-    // Extract base title without tier suffix like "(Tier 1)"
+    // Extract base title without tier suffix like "(Starter)" or "(Tier 1)"
     const getBaseTitle = (title: string) => {
-      return title.replace(/\s*\(Tier\s*\d+\)\s*$/i, '').trim();
+      return title.replace(/\s*\((?:Tier\s*\d+|Starter|Nano|Micro|Mid|Macro|Mega)\)\s*$/i, '').trim();
     };
     
     campaigns.forEach(campaign => {

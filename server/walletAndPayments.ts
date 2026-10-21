@@ -4,47 +4,12 @@ import { eq } from "drizzle-orm";
 import crypto from "crypto";
 import { recordSecurityEvent } from "./instagramSecurity";
 
-// In-memory fallback stores for local testing when DB is not reachable
-interface WalletRecord {
-  id: number;
-  userId: number;
-  balance: string;
-  escrowHeld: string;
+export function throwDbUnavailable(err?: any): never {
+  const error: any = new Error("Database unavailable");
+  error.status = 503;
+  if (err?.message) error.detail = err.message;
+  throw error;
 }
-
-interface LedgerRecord {
-  id: number;
-  userId: number;
-  type: string;
-  amount: string;
-  balanceAfter: string;
-  refType: string | null;
-  refId: string | null;
-  createdAt: string;
-}
-
-interface PaymentOrderRecord {
-  id: number;
-  orderId: string;
-  userId: number;
-  purpose: string;
-  amount: string;
-  status: string;
-}
-
-interface UpiPaymentRecord {
-  id: number;
-  utr: string;
-  userId: number;
-  amount: string;
-  status: string;
-  createdAt: string;
-}
-
-const memoryWallets = new Map<number, WalletRecord>();
-const memoryLedger: LedgerRecord[] = [];
-const memoryPaymentOrders = new Map<string, PaymentOrderRecord>();
-const memoryUpiPayments = new Map<string, UpiPaymentRecord>();
 
 // Helper to get or initialize a user's wallet without free balances
 export async function getOrCreateWallet(userId: number): Promise<{ balance: number; escrowHeld: number }> {
@@ -62,20 +27,13 @@ export async function getOrCreateWallet(userId: number): Promise<{ balance: numb
       escrowHeld: "0.00",
     } as any);
     return { balance: 0, escrowHeld: 0 };
-  } catch {
-    let mem = memoryWallets.get(userId);
-    if (!mem) {
-      mem = { id: Date.now(), userId, balance: "0.00", escrowHeld: "0.00" };
-      memoryWallets.set(userId, mem);
-    }
-    return {
-      balance: parseFloat(mem.balance),
-      escrowHeld: parseFloat(mem.escrowHeld),
-    };
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 }
 
-// 1. Lock Escrow (Artist locks funds for campaign / deal)
+// 1. Lock Escrow (Artist locks funds for campaign / deal) - Database transaction required
 export async function lockEscrow(
   artistId: number,
   amount: number,
@@ -108,28 +66,15 @@ export async function lockEscrow(
         refId: ref.refId,
       } as any);
     });
-  } catch {
-    const mem = memoryWallets.get(artistId) || { id: Date.now(), userId: artistId, balance: "0.00", escrowHeld: "0.00" };
-    mem.balance = newBalance.toFixed(2);
-    mem.escrowHeld = newEscrow.toFixed(2);
-    memoryWallets.set(artistId, mem);
-
-    memoryLedger.unshift({
-      id: Date.now(),
-      userId: artistId,
-      type: "escrow_lock",
-      amount: (-amount).toFixed(2),
-      balanceAfter: newBalance.toFixed(2),
-      refType: ref.refType,
-      refId: ref.refId,
-      createdAt: new Date().toISOString(),
-    });
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   return { success: true, newBalance, newEscrow };
 }
 
-// 2. Release Escrow (Artist approves deal; funds transfer from artist escrow to creator wallet balance)
+// 2. Release Escrow (Artist approves deal; funds transfer from artist escrow to creator wallet balance) - Database transaction required
 export async function releaseEscrow(
   artistId: number,
   creatorId: number,
@@ -174,43 +119,15 @@ export async function releaseEscrow(
         refId: ref.refId,
       } as any);
     });
-  } catch {
-    const aMem = memoryWallets.get(artistId) || { id: Date.now(), userId: artistId, balance: "0.00", escrowHeld: "0.00" };
-    aMem.escrowHeld = artistNewEscrow.toFixed(2);
-    memoryWallets.set(artistId, aMem);
-
-    const cMem = memoryWallets.get(creatorId) || { id: Date.now(), userId: creatorId, balance: "0.00", escrowHeld: "0.00" };
-    cMem.balance = creatorNewBalance.toFixed(2);
-    memoryWallets.set(creatorId, cMem);
-
-    memoryLedger.unshift(
-      {
-        id: Date.now(),
-        userId: artistId,
-        type: "escrow_release",
-        amount: (-amount).toFixed(2),
-        balanceAfter: artistWallet.balance.toFixed(2),
-        refType: ref.refType,
-        refId: ref.refId,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: Date.now() + 1,
-        userId: creatorId,
-        type: "payout_received",
-        amount: amount.toFixed(2),
-        balanceAfter: creatorNewBalance.toFixed(2),
-        refType: ref.refType,
-        refId: ref.refId,
-        createdAt: new Date().toISOString(),
-      }
-    );
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   return { success: true };
 }
 
-// 3. Refund Escrow (Deal or campaign cancelled/expired; escrow returned to artist wallet balance)
+// 3. Refund Escrow (Deal or campaign cancelled/expired; escrow returned to artist wallet balance) - Database transaction required
 export async function refundEscrow(
   artistId: number,
   amount: number,
@@ -239,28 +156,15 @@ export async function refundEscrow(
         refId: ref.refId,
       } as any);
     });
-  } catch {
-    const mem = memoryWallets.get(artistId) || { id: Date.now(), userId: artistId, balance: "0.00", escrowHeld: "0.00" };
-    mem.escrowHeld = newEscrow.toFixed(2);
-    mem.balance = newBalance.toFixed(2);
-    memoryWallets.set(artistId, mem);
-
-    memoryLedger.unshift({
-      id: Date.now(),
-      userId: artistId,
-      type: "escrow_refund",
-      amount: amount.toFixed(2),
-      balanceAfter: newBalance.toFixed(2),
-      refType: ref.refType,
-      refId: ref.refId,
-      createdAt: new Date().toISOString(),
-    });
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   return { success: true, newBalance };
 }
 
-// 4. Payment Orders & Idempotent Processing
+// 4. Payment Orders & Idempotent Processing - Database transaction required
 export async function createPaymentOrder(params: {
   orderId: string;
   userId: number;
@@ -276,15 +180,9 @@ export async function createPaymentOrder(params: {
       amount: amountStr,
       status: "pending",
     } as any);
-  } catch {
-    memoryPaymentOrders.set(params.orderId, {
-      id: Date.now(),
-      orderId: params.orderId,
-      userId: params.userId,
-      purpose: params.purpose,
-      amount: amountStr,
-      status: "pending",
-    });
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 }
 
@@ -300,8 +198,8 @@ export async function processOrderPaymentSuccess(orderId: string, details?: { gs
     if (rows.length > 0) {
       storedOrder = rows[0];
     }
-  } catch {
-    storedOrder = memoryPaymentOrders.get(orderId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!storedOrder) {
@@ -403,43 +301,9 @@ export async function processOrderPaymentSuccess(orderId: string, details?: { gs
       order: { userId, purpose: storedOrder.purpose, amount: numAmount },
       newBalance: finalBalance,
     };
-  } catch (err) {
-    // Memory Fallback
-    storedOrder.status = "paid";
-    memoryPaymentOrders.set(orderId, {
-      id: storedOrder.id || Date.now(),
-      orderId: storedOrder.orderId,
-      userId: storedOrder.userId,
-      purpose: storedOrder.purpose,
-      amount: storedOrder.amount,
-      status: storedOrder.status,
-    });
-
-    const memW = memoryWallets.get(userId) || { id: Date.now(), userId, balance: "0.00", escrowHeld: "0.00" };
-    let newBal = parseFloat(memW.balance);
-
-    if (storedOrder.purpose !== "subscription") {
-      newBal += numAmount;
-      memW.balance = newBal.toFixed(2);
-      memoryWallets.set(userId, memW);
-
-      memoryLedger.unshift({
-        id: Date.now(),
-        userId,
-        type: "wallet_deposit",
-        amount: numAmount.toFixed(2),
-        balanceAfter: newBal.toFixed(2),
-        refType: "payment_order",
-        refId: orderId,
-        createdAt: new Date().toISOString(),
-      });
-    }
-
-    return {
-      alreadyProcessed: false,
-      order: { userId, purpose: storedOrder.purpose, amount: numAmount },
-      newBalance: newBal,
-    };
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 }
 
@@ -469,7 +333,7 @@ export function verifyCashfreeSignature(
   }
 }
 
-// 6. Manual UPI Top-Up Submissions
+// 6. Manual UPI Top-Up Submissions - Database backed
 export async function submitUpiTopup(userId: number, utr: string, amount: number): Promise<{ id: number; status: string }> {
   const cleanUtr = utr.trim().toUpperCase();
   const amountStr = amount.toFixed(2);
@@ -492,21 +356,7 @@ export async function submitUpiTopup(userId: number, utr: string, amount: number
     if (err.message && err.message.includes("already been submitted")) {
       throw err;
     }
-
-    if (memoryUpiPayments.has(cleanUtr)) {
-      throw new Error(`A payment with UTR number '${cleanUtr}' has already been submitted.`);
-    }
-
-    const rec = {
-      id: Date.now(),
-      utr: cleanUtr,
-      userId,
-      amount: amountStr,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
-    memoryUpiPayments.set(cleanUtr, rec);
-    return { id: rec.id, status: "pending" };
+    throwDbUnavailable(err);
   }
 }
 
@@ -516,8 +366,8 @@ export async function approveUpiTopup(upiId: number, adminUserId: number): Promi
   try {
     const rows = await db.select().from(upiPayments).where(eq(upiPayments.id, upiId));
     if (rows.length > 0) paymentRecord = rows[0];
-  } catch {
-    paymentRecord = Array.from(memoryUpiPayments.values()).find((p) => p.id === upiId) || null;
+  } catch (err: any) {
+    throwDbUnavailable(err);
   }
 
   if (!paymentRecord) {
@@ -552,24 +402,9 @@ export async function approveUpiTopup(upiId: number, adminUserId: number): Promi
         refId: paymentRecord!.utr,
       } as any);
     });
-  } catch {
-    paymentRecord.status = "approved";
-    const currentW = await getOrCreateWallet(targetUserId);
-    const newBal = currentW.balance + numAmount;
-    const memW = memoryWallets.get(targetUserId) || { id: Date.now(), userId: targetUserId, balance: "0.00", escrowHeld: "0.00" };
-    memW.balance = newBal.toFixed(2);
-    memoryWallets.set(targetUserId, memW);
-
-    memoryLedger.unshift({
-      id: Date.now(),
-      userId: targetUserId,
-      type: "upi_topup",
-      amount: numAmount.toFixed(2),
-      balanceAfter: newBal.toFixed(2),
-      refType: "upi_payment",
-      refId: paymentRecord.utr,
-      createdAt: new Date().toISOString(),
-    });
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   recordSecurityEvent({
@@ -590,7 +425,7 @@ export async function approveUpiTopup(upiId: number, adminUserId: number): Promi
   return { success: true, creditAmount: numAmount, userId: targetUserId };
 }
 
-// 7. Admin Manual Wallet Credit
+// 7. Admin Manual Wallet Credit - Database transaction required
 export async function adminCreditWallet(
   adminUserId: number,
   targetUserId: number,
@@ -619,21 +454,9 @@ export async function adminCreditWallet(
         refId: reason.trim(),
       } as any);
     });
-  } catch {
-    const memW = memoryWallets.get(targetUserId) || { id: Date.now(), userId: targetUserId, balance: "0.00", escrowHeld: "0.00" };
-    memW.balance = newBalance.toFixed(2);
-    memoryWallets.set(targetUserId, memW);
-
-    memoryLedger.unshift({
-      id: Date.now(),
-      userId: targetUserId,
-      type: "admin_credit",
-      amount: amount.toFixed(2),
-      balanceAfter: newBalance.toFixed(2),
-      refType: "admin_adjustment",
-      refId: reason.trim(),
-      createdAt: new Date().toISOString(),
-    });
+  } catch (err: any) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
   }
 
   recordSecurityEvent({

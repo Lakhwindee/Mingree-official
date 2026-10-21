@@ -18,16 +18,17 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
 }) => {
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState(CATEGORIES[1]); // Fashion
-  const [selectedTierId, setSelectedTierId] = useState(6); // Tier 6 default
+  const [selectedTierId, setSelectedTierId] = useState(1); // Starter default
+  const [paymentPerCreator, setPaymentPerCreator] = useState(1500); // Sponsor-defined payout
   const [spots, setSpots] = useState('15');
   const [description, setDescription] = useState('');
   const [guidelines, setGuidelines] = useState('');
 
   if (!isOpen) return null;
 
-  const currentTier = TIERS.find((t) => t.id === selectedTierId) || TIERS[5];
+  const currentTier = TIERS.find((t) => t.id === selectedTierId) || TIERS[0];
   const numSpots = parseInt(spots, 10) || 1;
-  const creatorBudget = currentTier.basePayment * numSpots;
+  const creatorBudget = paymentPerCreator * numSpots;
   const platformFee = Math.round(creatorBudget * 0.10); // 10% platform fee rule
   const totalCost = creatorBudget + platformFee;
 
@@ -47,7 +48,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
       totalSpots: numSpots,
       availableSpots: numSpots,
       tier: currentTier,
-      payAmount: currentTier.basePayment,
+      payAmount: paymentPerCreator,
       status: 'active',
       requirements: [
         'Must tag brand account in Instagram post/reel',
@@ -148,10 +149,25 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
             >
               {TIERS.map((tier) => (
                 <option key={tier.id} value={tier.id}>
-                  {tier.name} ({tier.minFollowers.toLocaleString()} - {tier.maxFollowers.toLocaleString()} followers) - ₹{tier.basePayment}/creator
+                  {tier.name} ({tier.minFollowers.toLocaleString()} - {tier.maxFollowers === Infinity ? "1,000,000+" : tier.maxFollowers.toLocaleString()} followers)
                 </option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="text-[11px] font-semibold text-zinc-300 block mb-1">
+              Payment per Creator (₹) *
+            </label>
+            <input
+              type="number"
+              required
+              min="100"
+              step="50"
+              value={paymentPerCreator}
+              onChange={(e) => setPaymentPerCreator(Math.max(0, parseInt(e.target.value, 10) || 0))}
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-purple-500 font-mono"
+            />
           </div>
 
           <div>
@@ -184,7 +200,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
           {/* Budget Calculation Summary */}
           <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-1.5 text-xs">
             <div className="flex items-center justify-between text-zinc-400">
-              <span>Creator Payouts ({numSpots} × ₹{currentTier.basePayment}):</span>
+              <span>Creator Payouts ({numSpots} × ₹{paymentPerCreator}):</span>
               <span className="text-white font-semibold">₹{creatorBudget}</span>
             </div>
             <div className="flex items-center justify-between text-zinc-400">

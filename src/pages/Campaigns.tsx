@@ -203,7 +203,8 @@ export default function Campaigns() {
     return tier?.id || 1;
   };
 
-  const getLowestCampaignTierId = (tierString: string): number => {
+  const getLowestCampaignTierId = (tierString?: string | null): number => {
+    if (!tierString || typeof tierString !== 'string') return 1;
     const tierNames = tierString.split(",").map(t => t.trim());
     let lowestId = 20;
     tierNames.forEach(name => {
@@ -212,10 +213,11 @@ export default function Campaigns() {
         lowestId = tier.id;
       }
     });
-    return lowestId;
+    return lowestId === 20 ? 1 : lowestId;
   };
 
-  const isCampaignLocked = (campaign: ApiCampaign): boolean => {
+  const isCampaignLocked = (campaign?: ApiCampaign | null): boolean => {
+    if (!campaign) return false;
     const userTierId = getUserTierId();
     const lowestCampaignTierId = getLowestCampaignTierId(campaign.tier);
     return lowestCampaignTierId > userTierId;
@@ -260,8 +262,10 @@ export default function Campaigns() {
 
     groups.forEach(group => {
       group.campaigns.sort((a, b) => {
-        const tierA = parseInt(a.tier.replace(/\D/g, '')) || 0;
-        const tierB = parseInt(b.tier.replace(/\D/g, '')) || 0;
+        const strA = typeof a?.tier === 'string' ? a.tier : String(a?.tier || '');
+        const strB = typeof b?.tier === 'string' ? b.tier : String(b?.tier || '');
+        const tierA = parseInt(strA.replace(/\D/g, '')) || 0;
+        const tierB = parseInt(strB.replace(/\D/g, '')) || 0;
         return tierA - tierB;
       });
     });
@@ -586,7 +590,7 @@ export default function Campaigns() {
                                   </Badge>
                                 ) : (
                                   <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground border-border/80">
-                                    {lowestTier?.tier || "Tier 1"}
+                                    {lowestTier?.tier || "Starter"}
                                   </Badge>
                                 )}
                               </div>
@@ -681,7 +685,7 @@ export default function Campaigns() {
                                     <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                                   </div>
                                   <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300 text-[10px] px-1.5 py-0.5">
-                                    {maxTier || "Tier 1"}
+                                    {maxTier || "Starter"}
                                   </Badge>
                                 </div>
                                 

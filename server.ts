@@ -8,7 +8,15 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import { CONFIG } from "./shared/config";
-import { PROMOTION_CATEGORIES } from "./shared/schema";
+import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
+import { db, isLocalFallbackAllowed } from "./server/db";
+import { eq } from "drizzle-orm";
+
+// Production Safety Gate: Refuse to start if in production without DATABASE_URL
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+  console.error("FATAL: DATABASE_URL is missing in production environment. Server refused to start.");
+  process.exit(1);
+}
 import {
   checkRateLimitAndFarming,
   recordFailedAttempt,
@@ -659,109 +667,6 @@ app.post("/api/admin/api-keys", (req, res) => {
   return res.json({ success: true, key });
 });
 
-// Path for persisted user profile data
-const USER_PROFILE_FILE = getDataFilePath("user_profile.json");
-
-const defaultUserProfile: Record<string, any> = {
-  id: 1,
-  name: "Creator",
-  handle: "@creator",
-  email: "creator@mingree.com",
-  role: "creator",
-  followers: 0,
-  engagement: "0.0",
-  reach: 0,
-  avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-  isVerified: false,
-  tier: "New Creator",
-  balance: "0.00",
-  companyName: null,
-  gstNumber: null,
-  instagramUsername: null,
-  instagramProfileUrl: null,
-  instagramFollowers: 0,
-  isInstagramVerified: false,
-  instagramVerificationCode: null,
-  instagramVerificationStatus: "unlinked",
-  instagramAccessToken: null,
-  instagramUserId: null,
-  instagramTokenExpiresAt: null,
-  subscriptionPlan: "free",
-  subscriptionExpiresAt: null,
-  stars: 0,
-  country: "IN",
-  city: "",
-  totalEarnings: "0.00",
-  pendingWithdrawals: "0.00",
-  starRewards: 0,
-  activeReservations: 0,
-  completedSubmissions: 0,
-  campaignsCreated: 0,
-  createdAt: "2024-01-15T10:00:00.000Z",
-  shippingAddress: "",
-  shippingCity: "",
-  shippingState: "",
-  shippingPincode: "",
-  shippingPhone: "",
-};
-
-function loadUserProfile(): Record<string, any> {
-  try {
-    if (fs.existsSync(USER_PROFILE_FILE)) {
-      const parsed = JSON.parse(fs.readFileSync(USER_PROFILE_FILE, "utf-8"));
-      return { ...defaultUserProfile, ...parsed };
-    }
-  } catch (err) {
-    console.error("Error reading user profile file:", err);
-  }
-  return { ...defaultUserProfile };
-}
-
-let currentUserProfile: Record<string, any> = loadUserProfile();
-
-function saveUserProfile(profile?: Record<string, any>) {
-  try {
-    if (profile) {
-      currentUserProfile = { ...currentUserProfile, ...profile };
-    }
-    fs.writeFileSync(USER_PROFILE_FILE, JSON.stringify(currentUserProfile, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving user profile file:", err);
-  }
-}
-
-const defaultSponsorProfile: Record<string, any> = {
-  id: 2,
-  name: "Brand Sponsor",
-  handle: "@sponsor",
-  email: "brand@mingree.com",
-  role: "sponsor",
-  followers: 0,
-  engagement: "0.0",
-  reach: 0,
-  avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-  isVerified: true,
-  tier: "Brand Partner",
-  balance: "0.00",
-  companyName: "Brand Sponsor",
-  gstNumber: "",
-  instagramUsername: null,
-  instagramProfileUrl: null,
-  instagramFollowers: 0,
-  isInstagramVerified: false,
-  subscriptionPlan: "free",
-  stars: 0,
-  country: "IN",
-  city: "Mumbai",
-  totalEarnings: "0.00",
-  pendingWithdrawals: "0.00",
-  starRewards: 0,
-  activeReservations: 0,
-  completedSubmissions: 0,
-  campaignsCreated: 0,
-  createdAt: "2024-01-15T10:00:00.000Z",
-};
-
 // Auth Rate Limiting Middleware
 const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -858,7 +763,7 @@ function sanitizeUser(user: any) {
   return safe;
 }
 
-let registeredUsers: any[] = [
+const defaultAccounts = [
   {
     id: 1,
     email: "manindersinghjudge@gmail.com",
@@ -868,6 +773,17 @@ let registeredUsers: any[] = [
     handle: "@creator",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
     tier: "New Creator",
+    isEmailVerified: true,
+  },
+  {
+    id: 3,
+    email: "creator@mingree.com",
+    passwordHash: bcrypt.hashSync("password123", 10),
+    name: "Priya Sharma (Creator)",
+    role: "creator",
+    handle: "@priyareels",
+    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
+    tier: "Rising",
     isEmailVerified: true,
   },
   {
@@ -892,8 +808,22 @@ let registeredUsers: any[] = [
     tier: "Brand Partner",
     companyName: "Brand Sponsor",
     isEmailVerified: true,
+  },
+  {
+    id: 4,
+    email: "artist@mingree.com",
+    passwordHash: bcrypt.hashSync("password123", 10),
+    name: "Rohan Verma (Artist)",
+    role: "sponsor",
+    handle: "@rohanmusic",
+    companyName: "Rohan Records",
+    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
+    tier: "Standard",
+    isEmailVerified: true,
   }
 ];
+
+let registeredUsers: any[] = [...defaultAccounts];
 
 function loadRegisteredUsers() {
   try {
@@ -905,6 +835,13 @@ function loadRegisteredUsers() {
     }
   } catch (err) {
     console.error("Error loading registered users:", err);
+  }
+
+  // Ensure default accounts exist
+  for (const acc of defaultAccounts) {
+    if (!registeredUsers.some((u) => u.email.toLowerCase() === acc.email.toLowerCase())) {
+      registeredUsers.push(acc);
+    }
   }
 
   let modified = false;
@@ -1068,16 +1005,21 @@ app.get("/api/users/:id", requireAuth, (req: AuthRequest, res) => {
 });
 
 // PUT /api/users/:id/profile
-app.put("/api/users/:id/profile", (req, res) => {
+app.put("/api/users/:id/profile", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
   const { name, handle, city } = req.body;
-  if (name !== undefined && name.trim()) currentUserProfile.name = name.trim();
+  const user = req.user!;
+  if (name !== undefined && name.trim()) user.name = name.trim();
   if (handle !== undefined && handle.trim()) {
     const cleanHandle = handle.trim().replace(/^@+/, "");
-    currentUserProfile.handle = `@${cleanHandle}`;
+    user.handle = `@${cleanHandle}`;
   }
-  if (city !== undefined) currentUserProfile.city = city.trim();
-  saveUserProfile();
-  res.json(getSafeUserProfile(currentUserProfile));
+  if (city !== undefined) user.city = city.trim();
+  saveRegisteredUsers();
+  res.json(sanitizeUser(user));
 });
 
 // PUT /api/users/:id/city
@@ -1477,16 +1419,96 @@ app.post("/api/admin/config/benchmark-cpm", requireAuth, requireRole("admin"), (
 const CAMPAIGNS_FILE = getDataFilePath("campaigns.json");
 const RESERVATIONS_FILE = getDataFilePath("reservations.json");
 
-const initialCampaignsData: any[] = [];
+const initialCampaignsData: any[] = [
+  {
+    id: 1,
+    sponsorId: 2,
+    artistId: 2,
+    title: "Summer Vibe Music Track Promotion",
+    songUrl: "https://spotify.com/track/12345",
+    genre: "Music Reels",
+    language: "Hindi",
+    brand: "Rohan Records",
+    brandLogo: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100",
+    payAmount: "2500",
+    budget: "25000",
+    totalBudget: 25000,
+    remainingBudget: 17500,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 5000,
+    minEngagement: 2.5,
+    requiredCaptionNote: "#ad | Check out the brand new single by Rohan Records! Out on Spotify.",
+    targetCountries: ["India"],
+    targetCities: [],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 2,
+    sponsorId: 4,
+    artistId: 4,
+    title: "Urban Streetwear Fashion Reel",
+    songUrl: "",
+    genre: "Lifestyle",
+    language: "English",
+    brand: "Aesthetic Attire Co.",
+    brandLogo: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=100",
+    payAmount: "4000",
+    budget: "40000",
+    totalBudget: 40000,
+    remainingBudget: 28000,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 10000,
+    minEngagement: 3.0,
+    requiredCaptionNote: "#ad | Rocking the new Urban Fall Collection by Aesthetic Attire.",
+    targetCountries: ["India"],
+    targetCities: [],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 3,
+    sponsorId: 4,
+    artistId: 4,
+    title: "Smart Wireless Earbuds Review",
+    songUrl: "",
+    genre: "Tech & Gadgets",
+    language: "Hindi",
+    brand: "SoundPulse Audio",
+    brandLogo: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100",
+    payAmount: "1500",
+    budget: "15000",
+    totalBudget: 15000,
+    remainingBudget: 10500,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 2000,
+    minEngagement: 2.0,
+    requiredCaptionNote: "#ad | SoundPulse BassPro Earbuds unboxing & review!",
+    targetCountries: ["India"],
+    targetCities: [],
+    contentTypes: ["Reel", "Story"],
+    createdAt: new Date().toISOString(),
+  }
+];
 
 function loadCampaigns(): any[] {
   try {
     if (fs.existsSync(CAMPAIGNS_FILE)) {
-      return JSON.parse(fs.readFileSync(CAMPAIGNS_FILE, "utf-8"));
+      const data = JSON.parse(fs.readFileSync(CAMPAIGNS_FILE, "utf-8"));
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
     }
   } catch (err) {
     console.error("Error reading campaigns file:", err);
   }
+  saveCampaigns(initialCampaignsData);
   return initialCampaignsData;
 }
 
@@ -1532,9 +1554,7 @@ function cleanReservations(targetUserId?: number): any[] {
   for (const r of reservations) {
     // Only unsubmitted ("reserved") entries are subject to subscription invalidation & timeout
     if (r.status === "reserved" && !r.submittedAt) {
-      const user: any = (r.userId === currentUserProfile.id)
-        ? currentUserProfile
-        : (registeredUsers.find(u => u.id === r.userId) || currentUserProfile);
+      const user: any = registeredUsers.find(u => u.id === r.userId);
 
       const subPlan = user?.subscriptionPlan || "free";
       const subExpiresAt = user?.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt).getTime() : 0;
@@ -1886,6 +1906,7 @@ app.post("/api/deals/:id/submit", requireAuth, requireRole("creator"), async (re
     });
     return res.json(result);
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to submit work link" });
   }
 });
@@ -1910,6 +1931,7 @@ app.post("/api/deals/:id/review", requireAuth, requireRole("sponsor", "admin"), 
     });
     return res.json(result);
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to review deal submission" });
   }
 });
@@ -1928,6 +1950,7 @@ app.post("/api/deals/:id/dispute", requireAuth, async (req: AuthRequest, res) =>
     });
     return res.json(result);
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to open dispute" });
   }
 });
@@ -1950,6 +1973,7 @@ app.post("/api/admin/disputes/:id/resolve", requireAuth, requireRole("admin"), a
     });
     return res.json(result);
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to resolve dispute" });
   }
 });
@@ -2031,6 +2055,7 @@ app.post("/api/withdrawals", requireAuth, async (req: AuthRequest, res) => {
       ...result,
     });
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     res.status(400).json({ error: err.message || "Failed to submit withdrawal request" });
   }
 });
@@ -2041,14 +2066,24 @@ app.get(["/api/withdrawals", "/api/users/:id/withdrawals"], requireAuth, async (
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const history = await getUserWithdrawalHistory(targetId);
-  res.json(history);
+  try {
+    const history = await getUserWithdrawalHistory(targetId);
+    res.json(history);
+  } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
+    res.status(500).json({ error: err.message || "Failed to fetch withdrawals" });
+  }
 });
 
 // GET /api/admin/withdrawals - List all withdrawal requests
 app.get("/api/admin/withdrawals", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const list = await getAllWithdrawalsAdmin();
-  res.json(list);
+  try {
+    const list = await getAllWithdrawalsAdmin();
+    res.json(list);
+  } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
+    res.status(500).json({ error: err.message || "Failed to fetch admin withdrawals" });
+  }
 });
 
 // POST /api/admin/withdrawals/:id/approve - Approve withdrawal with UTR reference
@@ -2061,6 +2096,7 @@ app.post("/api/admin/withdrawals/:id/approve", requireAuth, requireRole("admin")
     const result = await approveWithdrawal(withdrawalId, req.user!.id, targetUtr);
     res.json(result);
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     res.status(400).json({ error: err.message || "Failed to approve withdrawal" });
   }
 });
@@ -2075,6 +2111,7 @@ app.post("/api/admin/withdrawals/:id/reject", requireAuth, requireRole("admin"),
     const result = await rejectWithdrawal(withdrawalId, req.user!.id, targetReason);
     res.json(result);
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     res.status(400).json({ error: err.message || "Failed to reject withdrawal" });
   }
 });
@@ -2254,7 +2291,7 @@ app.post("/api/reservations", requireAuth, (req: AuthRequest, res) => {
 });
 
 // POST /api/reservations/:id/submit - submit work link
-app.post("/api/reservations/:id/submit", (req, res) => {
+app.post("/api/reservations/:id/submit", async (req, res) => {
   cleanReservations();
   const resId = Number(req.params.id);
   const reservations = loadReservations();
@@ -2282,18 +2319,18 @@ app.post("/api/reservations/:id/submit", (req, res) => {
 
   saveReservations(reservations);
 
-  // Add confirmation notification
-  userNotifications.unshift({
-    id: Date.now(),
-    userId: r.userId,
-    type: "submission_received",
-    title: "Submission Received ⏳",
-    message: `Your proof for ${r.campaign?.title || 'campaign'} has been submitted and is under brand review.`,
-    isRead: false,
-    link: "/my-campaigns",
-    createdAt: new Date().toISOString()
-  });
-  saveUserNotifications(userNotifications);
+  // Add confirmation notification to database
+  try {
+    await db.insert(notifications).values({
+      userId: r.userId,
+      type: "submission_received",
+      title: "Submission Received ⏳",
+      message: `Your proof for ${r.campaign?.title || 'campaign'} has been submitted and is under brand review.`,
+      isRead: false,
+    } as any);
+  } catch (e) {
+    // ignore
+  }
 
   res.json({ success: true, reservation: r });
 });
@@ -2331,15 +2368,20 @@ app.delete("/api/users/:id", (req, res) => {
 });
 
 // PUT /api/users/:id/shipping-address
-app.put("/api/users/:id/shipping-address", (req, res) => {
+app.put("/api/users/:id/shipping-address", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
   const { shippingAddress, shippingCity, shippingState, shippingPincode, shippingPhone } = req.body;
-  currentUserProfile.shippingAddress = shippingAddress ?? currentUserProfile.shippingAddress;
-  currentUserProfile.shippingCity = shippingCity ?? currentUserProfile.shippingCity;
-  currentUserProfile.shippingState = shippingState ?? currentUserProfile.shippingState;
-  currentUserProfile.shippingPincode = shippingPincode ?? currentUserProfile.shippingPincode;
-  currentUserProfile.shippingPhone = shippingPhone ?? currentUserProfile.shippingPhone;
-  saveUserProfile();
-  res.json(getSafeUserProfile(currentUserProfile));
+  const user = req.user!;
+  user.shippingAddress = shippingAddress ?? user.shippingAddress;
+  user.shippingCity = shippingCity ?? user.shippingCity;
+  user.shippingState = shippingState ?? user.shippingState;
+  user.shippingPincode = shippingPincode ?? user.shippingPincode;
+  user.shippingPhone = shippingPhone ?? user.shippingPhone;
+  saveRegisteredUsers();
+  res.json(sanitizeUser(user));
 });
 
 // ================= OFFICIAL INSTAGRAM BUSINESS LOGIN OAUTH =================
@@ -2379,7 +2421,19 @@ app.get("/api/instagram/login", (req, res) => {
   const redirectUri = getInstagramRedirectUri(req);
   const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
   const forceSetup = req.query.setup === "1" || req.query.configure === "1";
-  const userId = req.query.userId ? Number(req.query.userId) : currentUserProfile.id;
+  
+  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+  let authedUser: any = null;
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      authedUser = registeredUsers.find(u => u.id === decoded.id);
+    } catch {}
+  }
+  const userId = authedUser?.id || (req.query.userId ? Number(req.query.userId) : null);
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized: Authentication required" });
+  }
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
 
   // Anti-Farming & Abuse Rate Limiter check
@@ -2783,7 +2837,18 @@ app.get("/api/instagram/auth-url", (req, res) => {
     });
   }
   const returnTo = typeof req.query.return_to === "string" ? req.query.return_to : "/dashboard";
-  const userId = req.query.userId ? Number(req.query.userId) : currentUserProfile.id;
+  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+  let authedUser: any = null;
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      authedUser = registeredUsers.find(u => u.id === decoded.id);
+    } catch {}
+  }
+  const userId = authedUser?.id || (req.query.userId ? Number(req.query.userId) : null);
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized: Authentication required" });
+  }
   const state = createSignedOAuthState(userId, returnTo, appSecret);
   instagramOAuthStates.set(state, {
     userId,
@@ -3250,23 +3315,26 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     });
 
     // 11. Securely update user profile
-    currentUserProfile.instagramUsername = igUsername;
-    currentUserProfile.instagramProfileUrl = `https://instagram.com/${igUsername}`;
-    currentUserProfile.instagramFollowers = followersCount;
-    currentUserProfile.followers = followersCount;
-    currentUserProfile.isInstagramVerified = true;
-    currentUserProfile.instagramVerificationStatus = "verified";
-    currentUserProfile.instagramUserId = igUserId;
-    currentUserProfile.instagramAccessToken = finalAccessToken; // strictly server-side
-    currentUserProfile.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-    saveUserProfile();
+    const targetUser = registeredUsers.find(u => u.id === stateRecord.userId);
+    if (targetUser) {
+      targetUser.instagramUsername = igUsername;
+      targetUser.instagramProfileUrl = `https://instagram.com/${igUsername}`;
+      targetUser.instagramFollowers = followersCount;
+      targetUser.followers = followersCount;
+      targetUser.isInstagramVerified = true;
+      targetUser.instagramVerificationStatus = "verified";
+      targetUser.instagramUserId = igUserId;
+      targetUser.instagramAccessToken = finalAccessToken; // strictly server-side
+      targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+      saveRegisteredUsers();
+    }
 
-    console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${currentUserProfile.id} with Risk Score ${riskEval.riskScore}/100`);
+    console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
 
     return res.send(renderOAuthResult({
       success: true,
       username: igUsername,
-      followers: currentUserProfile.instagramFollowers,
+      followers: targetUser ? targetUser.instagramFollowers : followersCount,
       returnTo: clientReturnTo,
     }));
   } catch (err) {
@@ -3277,18 +3345,21 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
 });
 
 // User check Instagram verification status
-app.post("/api/users/:id/instagram/verify", (req, res) => {
-  // Respect authentic Meta OAuth verification status; prevent fake spoofing
-  res.json(getSafeUserProfile(currentUserProfile));
+app.post("/api/users/:id/instagram/verify", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  res.json(sanitizeUser(req.user!));
 });
 
 // Standalone Instagram verification APIs
-app.post("/api/instagram/fetch-followers", (req, res) => {
-  const username = req.body.username || currentUserProfile.instagramUsername;
+app.post("/api/instagram/fetch-followers", requireAuth, (req: AuthRequest, res) => {
+  const username = req.body.username || req.user?.instagramUsername;
   if (!username) {
     return res.status(400).json({ error: "Username is required" });
   }
-  res.json({ followers: currentUserProfile.instagramFollowers || 0, username, message: "Profile fetched" });
+  res.json({ followers: req.user?.instagramFollowers || 0, username, message: "Profile fetched" });
 });
 
 app.post("/api/instagram/submit", (req, res) => {
@@ -3302,10 +3373,10 @@ app.post("/api/instagram/generate-code", (req, res) => {
   });
 });
 
-app.post("/api/instagram/verify", (req, res) => {
+app.post("/api/instagram/verify", requireAuth, (req: AuthRequest, res) => {
   res.json({ 
-    verified: Boolean(currentUserProfile.isInstagramVerified), 
-    message: currentUserProfile.isInstagramVerified 
+    verified: Boolean(req.user?.isInstagramVerified), 
+    message: req.user?.isInstagramVerified 
       ? "Account is officially verified via Meta OAuth" 
       : "Please connect via official Meta Instagram Login OAuth to verify" 
   });
@@ -3400,115 +3471,147 @@ app.post("/api/admin/security/unlock-identity", (req, res) => {
   res.json(result);
 });
 
-// Notifications Persistence & Management
-const USER_NOTIFICATIONS_FILE = getDataFilePath("user_notifications.json");
-
-function loadUserNotifications(): any[] {
-  try {
-    if (fs.existsSync(USER_NOTIFICATIONS_FILE)) {
-      return JSON.parse(fs.readFileSync(USER_NOTIFICATIONS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    console.error("Error loading user notifications:", err);
+// Notifications Management (PostgreSQL Database backed)
+app.get("/api/users/:id/notifications", requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
   }
-  return [];
-}
-
-function saveUserNotifications(notifs: any[]) {
   try {
-    fs.writeFileSync(USER_NOTIFICATIONS_FILE, JSON.stringify(notifs, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving user notifications:", err);
-  }
-}
-
-let userNotifications: any[] = loadUserNotifications();
-
-app.get("/api/users/:id/notifications", (req, res) => {
-  const userId = Number(req.params.id);
-  const userNotifs = userNotifications.filter(n => n.userId === userId);
-  res.json(userNotifs);
-});
-
-app.get("/api/users/:id/notifications/unread-count", (req, res) => {
-  const userId = Number(req.params.id);
-  const userNotifs = userNotifications.filter(n => n.userId === userId);
-  const unreadCount = userNotifs.filter(n => !n.isRead).length;
-  res.json({ count: unreadCount });
-});
-
-app.post("/api/users/:id/notifications/mark-all-read", (req, res) => {
-  const userId = Number(req.params.id);
-  userNotifications.forEach(n => {
-    if (n.userId === userId) {
-      n.isRead = true;
+    const userNotifs = await db.select().from(notifications).where(eq(notifications.userId, targetId));
+    res.json(userNotifs);
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
     }
-  });
-  saveUserNotifications(userNotifications);
-  res.json({ success: true });
+    res.json([]);
+  }
 });
 
-app.all(["/api/notifications/:id/read", "/api/notifications/:id/mark-read"], (req, res) => {
+app.get("/api/users/:id/notifications/unread-count", requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  try {
+    const userNotifs = await db.select().from(notifications).where(eq(notifications.userId, targetId));
+    const unreadCount = userNotifs.filter((n: any) => !n.isRead && !n.read).length;
+    res.json({ count: unreadCount });
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.json({ count: 0 });
+  }
+});
+
+app.post("/api/users/:id/notifications/mark-all-read", requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  try {
+    await db.update(notifications).set({ isRead: true } as any).where(eq(notifications.userId, targetId));
+    res.json({ success: true });
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.json({ success: true });
+  }
+});
+
+app.all(["/api/notifications/:id/read", "/api/notifications/:id/mark-read"], requireAuth, async (req: AuthRequest, res) => {
   const notifId = Number(req.params.id);
-  const notif = userNotifications.find(n => n.id === notifId);
-  if (notif) {
-    notif.isRead = true;
-    saveUserNotifications(userNotifications);
+  try {
+    await db.update(notifications).set({ isRead: true } as any).where(eq(notifications.id, notifId));
+    res.json({ success: true });
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.json({ success: true });
   }
-  res.json({ success: true, notification: notif });
 });
 
-// Bank accounts & wallet
-const userBankAccounts: any[] = [];
-
-app.get("/api/bank-accounts", (req, res) => {
-  res.json(userBankAccounts);
+// Bank accounts & payout methods (PostgreSQL Database backed)
+app.get("/api/bank-accounts", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const methods = await getUserPayoutMethods(req.user!.id);
+    res.json(methods);
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.json([]);
+  }
 });
 
-app.post("/api/bank-accounts", (req, res) => {
-  const newAccount = {
-    id: Date.now(),
-    userId: currentUserProfile.id,
-    ...req.body,
-    isDefault: userBankAccounts.length === 0,
-    createdAt: new Date().toISOString()
-  };
-  userBankAccounts.push(newAccount);
-  res.json(newAccount);
+app.post("/api/bank-accounts", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const type = req.body.type || (req.body.upiId ? "UPI" : "Bank");
+    const account = await addPayoutMethod(req.user!.id, type, req.body);
+    res.json(account);
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.status(400).json({ error: err.message });
+  }
 });
 
-app.delete("/api/bank-accounts/:id", (req, res) => {
+app.delete("/api/bank-accounts/:id", requireAuth, (req: AuthRequest, res) => {
   res.json({ success: true });
 });
 
-app.put("/api/bank-accounts/:id/set-default", (req, res) => {
+app.put("/api/bank-accounts/:id/set-default", requireAuth, (req: AuthRequest, res) => {
   res.json({ success: true });
 });
 
-app.get("/api/withdrawal-requests", (req, res) => {
-  res.json([]);
+app.get("/api/withdrawal-requests", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const history = await getUserWithdrawalHistory(req.user!.id);
+    res.json(history);
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.json([]);
+  }
 });
 
-app.post("/api/withdrawal-requests", (req, res) => {
-  res.json({ id: Date.now(), status: "pending", ...req.body });
-});
-
-app.post("/api/users/:id/withdraw", (req, res) => {
-  res.json({ success: true, message: "Withdrawal request submitted" });
+app.post(["/api/withdrawal-requests", "/api/users/:id/withdraw"], requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const amount = parseFloat(req.body.amount || "0");
+    const payoutMethodId = Number(req.body.payoutMethodId || 1);
+    const result = await requestWithdrawal({
+      userId: req.user!.id,
+      userRole: req.user!.role,
+      amount,
+      payoutMethodId,
+    });
+    res.json(result);
+  } catch (err: any) {
+    if (!isLocalFallbackAllowed) {
+      return res.status(503).json({ error: "Database unavailable" });
+    }
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Account status
-app.get("/api/account/status", (req, res) => {
+app.get("/api/account/status", requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   res.json({
     status: "active",
-    balance: parseFloat(currentUserProfile.balance || "0"),
-    activeCampaigns: currentUserProfile.activeReservations || 0,
-    pendingWithdrawals: parseFloat(currentUserProfile.pendingWithdrawals || "0"),
-    activeReservations: currentUserProfile.activeReservations || 0,
-    subscriptionPlan: currentUserProfile.subscriptionPlan || "free",
-    subscriptionExpiresAt: currentUserProfile.subscriptionExpiresAt || null,
+    balance: parseFloat(user.balance || "0"),
+    activeCampaigns: user.activeReservations || 0,
+    pendingWithdrawals: parseFloat(user.pendingWithdrawals || "0"),
+    activeReservations: user.activeReservations || 0,
+    subscriptionPlan: user.subscriptionPlan || "free",
+    subscriptionExpiresAt: user.subscriptionExpiresAt || null,
     autoRenew: false,
-    user: currentUserProfile,
+    user: sanitizeUser(user),
     limits: { dailyCampaigns: 5, activeReservations: 3 }
   });
 });
@@ -3831,7 +3934,6 @@ app.get("/api/category-subscriptions", (req, res) => {
 });
 
 // ================= CASHFREE & SPONSOR WALLET PAYMENT GATEWAY =================
-let sponsorWalletBalances: Record<number, number> = { 1: 5000, 2: 12500 };
 
 // GET /api/sponsors/:id/wallet & /api/users/:id/wallet
 app.get(["/api/sponsors/:id/wallet", "/api/users/:id/wallet"], requireAuth, async (req: AuthRequest, res) => {
@@ -3839,14 +3941,19 @@ app.get(["/api/sponsors/:id/wallet", "/api/users/:id/wallet"], requireAuth, asyn
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const wallet = await getOrCreateWallet(targetId);
-  res.json({
-    balance: wallet.balance.toFixed(2),
-    escrowHeld: wallet.escrowHeld.toFixed(2),
-    minWithdrawalAmount: 1000,
-    maxWithdrawalAmount: 500000,
-    gstPercent: 18,
-  });
+  try {
+    const wallet = await getOrCreateWallet(targetId);
+    res.json({
+      balance: wallet.balance.toFixed(2),
+      escrowHeld: wallet.escrowHeld.toFixed(2),
+      minWithdrawalAmount: 1000,
+      maxWithdrawalAmount: 500000,
+      gstPercent: 18,
+    });
+  } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
+    res.status(500).json({ error: err.message || "Failed to load wallet" });
+  }
 });
 
 // Admin Manual Wallet Credit
@@ -3867,6 +3974,7 @@ app.post(["/api/admin/wallets/credit", "/api/admin/users/:id/wallet/credit"], re
       newBalance: result.newBalance.toFixed(2),
     });
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to process admin wallet credit" });
   }
 });
@@ -3888,6 +3996,7 @@ app.post("/api/payments/upi/submit", requireAuth, async (req: AuthRequest, res) 
       message: "UPI top-up reference submitted successfully. An administrator will verify the UTR and credit your wallet shortly.",
     });
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to submit UPI payment" });
   }
 });
@@ -3902,6 +4011,7 @@ app.post("/api/admin/upi-payments/:id/approve", requireAuth, requireRole("admin"
       message: `Approved UPI payment #${upiId}. Credited ₹${result.creditAmount.toFixed(2)} to User #${result.userId}.`,
     });
   } catch (err: any) {
+    if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     return res.status(400).json({ error: err.message || "Failed to approve UPI payment" });
   }
 });
@@ -4006,6 +4116,7 @@ app.post("/api/cashfree/create-order", requireAuth, async (req: AuthRequest, res
       message: "Cashfree simulation order created successfully",
     });
   } catch (error: any) {
+    if (error?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     console.error("[CASHFREE CREATE ORDER ERROR]", error);
     return res.status(500).json({ error: error.message || "Failed to create payment order" });
   }
@@ -4057,6 +4168,7 @@ app.post("/api/cashfree/verify", requireAuth, async (req: AuthRequest, res) => {
       message: result.alreadyProcessed ? "Order already verified" : "Payment verified and credited successfully",
     });
   } catch (error: any) {
+    if (error?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     console.error("[CASHFREE VERIFY ERROR]", error);
     return res.status(500).json({ error: error.message || "Failed to verify Cashfree payment" });
   }

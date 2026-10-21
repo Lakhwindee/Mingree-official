@@ -40,7 +40,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
     {
       id: 'n3',
       title: 'New High-Paying Campaign',
-      desc: 'GlowAura has released 15 new spots for Tier 6 influencers in Mumbai.',
+      desc: 'GlowAura has released 15 new spots for Mega influencers in Mumbai.',
       time: '2 days ago',
       type: 'system',
     },

@@ -1,42 +1,21 @@
 export interface Tier {
   id: number;
   name: string;
+  label: string;
   minFollowers: number;
   maxFollowers: number;
-  basePayment: number; // in INR
+  basePayment?: number; // optional, tiers are used only as filters never as prices
 }
 
-// 20 tiers starting from 500 followers
+// Exactly six creator tiers used ONLY as filters, never as fixed prices.
+// Half-open ranges: [minFollowers, maxFollowers)
 export const TIERS: Tier[] = [
-  // Nano Influencers (0.5K - 50K)
-  { id: 1, name: "Tier 1", minFollowers: 500, maxFollowers: 1000, basePayment: 20 },
-  { id: 2, name: "Tier 2", minFollowers: 1000, maxFollowers: 2000, basePayment: 50 },
-  { id: 3, name: "Tier 3", minFollowers: 2000, maxFollowers: 5000, basePayment: 80 },
-  { id: 4, name: "Tier 4", minFollowers: 5000, maxFollowers: 10000, basePayment: 150 },
-  { id: 5, name: "Tier 5", minFollowers: 10000, maxFollowers: 20000, basePayment: 200 },
-  { id: 6, name: "Tier 6", minFollowers: 20000, maxFollowers: 35000, basePayment: 300 },
-  { id: 7, name: "Tier 7", minFollowers: 35000, maxFollowers: 50000, basePayment: 500 },
-  
-  // Micro Influencers (50K - 100K)
-  { id: 8, name: "Tier 8", minFollowers: 50000, maxFollowers: 75000, basePayment: 700 },
-  { id: 9, name: "Tier 9", minFollowers: 75000, maxFollowers: 100000, basePayment: 900 },
-  
-  // Mid-Tier Influencers (100K - 500K)
-  { id: 10, name: "Tier 10", minFollowers: 100000, maxFollowers: 150000, basePayment: 1200 },
-  { id: 11, name: "Tier 11", minFollowers: 150000, maxFollowers: 200000, basePayment: 1500 },
-  { id: 12, name: "Tier 12", minFollowers: 200000, maxFollowers: 300000, basePayment: 2000 },
-  { id: 13, name: "Tier 13", minFollowers: 300000, maxFollowers: 500000, basePayment: 2500 },
-  
-  // Macro Influencers (500K - 1M)
-  { id: 14, name: "Tier 14", minFollowers: 500000, maxFollowers: 750000, basePayment: 3000 },
-  { id: 15, name: "Tier 15", minFollowers: 750000, maxFollowers: 1000000, basePayment: 4000 },
-  
-  // Mega Influencers (1M+)
-  { id: 16, name: "Tier 16", minFollowers: 1000000, maxFollowers: 2000000, basePayment: 5000 },
-  { id: 17, name: "Tier 17", minFollowers: 2000000, maxFollowers: 3000000, basePayment: 7000 },
-  { id: 18, name: "Tier 18", minFollowers: 3000000, maxFollowers: 5000000, basePayment: 9000 },
-  { id: 19, name: "Tier 19", minFollowers: 5000000, maxFollowers: 7000000, basePayment: 12000 },
-  { id: 20, name: "Tier 20", minFollowers: 7000000, maxFollowers: 10000000, basePayment: 15000 },
+  { id: 1, name: "Starter", label: "Starter", minFollowers: 500, maxFollowers: 2000, basePayment: 0 },
+  { id: 2, name: "Nano", label: "Nano", minFollowers: 2000, maxFollowers: 10000, basePayment: 0 },
+  { id: 3, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
+  { id: 4, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 250000, basePayment: 0 },
+  { id: 5, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 1000000, basePayment: 0 },
+  { id: 6, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: Infinity, basePayment: 0 },
 ];
 
 export const MIN_FOLLOWERS = 500;
@@ -51,23 +30,27 @@ export function getTierById(id: number): Tier | undefined {
 }
 
 export function formatFollowers(count: number): string {
+  if (count === Infinity || count >= 100000000) return "1M+";
   if (count >= 1000000) {
     const millions = count / 1000000;
     return millions % 1 === 0 ? `${millions}M` : `${millions.toFixed(1)}M`;
   }
   if (count >= 1000) return `${(count / 1000).toFixed(0)}K`;
-  if (count >= 500) return `0.5K`;
+  if (count >= 500) return `500`;
   return count.toString();
 }
 
 export function formatTierRange(minFollowers: number, maxFollowers: number): string {
+  if (maxFollowers === Infinity || maxFollowers >= 100000000) {
+    return `${formatFollowers(minFollowers)}+`;
+  }
   return `${formatFollowers(minFollowers)}-${formatFollowers(maxFollowers)}`;
 }
 
 export const PROMOTION_STYLE_MULTIPLIERS: Record<string, number> = {
-  face_ad: 1.0,       // Face on Camera - full base price
-  share_only: 0.90,   // Direct Share - 10% less
-  lyricals: 0.60,     // Lyricals/Page - 60% of base price
+  face_ad: 1.0,
+  share_only: 0.90,
+  lyricals: 0.60,
 };
 
 export function getPaymentByStyle(basePayment: number, promotionStyle: string): number {
@@ -77,22 +60,20 @@ export function getPaymentByStyle(basePayment: number, promotionStyle: string): 
 
 // Tax and Fee Constants
 export const TAX_RATES = {
-  PLATFORM_FEE_PERCENT: 10,      // 10% platform fee for sponsors on campaigns
-  GST_PERCENT: 18,               // 18% GST on wallet deposits (India)
-  INTERNATIONAL_FEE_PERCENT: 5,  // 5% processing fee for international deposits
+  PLATFORM_FEE_PERCENT: 10,
+  GST_PERCENT: 18,
+  INTERNATIONAL_FEE_PERCENT: 5,
 };
 
-// Calculate sponsor campaign payment (platform fee only, no GST here)
 export interface SponsorPaymentBreakdown {
-  creatorPayment: number;        // Total payment to creators
-  platformFee: number;           // 10% platform fee
-  totalPayable: number;          // Total amount from wallet
+  creatorPayment: number;
+  platformFee: number;
+  totalPayable: number;
 }
 
 export function calculateSponsorPayment(creatorPayment: number): SponsorPaymentBreakdown {
   const platformFee = Math.round(creatorPayment * TAX_RATES.PLATFORM_FEE_PERCENT / 100);
   const totalPayable = creatorPayment + platformFee;
-  
   return {
     creatorPayment,
     platformFee,
@@ -100,17 +81,15 @@ export function calculateSponsorPayment(creatorPayment: number): SponsorPaymentB
   };
 }
 
-// Calculate sponsor deposit with GST
 export interface DepositBreakdown {
-  baseAmount: number;            // Amount that goes to wallet
-  gstAmount: number;             // GST amount
-  totalPayable: number;          // Total amount sponsor pays
+  baseAmount: number;
+  gstAmount: number;
+  totalPayable: number;
 }
 
 export function calculateDepositWithGST(baseAmount: number): DepositBreakdown {
   const gstAmount = Math.round(baseAmount * TAX_RATES.GST_PERCENT / 100);
   const totalPayable = baseAmount + gstAmount;
-  
   return {
     baseAmount,
     gstAmount,
@@ -118,20 +97,18 @@ export function calculateDepositWithGST(baseAmount: number): DepositBreakdown {
   };
 }
 
-// Calculate international deposit with processing fee
 export interface InternationalDepositBreakdown {
-  baseAmount: number;            // Amount that goes to wallet
-  processingFee: number;         // 5% processing fee
-  totalPayable: number;          // Total amount user pays
+  baseAmount: number;
+  processingFee: number;
+  totalPayable: number;
 }
 
 export function calculateInternationalDeposit(baseAmount: number): InternationalDepositBreakdown {
   const processingFee = Math.round(baseAmount * TAX_RATES.INTERNATIONAL_FEE_PERCENT) / 100;
   const totalPayable = baseAmount + processingFee;
-  
   return {
     baseAmount,
-    processingFee: Math.round(processingFee * 100) / 100, // Round to 2 decimal places
+    processingFee: Math.round(processingFee * 100) / 100,
     totalPayable: Math.round(totalPayable * 100) / 100,
   };
 }

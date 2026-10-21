@@ -220,7 +220,7 @@ export default function LandingPage() {
                         <h3 className="text-xl font-bold text-white">Aarav Sharma</h3>
                         <BadgeCheck className="h-5 w-5 text-purple-400" />
                       </div>
-                      <p className="text-sm text-gray-400">@aarav.creator • Tier 12 Influencer (185K Followers)</p>
+                      <p className="text-sm text-gray-400">@aarav.creator • Mid Influencer (185K Followers)</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -378,13 +378,13 @@ export default function LandingPage() {
                 </span>
               </h2>
               <p className="text-gray-400 mb-8 text-base sm:text-lg leading-relaxed">
-                Our automated tier system scales seamlessly with your Instagram growth. From Tier 1 micro-influencers to Tier 20 celebrity creators, every milestone unlocks higher-paying campaigns.
+                Our audience tier system categorizes creators seamlessly by verified Instagram follower range. From Starter creators to Mega influencers, find the exact match for your campaigns.
               </p>
               <div className="space-y-4">
                 {[
-                  { icon: <Zap className="h-5 w-5 text-purple-400" />, text: "Tier 1 starts at just 500 followers — zero barrier to entry" },
-                  { icon: <Shield className="h-5 w-5 text-pink-400" />, text: "Higher tiers automatically unlock all lower-tier campaigns" },
-                  { icon: <Gift className="h-5 w-5 text-amber-400" />, text: "Top creator tiers earn up to ₹15,000 per sponsored reel" }
+                  { icon: <Zap className="h-5 w-5 text-purple-400" />, text: "Starter creators begin at 500 followers — accessible for rising talent" },
+                  { icon: <Shield className="h-5 w-5 text-pink-400" />, text: "Higher audience tiers automatically unlock broader campaign opportunities" },
+                  { icon: <Gift className="h-5 w-5 text-amber-400" />, text: "Filter seamlessly across Starter, Nano, Micro, Mid, Macro, and Mega tiers" }
                 ].map((item, index) => (
                   <div key={index} className="flex items-center gap-4 p-4 rounded-2xl bg-white/[0.02] border border-white/5">
                     <div className="h-10 w-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
@@ -398,10 +398,10 @@ export default function LandingPage() {
 
             <div className="grid grid-cols-2 gap-4">
               {[
-                { tier: "Tier 1", followers: "500 - 1K", pay: "₹20 / post", gradient: "from-purple-500/20 to-indigo-500/20" },
-                { tier: "Tier 5", followers: "10K - 20K", pay: "₹200 / post", gradient: "from-indigo-500/20 to-pink-500/20" },
-                { tier: "Tier 10", followers: "100K - 150K", pay: "₹1,200 / post", gradient: "from-pink-500/20 to-purple-500/20" },
-                { tier: "Tier 20", followers: "7M - 10M+", pay: "₹15,000+ / post", gradient: "from-amber-500/20 to-pink-500/20" }
+                { tier: "Starter", followers: "500 - 2,000", gradient: "from-purple-500/20 to-indigo-500/20" },
+                { tier: "Micro", followers: "10,000 - 50,000", gradient: "from-indigo-500/20 to-pink-500/20" },
+                { tier: "Mid", followers: "50,000 - 250,000", gradient: "from-pink-500/20 to-purple-500/20" },
+                { tier: "Mega", followers: "1,000,000+", gradient: "from-amber-500/20 to-pink-500/20" }
               ].map((item, index) => (
                 <motion.div
                   key={item.tier}
@@ -413,7 +413,7 @@ export default function LandingPage() {
                   <div className="text-xs font-semibold text-purple-300 uppercase tracking-wider mb-1">{item.tier}</div>
                   <div className="text-xl sm:text-2xl font-bold text-white mb-2">{item.followers}</div>
                   <div className="text-xs text-gray-300 font-medium bg-white/10 px-3 py-1.5 rounded-xl inline-block">
-                    {item.pay}
+                    Audience Filter
                   </div>
                 </motion.div>
               ))}

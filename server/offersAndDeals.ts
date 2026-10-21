@@ -33,8 +33,81 @@ interface DealRecord {
   createdAt: string;
 }
 
-const memoryOffers = new Map<number, CampaignOfferRecord>();
-const memoryDeals = new Map<number, DealRecord>();
+const memoryOffers = new Map<number, CampaignOfferRecord>([
+  [
+    1,
+    {
+      id: 1,
+      campaignId: 1,
+      creatorId: 1,
+      quotedPrice: "2500.00",
+      status: "invited",
+      source: "autopilot",
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  [
+    2,
+    {
+      id: 2,
+      campaignId: 1,
+      creatorId: 3,
+      quotedPrice: "2500.00",
+      status: "accepted",
+      source: "autopilot",
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  [
+    3,
+    {
+      id: 3,
+      campaignId: 2,
+      creatorId: 1,
+      quotedPrice: "4000.00",
+      status: "accepted",
+      source: "autopilot",
+      createdAt: new Date().toISOString(),
+    },
+  ],
+]);
+
+const memoryDeals = new Map<number, DealRecord>([
+  [
+    1,
+    {
+      id: 1,
+      campaignId: 1,
+      artistId: 2,
+      creatorId: 3,
+      price: "2500.00",
+      feeArtist: "187.50",
+      feeCreator: "187.50",
+      creatorNet: "2312.50",
+      status: "posted",
+      deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      postUrl: "https://www.instagram.com/p/C1234567890/",
+      submittedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    },
+  ],
+  [
+    2,
+    {
+      id: 2,
+      campaignId: 2,
+      artistId: 4,
+      creatorId: 1,
+      price: "4000.00",
+      feeArtist: "300.00",
+      feeCreator: "300.00",
+      creatorNet: "3700.00",
+      status: "accepted",
+      deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+    },
+  ],
+]);
 
 // Value score calculation formula (0-100)
 export function calculateValueScore(params: {

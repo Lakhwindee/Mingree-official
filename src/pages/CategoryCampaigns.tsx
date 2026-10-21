@@ -108,7 +108,7 @@ export default function CategoryCampaignsPage() {
   };
 
   const maxJoinedTier = getMaxJoinedTierNumber();
-  const maxTierName = TIERS.find(t => t.id === maxJoinedTier)?.name || "Tier 1";
+  const maxTierName = TIERS.find(t => t.id === maxJoinedTier)?.name || "Starter";
 
   // Get user's tier based on their Instagram followers
   const userTier = user?.tier ? TIERS.find(t => t.name === user.tier) : null;
@@ -257,7 +257,7 @@ export default function CategoryCampaignsPage() {
             {subscriptions.length > 0 && (
               <div className="mt-4 flex items-center gap-3">
                 <Badge variant="secondary" className="bg-green-100 text-green-700 text-sm px-3 py-1">
-                  Tier 1 - {maxTierName} campaigns
+                  Starter to {maxTierName} campaigns
                 </Badge>
                 <span className="text-sm text-muted-foreground">
                   {filteredCampaigns.length} campaigns available

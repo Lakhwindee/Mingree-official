@@ -40,7 +40,7 @@ export default function AboutMingree() {
     },
     {
       icon: <TrendingUp className="h-5 w-5 text-purple-500" />,
-      title: "20-Tier Dynamic Growth",
+      title: "Dynamic Follower Tiers",
       description: "As your Instagram followers and engagement grow, higher payout tiers unlock automatically."
     },
     {
