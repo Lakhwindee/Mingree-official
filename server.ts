@@ -239,10 +239,6 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
 
 // ================= API ROUTES =================
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
 
 // Check Email Service Status
 app.get("/api/auth/email-status", (req, res) => {
@@ -385,41 +381,25 @@ app.post("/api/auth/reset-password", (req, res) => {
   return res.json({ success: true, message: "Password updated successfully" });
 });
 
-// Helper to get Instagram Meta OAuth credentials securely from server secrets & settings
+// Helper to get Instagram Meta OAuth credentials securely from process.env
 function getInstagramCredentials(): { appId: string; appSecret: string } {
-  const settings = loadSettings();
-  const settingsAppId = (settings.instagram_app_id || "").trim();
-  const settingsAppSecret = (settings.instagram_app_secret || "").trim();
-  const envAppId = (process.env.INSTAGRAM_APP_ID || process.env.INSTAGRAM_CLIENT_ID || "").trim();
-  const envAppSecret = (process.env.INSTAGRAM_APP_SECRET || process.env.INSTAGRAM_CLIENT_SECRET || "").trim();
-
-  // Known Meta IDs for this app:
-  // - 1585375139983524: Parent Meta/Facebook App ID (App Settings > Basic).
-  // - 3167123270152518: Instagram App ID (Instagram API with Instagram Login > Settings).
-  // Note: Meta's Instagram OAuth endpoint strictly requires the dedicated Instagram App ID (3167123270152518).
-  // Passing 1585375139983524 triggers "OAuthException: Invalid platform app" and displays "Something went wrong" on iOS and web!
-  let appId = settingsAppId || envAppId;
-  let appSecret = settingsAppSecret || envAppSecret;
-
-  if (appId === "1585375139983524" || !appId) {
-    appId = settingsAppId && settingsAppId !== "1585375139983524" ? settingsAppId : "3167123270152518";
-    if (!appSecret || appSecret === process.env.INSTAGRAM_APP_SECRET) {
-      appSecret = settingsAppSecret || "a80adcabcc62abb2e66c3d1048a50e76";
-    }
-  }
-
+  const appId = (process.env.INSTAGRAM_APP_ID || process.env.INSTAGRAM_CLIENT_ID || "").trim();
+  const appSecret = (process.env.INSTAGRAM_APP_SECRET || process.env.INSTAGRAM_CLIENT_SECRET || "").trim();
   return { appId, appSecret };
 }
 
-// Compute official Meta OAuth Redirect / Callback URI
-// Exact URI configured in Meta Developer Dashboard:
+// Compute official Meta OAuth Redirect / Callback URI dynamically
 function getInstagramRedirectUri(req?: express.Request): string {
-  const CANONICAL_REDIRECT_URI = "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback";
-  const settings = loadSettings();
-  if (settings.instagram_redirect_uri && settings.instagram_redirect_uri.trim()) {
-    return settings.instagram_redirect_uri.trim();
+  const envAppUrl = (process.env.APP_URL || "").trim();
+  if (envAppUrl) {
+    return `${envAppUrl.replace(/\/+$/, "")}/api/instagram/callback`;
   }
-  return CANONICAL_REDIRECT_URI;
+  if (req) {
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+    const host = req.headers["x-forwarded-host"] || req.get("host") || "localhost:3000";
+    return `${protocol}://${host}/api/instagram/callback`;
+  }
+  return "/api/instagram/callback";
 }
 
 // Cryptographically signed state token generator to protect against CSRF and survive server restarts
@@ -460,19 +440,31 @@ function getSafeUserProfile(profile: Record<string, any>) {
   return safe;
 }
 
+const SECRET_KEYS_SET = new Set([
+  "gmail_app_password",
+  "gmail_password",
+  "instagram_app_secret",
+  "instagram_client_secret",
+  "cashfree_secret_key",
+  "cashfree_secret",
+  "rapidapi_key",
+  "rapidapi_secret",
+]);
+
 // Admin API Keys - Get
 app.get("/api/admin/api-keys", (req, res) => {
   const settings = loadSettings();
   const { appId, appSecret } = getInstagramCredentials();
   res.json({
-    gmail_user: process.env.GMAIL_USER || settings.gmail_user || "",
-    gmail_app_password: (process.env.GMAIL_APP_PASSWORD || settings.gmail_app_password) ? "••••••••••••••••" : "",
-    cashfree_app_id: settings.cashfree_app_id || "",
+    gmail_user: process.env.GMAIL_USER || "",
+    gmail_app_password: process.env.GMAIL_APP_PASSWORD ? "••••••••••••••••" : "",
+    cashfree_app_id: process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "",
+    cashfree_secret_key: (process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET) ? "••••••••••••••••" : "",
     instagram_app_id: appId,
     instagram_app_secret: appSecret ? "••••••••••••••••" : "",
     instagram_redirect_uri: getInstagramRedirectUri(req),
     min_instagram_followers: getMinInstagramFollowers(),
-    rapidapi_key: settings.rapidapi_key || "",
+    rapidapi_key: process.env.RAPIDAPI_KEY ? "••••••••••••••••" : "",
   });
 });
 
@@ -491,11 +483,20 @@ app.post("/api/admin/api-keys", (req, res) => {
     return res.status(400).json({ error: "Key is required" });
   }
 
+  // Never write secrets to app_settings.json on disk
+  if (SECRET_KEYS_SET.has(String(key).toLowerCase())) {
+    return res.json({ 
+      success: true, 
+      key, 
+      message: "Secret values cannot be written to disk. Please configure secret keys via environment variables (process.env)." 
+    });
+  }
+
   const settings = loadSettings();
   if (typeof value === "string" && !value.startsWith("••••")) {
     settings[key] = value || "";
     saveSettings(settings);
-    console.log(`[SETTINGS] Updated key: ${key}`);
+    console.log(`[SETTINGS] Updated non-secret setting: ${key}`);
   }
   return res.json({ success: true, key });
 });
@@ -1332,18 +1333,17 @@ app.get("/api/instagram/config", (req, res) => {
 
 // Instagram Configuration - Save
 app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
-  const { appId, appSecret, redirectUri } = req.body;
+  const { appId, redirectUri } = req.body;
   const settings = loadSettings();
   if (typeof appId === "string") settings.instagram_app_id = appId.trim();
-  if (typeof appSecret === "string" && appSecret.trim()) settings.instagram_app_secret = appSecret.trim();
   if (typeof redirectUri === "string" && redirectUri.trim()) settings.instagram_redirect_uri = redirectUri.trim();
   saveSettings(settings);
 
-  console.log(`[INSTAGRAM_CONFIG] Saved App ID: ${settings.instagram_app_id ? settings.instagram_app_id.slice(0, 4) + '...' : 'none'}, Secret: ${Boolean(settings.instagram_app_secret)}`);
+  const { appId: currentAppId, appSecret } = getInstagramCredentials();
   return res.json({ 
     success: true, 
-    configured: Boolean(settings.instagram_app_id && settings.instagram_app_secret),
-    appId: settings.instagram_app_id || "",
+    configured: Boolean(currentAppId && appSecret),
+    appId: currentAppId || "",
     redirectUri: getInstagramRedirectUri(req)
   });
 });

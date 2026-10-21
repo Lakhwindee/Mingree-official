@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Runtime JSON data & secret store files
+app_settings.json
+user_profile.json
+otp_store.json
+registered_users.json
+campaigns.json
+reservations.json
+security_audit_logs.json
+instagram_identities.json
+category_subscriptions.json
+*.json.bak
