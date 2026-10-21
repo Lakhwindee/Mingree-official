@@ -22,12 +22,40 @@ import {
   unlockOrTransferIdentity,
 } from "./server/instagramSecurity";
 
+import {
+  getOrCreateWallet,
+  lockEscrow,
+  releaseEscrow,
+  refundEscrow,
+  createPaymentOrder,
+  processOrderPaymentSuccess,
+  verifyCashfreeSignature,
+  submitUpiTopup,
+  approveUpiTopup,
+  adminCreditWallet,
+} from "./server/walletAndPayments";
+
+import {
+  matchAndInviteCreators,
+  submitQuoteOrAccept,
+  getCampaignShortlist,
+  bulkApproveOffers,
+  createDirectBooking,
+  respondToDirectOffer,
+} from "./server/offersAndDeals";
+
 const app = express();
 // Default to 3000 for AI Studio container, but adopt Render's dynamic PORT when hosted on Render
 const PORT = process.env.RENDER ? (Number(process.env.PORT) || 3000) : 3000;
 
 app.use(cookieParser());
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 
 // For Vercel Serverless Function: normalize URL if /api prefix is stripped by rewrite
@@ -1482,57 +1510,321 @@ app.get("/api/sponsors/:id/campaigns", (req, res) => {
   res.json(filtered);
 });
 
-// POST /api/sponsors/:id/campaigns
-app.post("/api/sponsors/:id/campaigns", (req, res) => {
+// POST /api/campaigns/estimate - Pre-launch campaign reach and matching estimation
+app.post("/api/campaigns/estimate", requireAuth, (req: AuthRequest, res) => {
+  const { budget, pricingMode, fixedPrice, priceCapPer1k, filters } = req.body;
+  const numBudget = parseFloat(budget) || 0;
+  const numFixed = parseFloat(fixedPrice) || 0;
+  const numCap = parseFloat(priceCapPer1k) || 0;
+
+  // Filter matching creators count
+  const eligibleCreators = registeredUsers.filter(u => u.role === "creator");
+  const eligibleCount = Math.max(1, eligibleCreators.length);
+
+  let estimatedViews = 0;
+  if (pricingMode === "fixed" && numFixed > 0) {
+    const totalSpots = Math.floor(numBudget / numFixed);
+    const avgViewsPerCreator = filters?.minMedianViews ? Math.max(10000, Number(filters.minMedianViews)) : 15000;
+    estimatedViews = totalSpots * avgViewsPerCreator;
+  } else if (pricingMode === "cap" && numCap > 0) {
+    estimatedViews = Math.floor((numBudget / numCap) * 1000);
+  } else {
+    estimatedViews = Math.floor((numBudget / 80) * 1000); // Default estimate ~80 CPM
+  }
+
+  res.json({
+    budget: numBudget,
+    eligibleCount,
+    estimatedViews,
+    recommendedSpots: numFixed > 0 ? Math.floor(numBudget / numFixed) : Math.floor(numBudget / 1000),
+  });
+});
+
+// GET /api/campaigns
+app.get("/api/campaigns", (req, res) => {
+  cleanReservations();
+  const campaigns = loadCampaigns();
+  const { country, city } = req.query;
+  let filtered = [...campaigns];
+
+  if (country && typeof country === "string") {
+    filtered = filtered.filter(c => !c.targetCountries || c.targetCountries.includes(country) || c.targetCountries.includes("All"));
+  }
+  if (city && typeof city === "string") {
+    filtered = filtered.filter(c => !c.targetCities || c.targetCities.includes(city) || c.targetCities.includes("All"));
+  }
+
+  res.json(filtered);
+});
+
+// GET /api/campaigns/:id
+app.get("/api/campaigns/:id", (req, res) => {
+  cleanReservations();
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find(c => c.id === Number(req.params.id));
+  if (!campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+  res.json(campaign);
+});
+
+// GET /api/sponsors/:id/campaigns
+app.get("/api/sponsors/:id/campaigns", requireAuth, (req: AuthRequest, res) => {
+  cleanReservations();
+  const campaigns = loadCampaigns();
   const sponsorId = Number(req.params.id);
+  if (req.user!.id !== sponsorId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const filtered = campaigns.filter(c => c.sponsorId === sponsorId);
+  res.json(filtered);
+});
+
+// POST /api/sponsors/:id/campaigns & /api/campaigns - Create campaign with Escrow Lock
+app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const sponsorId = req.user!.id;
   const data = req.body;
+  const totalBudget = parseFloat(data.budget || data.totalBudget || (Number(data.payAmount || 0) * Number(data.totalSpots || 1)));
+
+  if (isNaN(totalBudget) || totalBudget <= 0) {
+    return res.status(400).json({ error: "Campaign budget must be greater than zero" });
+  }
+
+  // 1. Require wallet balance >= totalBudget
+  const wallet = await getOrCreateWallet(sponsorId);
+  if (wallet.balance < totalBudget) {
+    return res.status(402).json({
+      error: `Insufficient wallet balance to launch campaign. Campaign budget: ₹${totalBudget.toFixed(2)}, Available wallet balance: ₹${wallet.balance.toFixed(2)}. Please top up your wallet first.`
+    });
+  }
+
   const campaigns = loadCampaigns();
   const newId = campaigns.length > 0 ? Math.max(...campaigns.map((c: any) => c.id || 0)) + 1 : 1;
+
+  // 2. Move budget into escrow_held and write ledger entries
+  await lockEscrow(sponsorId, totalBudget, { refType: "campaign_launch", refId: String(newId) });
+
+  // 3. Disclosure instruction enforcement (#ad or Paid partnership)
+  const rawCaption = (data.requiredCaptionNote || data.captionNote || "").trim();
+  const requiredCaptionNote = rawCaption.toLowerCase().includes("#ad") || rawCaption.toLowerCase().includes("paid partnership")
+    ? rawCaption
+    : `#ad | Paid Partnership. ${rawCaption}`.trim();
 
   const newCampaign = {
     id: newId,
     sponsorId,
-    title: data.title || "Untitled Campaign",
-    brand: data.brand || "Brand",
-    brandLogo: data.brandLogo || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100",
-    payAmount: String(data.payAmount || 0),
+    artistId: sponsorId,
+    title: data.title || "Untitled Music Campaign",
+    songUrl: data.songUrl || data.assetUrl || "",
+    genre: data.genre || "Pop",
+    language: data.language || "Hindi",
+    brand: data.brand || req.user!.companyName || req.user!.name,
+    brandLogo: data.brandLogo || req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100",
+    payAmount: String(data.fixedPrice || data.payAmount || 0),
     type: data.type || "Reel",
     contentTypes: data.contentTypes || ["Reel"],
     promotionStyle: data.promotionStyle || "Review",
-    assetUrl: data.assetUrl || null,
+    assetUrl: data.songUrl || data.assetUrl || null,
     assetFileName: data.assetFileName || null,
-    minFollowers: Number(data.minFollowers || 0),
+    minFollowers: Number(data.minFollowers || 500),
     description: data.description || "",
-    tier: data.tier || "Tier 1",
     deadline: data.deadline || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
-    totalSpots: Number(data.totalSpots || 10),
-    spotsRemaining: Number(data.totalSpots || 10),
+    totalSpots: Number(data.totalSpots || Math.max(1, Math.floor(totalBudget / Math.max(1, Number(data.fixedPrice || 1000))))),
+    spotsRemaining: Number(data.totalSpots || Math.max(1, Math.floor(totalBudget / Math.max(1, Number(data.fixedPrice || 1000))))),
     status: "active",
-    isPromotional: Boolean(data.isPromotional),
-    starReward: Number(data.starReward || 0),
     isApproved: true,
-    targetCountries: data.targetCountries || ["IN"],
-    targetCities: data.targetCities || ["All"],
-    totalBudget: String(Number(data.payAmount || 0) * Number(data.totalSpots || 10)),
-    releasedAmount: "0",
-    refundedAmount: "0",
+    totalBudget: String(totalBudget),
+    spentAmount: "0.00",
+    escrowHeld: String(totalBudget),
     escrowStatus: "funded",
+    pricingMode: data.pricingMode || "fixed",
+    fixedPrice: data.fixedPrice ? String(data.fixedPrice) : null,
+    priceCapPer1k: data.priceCapPer1k ? String(data.priceCapPer1k) : null,
+    filters: data.filters || {
+      followerTiers: data.tier ? [data.tier] : ["Nano", "Micro"],
+      minMedianViews: Number(data.minMedianViews || 0),
+      minIndiaPct: Number(data.minIndiaPct || 0),
+    },
+    requiredTags: Array.isArray(data.requiredTags) ? data.requiredTags : (data.requiredTags ? [data.requiredTags] : ["#mingree", "#music"]),
+    requiredCaptionNote,
+    whitelistCreators: Array.isArray(data.whitelistCreators) ? data.whitelistCreators : [],
+    blacklistCreators: Array.isArray(data.blacklistCreators) ? data.blacklistCreators : [],
+    maxBudgetSharePerCreator: Number(data.maxBudgetSharePerCreator || 0.50),
     createdAt: new Date().toISOString(),
-    campaignType: data.campaignType || "paid",
-    productName: data.productName || null,
-    productValue: data.productValue ? String(data.productValue) : null,
-    mentions: data.mentions || [],
-    category: data.category || "General",
   };
 
   campaigns.unshift(newCampaign);
   saveCampaigns(campaigns);
+
+  // Automatically trigger creator matching and invitations on campaign launch
+  matchAndInviteCreators(newId, registeredUsers).catch(() => {});
+
   res.json(newCampaign);
 });
 
+// POST /api/campaigns/:id/match - Trigger creator matching & invitations
+app.post("/api/campaigns/:id/match", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const invitedCount = await matchAndInviteCreators(campaignId, registeredUsers);
+  res.json({ success: true, invitedCount, message: `Matched and invited ${invitedCount} eligible creators.` });
+});
+
+// POST /api/campaigns/:id/quote - Submit quote / accept (Cap vs Fixed mode)
+app.post(["/api/campaigns/:id/quote", "/api/campaigns/:id/apply"], requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find(c => c.id === campaignId);
+
+  if (!campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+
+  const { quotedPrice, price } = req.body;
+  const targetPrice = parseFloat(quotedPrice || price || campaign.fixedPrice || "1000");
+
+  const isPro = (req.user!.subscriptionPlan === "pro" || req.user!.subscriptionPlan === "enterprise") &&
+    (!req.user!.subscriptionExpiresAt || new Date(req.user!.subscriptionExpiresAt) > new Date());
+
+  try {
+    const result = await submitQuoteOrAccept({
+      campaign: { ...campaign, creatorMedianViews: req.user!.medianViews || req.user!.followers || 15000 },
+      creatorId: req.user!.id,
+      quotedPrice: targetPrice,
+      isProCreator: isPro,
+    });
+
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to submit quote" });
+  }
+});
+
+// GET /api/sponsors/:id/campaigns/:campaignId/shortlist & /api/campaigns/:id/shortlist
+app.get(["/api/sponsors/:id/campaigns/:campaignId/shortlist", "/api/campaigns/:id/shortlist"], requireAuth, async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.campaignId || req.params.id);
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find(c => c.id === campaignId);
+
+  if (!campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+
+  const capPrice = parseFloat(campaign.priceCapPer1k || campaign.fixedPrice || "100");
+  const shortlist = await getCampaignShortlist(campaignId, capPrice, registeredUsers);
+  res.json(shortlist);
+});
+
+// POST /api/campaigns/:id/offers/bulk-approve
+app.post("/api/campaigns/:id/offers/bulk-approve", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { offerIds } = req.body;
+
+  if (!Array.isArray(offerIds) || offerIds.length === 0) {
+    return res.status(400).json({ error: "Please select at least one offer to approve" });
+  }
+
+  try {
+    const result = await bulkApproveOffers(req.user!.id, campaignId, offerIds);
+    res.json({
+      success: true,
+      message: `Bulk approved ${result.approvedDealsCount} offers (Total: ₹${result.totalAmountApproved.toFixed(2)}).`,
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to bulk approve offers" });
+  }
+});
+
+// POST /api/offers/direct - Create direct booking offer
+app.post("/api/offers/direct", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const { campaignId, creatorId, price } = req.body;
+  const numPrice = parseFloat(price);
+
+  if (!campaignId || !creatorId || isNaN(numPrice) || numPrice <= 0) {
+    return res.status(400).json({ error: "Valid campaignId, creatorId, and positive price are required" });
+  }
+
+  try {
+    const result = await createDirectBooking({
+      artistId: req.user!.id,
+      campaignId: Number(campaignId),
+      creatorId: Number(creatorId),
+      price: numPrice,
+    });
+    res.json({ success: true, ...result, message: "Direct booking invitation sent to creator." });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to create direct booking" });
+  }
+});
+
+// POST /api/offers/:id/respond - Creator respond (accept, decline, counter)
+app.post("/api/offers/:id/respond", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const offerId = Number(req.params.id);
+  const { action, counterPrice } = req.body;
+
+  if (!["accept", "decline", "counter"].includes(action)) {
+    return res.status(400).json({ error: "Action must be 'accept', 'decline', or 'counter'" });
+  }
+
+  try {
+    const result = await respondToDirectOffer({
+      offerId,
+      creatorId: req.user!.id,
+      action,
+      counterPrice: counterPrice ? parseFloat(counterPrice) : undefined,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to respond to offer" });
+  }
+});
+
+// POST /api/campaigns/:id/close - Cancel/Close campaign & refund unspent escrow
+app.post("/api/campaigns/:id/close", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find(c => c.id === campaignId);
+
+  if (!campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+
+  if (req.user!.role !== "admin" && campaign.sponsorId !== req.user!.id) {
+    return res.status(403).json({ error: "Forbidden: You do not own this campaign" });
+  }
+
+  if (campaign.status === "closed") {
+    return res.status(400).json({ error: "Campaign is already closed" });
+  }
+
+  const totalBudget = parseFloat(campaign.totalBudget || "0");
+  const spentAmount = parseFloat(campaign.spentAmount || "0");
+  const unspentAmount = Math.max(0, totalBudget - spentAmount);
+
+  if (unspentAmount > 0) {
+    await refundEscrow(campaign.sponsorId, unspentAmount, {
+      refType: "campaign_cancel",
+      refId: String(campaignId),
+    });
+  }
+
+  campaign.status = "closed";
+  campaign.escrowStatus = "refunded";
+  saveCampaigns(campaigns);
+
+  res.json({
+    success: true,
+    message: `Campaign #${campaignId} closed. Refunded ₹${unspentAmount.toFixed(2)} unspent escrow to wallet.`,
+    refundedAmount: unspentAmount.toFixed(2),
+  });
+});
+
 // GET /api/users/:id/reservations
-app.get("/api/users/:id/reservations", (req, res) => {
+app.get("/api/users/:id/reservations", requireAuth, (req: AuthRequest, res) => {
   const userId = Number(req.params.id);
+  if (req.user!.id !== userId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
   const reservations = cleanReservations(userId);
   const campaigns = loadCampaigns();
 
@@ -1546,22 +1838,11 @@ app.get("/api/users/:id/reservations", (req, res) => {
   res.json(userRes);
 });
 
-// POST /api/reservations - reserve campaign (requires active Pro subscription)
-app.post("/api/reservations", (req, res) => {
+// POST /api/reservations - reserve campaign (Pro-subscription requirement REMOVED per Step 7)
+app.post("/api/reservations", requireAuth, (req: AuthRequest, res) => {
   cleanReservations();
-  const plan = currentUserProfile.subscriptionPlan || "free";
-  const subExpiresAt = currentUserProfile.subscriptionExpiresAt ? new Date(currentUserProfile.subscriptionExpiresAt).getTime() : 0;
   const now = Date.now();
-  const isPro = (plan === "pro" || plan === "enterprise") && (!subExpiresAt || subExpiresAt > now);
-
-  // 1. Free plan users cannot reserve
-  if (!isPro) {
-    return res.status(403).json({
-      error: "Upgrade Required: Aapko campaign reserve karne ke liye Pro plan par upgrade karna padega. Free creators cannot reserve campaigns."
-    });
-  }
-
-  const { campaignId, userId } = req.body;
+  const { campaignId } = req.body;
   const campaigns = loadCampaigns();
   const campaign = campaigns.find(c => c.id === Number(campaignId));
 
@@ -1573,8 +1854,17 @@ app.post("/api/reservations", (req, res) => {
     return res.status(400).json({ error: "No spots remaining in this campaign" });
   }
 
+  const effectiveUserId = req.user!.id;
+
+  // Check Whitelist & Blacklist
+  if (campaign.blacklistCreators && campaign.blacklistCreators.includes(effectiveUserId)) {
+    return res.status(403).json({ error: "Creator is excluded from this campaign by artist instructions." });
+  }
+  if (campaign.whitelistCreators && campaign.whitelistCreators.length > 0 && !campaign.whitelistCreators.includes(effectiveUserId)) {
+    return res.status(403).json({ error: "This campaign is restricted to whitelisted creators only." });
+  }
+
   const reservations = loadReservations();
-  const effectiveUserId = Number(userId || currentUserProfile.id);
 
   // Check if already reserved
   const existing = reservations.find(r => r.userId === effectiveUserId && r.campaignId === campaign.id && r.status !== "rejected");
@@ -1582,10 +1872,8 @@ app.post("/api/reservations", (req, res) => {
     return res.status(400).json({ error: "You already have an active reservation for this campaign" });
   }
 
-  // Calculate deadline: standard is 48 hours, but if subscription ends earlier, cap it at subscription expiry!
-  // "agr maanle kisi ne paid liya or champ… reserve kri lekin uska subscription agle din khatm hone wala or usne wapis work link submit nai kiya to wo reserved v udd jani chahiye"
+  // Calculate 48-hour reservation deadline window
   const standard48h = now + 48 * 60 * 60 * 1000;
-  const effectiveExpiresAt = (subExpiresAt > 0 && subExpiresAt < standard48h) ? subExpiresAt : standard48h;
 
   campaign.spotsRemaining = Math.max(0, campaign.spotsRemaining - 1);
   saveCampaigns(campaigns);
@@ -1596,7 +1884,7 @@ app.post("/api/reservations", (req, res) => {
     userId: effectiveUserId,
     status: "reserved",
     reservedAt: new Date().toISOString(),
-    expiresAt: new Date(effectiveExpiresAt).toISOString(),
+    expiresAt: new Date(standard48h).toISOString(),
     submittedAt: null,
     reviewedAt: null,
     trackingNumber: "EXP-" + Math.floor(100000 + Math.random() * 900000),
@@ -1609,9 +1897,6 @@ app.post("/api/reservations", (req, res) => {
 
   reservations.push(newReservation);
   saveReservations(reservations);
-
-  currentUserProfile.activeReservations = (currentUserProfile.activeReservations || 0) + 1;
-  saveUserProfile();
 
   res.json(newReservation);
 });
@@ -3506,47 +3791,77 @@ app.get("/api/category-subscriptions", (req, res) => {
 // ================= CASHFREE & SPONSOR WALLET PAYMENT GATEWAY =================
 let sponsorWalletBalances: Record<number, number> = { 1: 5000, 2: 12500 };
 
-app.get("/api/sponsors/:id/wallet", (req, res) => {
-  const sponsorId = Number(req.params.id);
-  const balance = sponsorWalletBalances[sponsorId] !== undefined ? sponsorWalletBalances[sponsorId] : 5000;
+// GET /api/sponsors/:id/wallet & /api/users/:id/wallet
+app.get(["/api/sponsors/:id/wallet", "/api/users/:id/wallet"], requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const wallet = await getOrCreateWallet(targetId);
   res.json({
-    balance: balance.toFixed(2),
+    balance: wallet.balance.toFixed(2),
+    escrowHeld: wallet.escrowHeld.toFixed(2),
     minWithdrawalAmount: 1000,
     maxWithdrawalAmount: 500000,
     gstPercent: 18,
   });
 });
 
-app.post("/api/sponsors/:id/wallet/deposit", (req, res) => {
-  const sponsorId = Number(req.params.id);
-  const { amount, description } = req.body;
-  const numAmount = parseFloat(amount) || 0;
-  if (numAmount <= 0) {
-    return res.status(400).json({ error: "Invalid deposit amount" });
+// Admin Manual Wallet Credit
+app.post(["/api/admin/wallets/credit", "/api/admin/users/:id/wallet/credit"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const targetUserId = Number(req.params.id || req.body.userId);
+  const { amount, reason } = req.body;
+  const numAmount = parseFloat(amount);
+
+  if (!targetUserId || isNaN(numAmount) || numAmount <= 0 || !reason || !reason.trim()) {
+    return res.status(400).json({ error: "Valid target userId, positive amount, and reason are required for admin wallet credit" });
   }
 
-  const current = sponsorWalletBalances[sponsorId] !== undefined ? sponsorWalletBalances[sponsorId] : 5000;
-  const newBalance = current + numAmount;
-  sponsorWalletBalances[sponsorId] = newBalance;
+  try {
+    const result = await adminCreditWallet(req.user!.id, targetUserId, numAmount, reason.trim());
+    return res.json({
+      success: true,
+      message: `Successfully credited ₹${numAmount.toFixed(2)} to User #${targetUserId}`,
+      newBalance: result.newBalance.toFixed(2),
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to process admin wallet credit" });
+  }
+});
 
-  const tx = {
-    id: Date.now(),
-    userId: sponsorId,
-    type: "deposit",
-    category: "wallet_topup",
-    amount: numAmount.toFixed(2),
-    tax: "0.00",
-    net: numAmount.toFixed(2),
-    description: description || "Wallet deposit via payment gateway",
-    status: "completed",
-    createdAt: new Date().toISOString(),
-  };
+// Manual UPI Top-up submission
+app.post("/api/payments/upi/submit", requireAuth, async (req: AuthRequest, res) => {
+  const { utr, amount } = req.body;
+  const numAmount = parseFloat(amount);
 
-  res.json({
-    success: true,
-    newBalance: newBalance.toFixed(2),
-    transaction: tx,
-  });
+  if (!utr || !utr.trim() || isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: "Valid UTR reference number and positive amount are required" });
+  }
+
+  try {
+    const result = await submitUpiTopup(req.user!.id, utr.trim(), numAmount);
+    return res.json({
+      success: true,
+      id: result.id,
+      message: "UPI top-up reference submitted successfully. An administrator will verify the UTR and credit your wallet shortly.",
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to submit UPI payment" });
+  }
+});
+
+// Admin UPI Payments Approval
+app.post("/api/admin/upi-payments/:id/approve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const upiId = Number(req.params.id);
+  try {
+    const result = await approveUpiTopup(upiId, req.user!.id);
+    return res.json({
+      success: true,
+      message: `Approved UPI payment #${upiId}. Credited ₹${result.creditAmount.toFixed(2)} to User #${result.userId}.`,
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to approve UPI payment" });
+  }
 });
 
 app.get("/api/cashfree/config", (req, res) => {
@@ -3563,109 +3878,177 @@ app.get("/api/cashfree/config", (req, res) => {
   });
 });
 
-app.post("/api/cashfree/create-order", async (req, res) => {
+// Cashfree Create Order Endpoint - Amounts decided on SERVER
+app.post("/api/cashfree/create-order", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { amount, sponsorId, userId, customerName, customerEmail, customerPhone, purpose } = req.body;
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: "Invalid order amount" });
+    const { purpose, amount: clientAmount, customerName, customerEmail, customerPhone } = req.body;
+    let orderAmount = 0;
+
+    // Server-side amount decision: NEVER trust client amount for subscriptions
+    if (purpose === "subscription") {
+      orderAmount = 399.0; // Pro Creator Subscription Price in INR
+    } else {
+      orderAmount = parseFloat(clientAmount);
+      if (isNaN(orderAmount) || orderAmount <= 0) {
+        return res.status(400).json({ error: "Invalid order top-up amount" });
+      }
     }
 
-    const orderId = `cf_order_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const orderId = `cf_order_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const settings = loadSettings();
     const appId = process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "";
     const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "";
     const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production";
 
-    // If Cashfree live/sandbox API keys are available, call Cashfree API
+    // Store pending payment order on server
+    await createPaymentOrder({
+      orderId,
+      userId: req.user!.id,
+      purpose: purpose || "wallet_deposit",
+      amount: orderAmount,
+    });
+
+    // If Cashfree keys are configured, create order via Cashfree PG API
     if (appId && secretKey) {
-      try {
-        const cfUrl = isProd 
-          ? "https://api.cashfree.com/pg/orders" 
-          : "https://sandbox.cashfree.com/pg/orders";
-
-        const response = await fetch(cfUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-client-id": appId,
-            "x-client-secret": secretKey,
-            "x-api-version": "2023-08-01",
+      const cfUrl = isProd ? "https://api.cashfree.com/pg/orders" : "https://sandbox.cashfree.com/pg/orders";
+      const response = await fetch(cfUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-client-id": appId,
+          "x-client-secret": secretKey,
+          "x-api-version": "2023-08-01",
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          order_amount: orderAmount,
+          order_currency: "INR",
+          customer_details: {
+            customer_id: String(req.user!.id),
+            customer_name: customerName || req.user!.name || "Mingree User",
+            customer_email: customerEmail || req.user!.email || "user@mingree.com",
+            customer_phone: customerPhone || "9999999999",
           },
-          body: JSON.stringify({
-            order_id: orderId,
-            order_amount: numAmount,
-            order_currency: "INR",
-            customer_details: {
-              customer_id: String(sponsorId || userId || "cust_1"),
-              customer_name: customerName || "Mingree User",
-              customer_email: customerEmail || "user@mingree.com",
-              customer_phone: customerPhone || "9999999999",
-            },
-            order_meta: {
-              return_url: `${req.protocol}://${req.get("host")}/sponsor/wallet?order_id=${orderId}&status=success`,
-            },
-          }),
-        });
+          order_meta: {
+            return_url: `${req.protocol}://${req.get("host")}/sponsor/wallet?order_id=${orderId}&status=success`,
+          },
+        }),
+      });
 
-        const data = await response.json();
-        if (response.ok && data.payment_session_id) {
-          return res.json({
-            success: true,
-            order_id: orderId,
-            payment_session_id: data.payment_session_id,
-            cf_order_id: data.cf_order_id,
-          });
-        }
-      } catch (err) {
-        console.error("[CASHFREE API ERROR]", err);
+      const data = await response.json();
+      if (response.ok && data.payment_session_id) {
+        return res.json({
+          success: true,
+          order_id: orderId,
+          payment_session_id: data.payment_session_id,
+          cf_order_id: data.cf_order_id,
+        });
       }
+      return res.status(400).json({ error: data.message || "Cashfree order creation failed" });
     }
 
-    // Fallback simulation / Sandbox mode for seamless testing
+    // Strict Fallback Simulation Check:
+    // Remove simulated fallback unless NODE_ENV !== "production" AND CASHFREE_ALLOW_SIMULATION === "true"
+    const allowSimulation = process.env.NODE_ENV !== "production" && process.env.CASHFREE_ALLOW_SIMULATION === "true";
+    if (!allowSimulation) {
+      return res.status(500).json({
+        error: "Cashfree API keys not configured. Please add CASHFREE_APP_ID and CASHFREE_SECRET_KEY in environment variables.",
+      });
+    }
+
     return res.json({
       success: true,
       order_id: orderId,
-      payment_session_id: `session_test_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      payment_session_id: `session_sim_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
       simulated: true,
-      message: "Cashfree simulated session created successfully",
+      message: "Cashfree simulation order created successfully",
     });
   } catch (error: any) {
     console.error("[CASHFREE CREATE ORDER ERROR]", error);
-    return res.status(500).json({ error: error.message || "Failed to create Cashfree order" });
+    return res.status(500).json({ error: error.message || "Failed to create payment order" });
   }
 });
 
-app.post("/api/cashfree/verify", async (req, res) => {
+// Cashfree Verification Endpoint (Server-to-Server Cashfree Order Status Query)
+app.post("/api/cashfree/verify", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { orderId, sponsorId, userId, amount, purpose } = req.body;
-    const numAmount = parseFloat(amount) || 0;
+    const { orderId, order_id, gstin, pan, billingAddress } = req.body;
+    const targetOrderId = orderId || order_id;
 
-    if (purpose === "wallet_deposit" && sponsorId) {
-      const current = sponsorWalletBalances[sponsorId] !== undefined ? sponsorWalletBalances[sponsorId] : 5000;
-      const newBalance = current + numAmount;
-      sponsorWalletBalances[sponsorId] = newBalance;
-      return res.json({
-        success: true,
-        walletCredit: numAmount.toFixed(2),
-        newBalance: newBalance.toFixed(2),
-      });
+    if (!targetOrderId) {
+      return res.status(400).json({ error: "Order ID is required for payment verification" });
     }
 
-    if (purpose === "subscription" && userId) {
-      currentUserProfile.subscriptionPlan = "pro";
-      currentUserProfile.subscriptionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      saveUserProfile();
-      return res.json({
-        success: true,
-        message: "Subscription activated successfully via Cashfree",
+    const settings = loadSettings();
+    const appId = process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "";
+    const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "";
+    const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production";
+
+    if (appId && secretKey) {
+      const cfUrl = isProd ? `https://api.cashfree.com/pg/orders/${targetOrderId}` : `https://sandbox.cashfree.com/pg/orders/${targetOrderId}`;
+      const cfRes = await fetch(cfUrl, {
+        headers: {
+          "x-client-id": appId,
+          "x-client-secret": secretKey,
+          "x-api-version": "2023-08-01",
+        },
       });
+
+      if (!cfRes.ok) {
+        return res.status(400).json({ error: "Could not verify order with Cashfree servers" });
+      }
+
+      const cfData = await cfRes.json();
+      if (cfData.order_status !== "PAID") {
+        return res.status(400).json({ error: `Cashfree order status is '${cfData.order_status}'. Payment not completed.` });
+      }
     }
 
-    return res.json({ success: true, message: "Payment verified successfully" });
+    // Process payment success inside ONE atomic DB transaction (Idempotent)
+    const result = await processOrderPaymentSuccess(targetOrderId, { gstin, pan, billingAddress });
+
+    return res.json({
+      success: true,
+      alreadyProcessed: result.alreadyProcessed,
+      walletCredit: result.order.amount.toFixed(2),
+      newBalance: result.newBalance ? result.newBalance.toFixed(2) : undefined,
+      message: result.alreadyProcessed ? "Order already verified" : "Payment verified and credited successfully",
+    });
   } catch (error: any) {
     console.error("[CASHFREE VERIFY ERROR]", error);
     return res.status(500).json({ error: error.message || "Failed to verify Cashfree payment" });
+  }
+});
+
+// Cashfree Webhook Listener (Raw Body Signature Verification)
+app.post("/api/cashfree/webhook", async (req, res) => {
+  try {
+    const signature = req.headers["x-webhook-signature"] as string;
+    const timestamp = req.headers["x-webhook-timestamp"] as string;
+    const settings = loadSettings();
+    const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "";
+
+    if (secretKey && signature && timestamp) {
+      const isValid = verifyCashfreeSignature((req as any).rawBody || JSON.stringify(req.body), timestamp, signature, secretKey);
+      if (!isValid) {
+        console.error("[CASHFREE WEBHOOK] Invalid HMAC signature detected");
+        return res.status(400).json({ error: "Invalid webhook signature" });
+      }
+    }
+
+    const payload = req.body;
+    const orderId = payload?.data?.order?.order_id || payload?.order_id;
+    const orderStatus = payload?.data?.order?.order_status || payload?.order_status;
+
+    if (orderId && (orderStatus === "PAID" || payload?.type === "PAYMENT_SUCCESS_WEBHOOK")) {
+      await processOrderPaymentSuccess(orderId);
+      console.log(`[CASHFREE WEBHOOK] Successfully processed order ${orderId}`);
+    }
+
+    return res.json({ status: "OK" });
+  } catch (error: any) {
+    console.error("[CASHFREE WEBHOOK ERROR]", error);
+    return res.status(500).json({ error: "Webhook processing failed" });
   }
 });
 
