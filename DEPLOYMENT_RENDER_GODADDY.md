@@ -1,83 +1,108 @@
 # Render.com + GoDaddy Deployment Guide for Mingree
 
-This guide explains how to deploy this full-stack application to **Render.com** and connect your custom domain from **GoDaddy**.
+This guide explains how to deploy this full-stack application to **Render.com** with a **Render PostgreSQL Database** and connect your custom domain from **GoDaddy**.
 
 ---
 
 ## Part 1: Push Code to GitHub
 
-1. If not already on GitHub:
-   - Export or download the project ZIP from AI Studio (via the top-right settings menu) or initialize a Git repository:
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit for Render deployment"
-   git branch -M main
-   git remote add origin https://github.com/<your-username>/<your-repo-name>.git
-   git push -u origin main
-   ```
+1. If not already on GitHub, initialize your repository and push:
+```bash
+git init
+git add .
+git commit -m "Production release for Render deployment"
+git branch -M main
+git remote add origin https://github.com/<your-username>/<your-repo-name>.git
+git push -u origin main
+```
 
 ---
 
-## Part 2: Deploy on Render.com
+## Part 2: Set Up Render PostgreSQL Database
+
+1. Log in to [dashboard.render.com](https://dashboard.render.com).
+2. Click **New +** -> **PostgreSQL**.
+3. Name: `mingree-db`
+4. Region: Choose the closest region (e.g., Singapore, Oregon, Frankfurt).
+5. Database: `mingree`
+6. User: `mingree_user`
+7. Plan: **Starter** or **Free**.
+8. Click **Create Database**.
+9. Once created, copy the **Internal Database URL** (or External Database URL if deploying outside Render).
+
+---
+
+## Part 3: Deploy Web Service on Render.com
 
 ### Method A: Blueprint (Recommended - 1 Click)
 Because this repository contains `render.yaml`:
-1. Log in to [dashboard.render.com](https://dashboard.render.com).
-2. Click **New +** -> **Blueprint**.
-3. Connect your GitHub repository.
-4. Render will automatically read `render.yaml`, set up the build command (`npm install && npm run build`), start command (`npm start`), and health check path (`/api/health`).
-5. Click **Apply**.
+1. In Render dashboard, click **New +** -> **Blueprint**.
+2. Connect your GitHub repository.
+3. Render will read `render.yaml`, set up the build command (`npm install && npm run build`), start command (`npm start`), and health check path (`/api/health`).
+4. Set the `DATABASE_URL` secret variable to your Render PostgreSQL connection string.
+5. Provide secrets for `JWT_SECRET`, `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `CASHFREE_APP_ID`, `CASHFREE_SECRET_KEY`, and `GMAIL_USER`.
+6. Click **Apply**.
 
-### Method B: Manual Web Service
-1. Log in to [dashboard.render.com](https://dashboard.render.com).
-2. Click **New +** -> **Web Service**.
-3. Connect your GitHub repository.
-4. Configure the settings:
-   - **Name**: `mingree` (or your chosen name)
-   - **Region**: Oregon, Singapore, or Frankfurt
-   - **Branch**: `main`
+### Method B: Manual Web Service Setup
+1. Click **New +** -> **Web Service**.
+2. Connect your GitHub repository.
+3. Configure settings:
+   - **Name**: `mingree`
    - **Runtime**: `Node`
    - **Build Command**: `npm install && npm run build`
    - **Start Command**: `npm start`
-   - **Instance Type**: Free (or Starter)
-5. Under **Advanced** -> **Health Check Path**: `/api/health`
-6. Under **Environment Variables**, add:
+   - **Plan**: **Starter** (Paid plan is required so the server does not sleep, ensuring instant payment webhooks & node-cron background releases work properly).
+4. Under **Advanced** -> **Health Check Path**: `/api/health`
+5. Under **Environment Variables**, add:
    - `NODE_ENV` = `production`
    - `RENDER` = `true`
-   - `APP_URL` = `https://<your-service>.onrender.com` (or your custom domain once connected)
-   - Optional: `GEMINI_API_KEY`, `GMAIL_USER`, `GMAIL_APP_PASSWORD`
-7. Click **Create Web Service**.
-8. Render will build and deploy your app. Once deployed, test the generated `.onrender.com` URL.
+   - `DATABASE_URL` = `<your-render-postgres-connection-string>`
+   - `APP_URL` = `https://<your-service>.onrender.com`
+   - `JWT_SECRET` = `<your-random-jwt-secret>`
+   - `TOKEN_ENC_KEY` = `<your-random-token-encryption-key>`
+   - `INSTAGRAM_APP_ID` & `INSTAGRAM_APP_SECRET`
+   - `CASHFREE_APP_ID` & `CASHFREE_SECRET_KEY`
+   - `GMAIL_USER` & `GMAIL_APP_PASSWORD`
 
 ---
 
-## Part 3: Connect GoDaddy Domain to Render
+## Part 4: Run Database Schema Push & Seed
+
+After deployment, push the Drizzle schema to your Render database and run seed data:
+
+1. In Render Web Service dashboard, go to the **Shell** tab (or connect via SSH/local terminal with `DATABASE_URL` set).
+2. Run schema push:
+```bash
+npm run db:push
+```
+3. Run database seed:
+```bash
+npm run db:seed
+```
+
+---
+
+## Part 5: Connect GoDaddy Domain to Render
 
 ### Step 1: Add Custom Domain in Render
-1. Go to your web service in Render dashboard.
-2. In the left navigation, click **Settings**.
-3. Scroll down to **Custom Domains**.
-4. Click **Add Custom Domain**.
-5. Enter both:
+1. In your Render Web Service, go to **Settings** -> **Custom Domains**.
+2. Click **Add Custom Domain** and enter:
    - `yourdomain.com` (Apex domain)
    - `www.yourdomain.com` (Subdomain)
-6. Render will show the DNS instructions (Render IP address and CNAME target).
 
 ### Step 2: Configure DNS Records in GoDaddy
-1. Log in to your [GoDaddy Account](https://account.godaddy.com/).
-2. Go to **My Products** -> Click **DNS** next to your domain.
-3. Under **DNS Records**, add or update the following:
+1. Log in to [GoDaddy Account](https://account.godaddy.com/).
+2. Go to **My Products** -> **DNS** for your domain.
+3. Add/Update DNS Records:
 
 | Type | Name | Value / Points to | TTL |
 | :--- | :--- | :--- | :--- |
-| **A** | `@` | `216.24.57.1` (Render Anycast IP) | 1/2 Hour or 1 Hour |
-| **CNAME** | `www` | `<your-service-name>.onrender.com` | 1/2 Hour or 1 Hour |
+| **A** | `@` | `216.24.57.1` (Render Anycast IP) | 1/2 Hour |
+| **CNAME** | `www` | `<your-service-name>.onrender.com` | 1/2 Hour |
 
-> **Note**: If you already have an existing `@` A record (e.g. pointing to GoDaddy parked page), edit it to replace the IP with `216.24.57.1`.
-> If you already have a `www` CNAME record, edit it to point to your Render `.onrender.com` address.
+---
 
-### Step 3: Automatic Free SSL Certificate
-- Render automatically provisions and renews a free Let's Encrypt SSL certificate once DNS records are verified.
-- DNS propagation usually takes between 5 to 30 minutes (up to 24-48 hours maximum in rare cases).
-- Once active, Render will show green checkmarks next to your custom domain, and your website will load securely over `https://yourdomain.com` and `https://www.yourdomain.com`.
+## Part 6: SSL & Verification
+
+- Render automatically provisions a free Let's Encrypt SSL certificate once DNS records propagate (5–30 minutes).
+- Your app will load securely over `https://yourdomain.com`.

@@ -2,7 +2,7 @@ services:
   - type: web
     name: mingree
     runtime: node
-    plan: free
+    plan: starter # Paid instance plan (free plan sleeps and is unsuitable for payments & background jobs)
     buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
@@ -12,27 +12,69 @@ services:
         value: production
       - key: RENDER
         value: "true"
-      - key: GEMINI_API_KEY
-        sync: false
       - key: APP_URL
         sync: false
-      - key: GMAIL_USER
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
         sync: false
-      - key: GMAIL_APP_PASSWORD
+      - key: JWT_SECRET
+        sync: false
+      - key: TOKEN_ENC_KEY
         sync: false
       - key: INSTAGRAM_APP_ID
         sync: false
       - key: INSTAGRAM_APP_SECRET
         sync: false
-      - key: DATABASE_URL
+      - key: INSTAGRAM_CLIENT_ID
         sync: false
-      - key: JWT_SECRET
+      - key: INSTAGRAM_CLIENT_SECRET
         sync: false
-      - key: ADMIN_EMAIL
+      - key: GMAIL_USER
         sync: false
-      - key: ADMIN_PASSWORD
+      - key: GMAIL_APP_PASSWORD
         sync: false
       - key: CASHFREE_APP_ID
         sync: false
       - key: CASHFREE_SECRET_KEY
         sync: false
+      - key: CASHFREE_MODE
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FEE_ARTIST_PERCENT
+        value: "7.5"
+      - key: FEE_CREATOR_PERCENT
+        value: "7.5"
+      - key: FEE_CREATOR_PERCENT_PRO
+        value: "4"
+      - key: CREATOR_PRO_PRICE
+        value: "399"
+      - key: GST_PERCENT
+        value: "18"
+      - key: MIN_CREATOR_FOLLOWERS
+        value: "500"
+      - key: MIN_CREATOR_WITHDRAWAL
+        value: "500"
+      - key: MIN_ARTIST_WITHDRAWAL
+        value: "1000"
+      - key: REVIEW_WINDOW_HOURS
+        value: "72"
+      - key: LIVE_HOLD_DAYS
+        value: "7"
+      - key: RELEASE_FIRST_PERCENT
+        value: "50"
+      - key: RATE_CHANGE_COOLDOWN_DAYS
+        value: "7"
+      - key: AUTOPILOT_HIDE_MULTIPLIER
+        value: "3"
+      - key: MAX_BUDGET_SHARE_PER_CREATOR
+        value: "30"
+      - key: MIN_DEAL_AMOUNT
+        value: "300"
+      - key: BENCHMARK_CPM_MIN
+        value: "50"
+      - key: BENCHMARK_CPM_MAX
+        value: "300"

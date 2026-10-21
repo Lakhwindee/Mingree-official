@@ -115,3 +115,55 @@ export function parseMetaSignedRequest(signedRequest: string, appSecret: string)
     return null;
   }
 }
+
+// 8. Refresh Long-Lived Instagram User Access Token
+export async function refreshInstagramUserToken(encryptedToken: string): Promise<{ success: boolean; newEncryptedToken?: string; expiresAt?: string; error?: string }> {
+  const plainToken = decryptAccessToken(encryptedToken);
+  if (!plainToken) return { success: false, error: "Invalid token or decryption failure" };
+
+  try {
+    const url = `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${encodeURIComponent(plainToken)}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    if (data.access_token) {
+      const newEncrypted = encryptAccessToken(data.access_token);
+      const expiresAt = new Date(Date.now() + (data.expires_in || 5184000) * 1000).toISOString();
+      return { success: true, newEncryptedToken: newEncrypted, expiresAt };
+    }
+    return { success: false, error: data.error?.message || "Refresh failed" };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Network error" };
+  }
+}
+
+// 9. Refresh Creator Verified Instagram Metrics
+export async function refreshInstagramMetrics(userId: number, encryptedToken: string): Promise<{ success: boolean; metrics?: any; error?: string }> {
+  const plainToken = decryptAccessToken(encryptedToken);
+  if (!plainToken) return { success: false, error: "Missing or invalid token" };
+
+  try {
+    const userRes = await fetch(`https://graph.instagram.com/me?fields=id,username,media_count,followers_count&access_token=${encodeURIComponent(plainToken)}`);
+    const userData = await userRes.json();
+
+    if (!userData.id) {
+      return { success: false, error: userData.error?.message || "Failed to fetch user metrics" };
+    }
+
+    const followers = userData.followers_count || 0;
+    const tierLabel = getTierLabelFromFollowers(followers);
+
+    return {
+      success: true,
+      metrics: {
+        followers,
+        tierLabel,
+        mediaCount: userData.media_count || 0,
+        username: userData.username,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+

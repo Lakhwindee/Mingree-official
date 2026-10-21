@@ -82,7 +82,9 @@ export const campaigns = pgTable("campaigns", {
   requiredCaptionNote: text("required_caption_note"),
   deadline: timestamp("deadline"),
   status: text("status").notNull().default("active"),
-});
+}, (table) => [
+  index("idx_campaigns_artist_status").on(table.artistId, table.status),
+]);
 
 // 7. Campaign Offers
 export const campaignOffers = pgTable("campaign_offers", {
@@ -92,7 +94,10 @@ export const campaignOffers = pgTable("campaign_offers", {
   quotedPrice: decimal("quoted_price", { precision: 12, scale: 2 }),
   status: text("status").notNull().default("invited"), // invited | quoted | auto_accepted | shortlisted | accepted | declined | withdrawn
   source: text("source").notNull().default("autopilot"), // autopilot | direct
-});
+}, (table) => [
+  index("idx_offers_campaign_id").on(table.campaignId),
+  index("idx_offers_creator_status").on(table.creatorId, table.status),
+]);
 
 // 8. Deals
 export const deals = pgTable("deals", {
@@ -111,7 +116,11 @@ export const deals = pgTable("deals", {
   approvedAt: timestamp("approved_at"),
   firstReleaseAt: timestamp("first_release_at"),
   finalReleaseAt: timestamp("final_release_at"),
-});
+}, (table) => [
+  index("idx_deals_campaign_id").on(table.campaignId),
+  index("idx_deals_creator_status").on(table.creatorId, table.status),
+  index("idx_deals_artist_status").on(table.artistId, table.status),
+]);
 
 // 9. Metric Snapshots
 export const metricSnapshots = pgTable("metric_snapshots", {
@@ -185,6 +194,7 @@ export const promoCodes = pgTable("promo_codes", {
   maxUses: integer("max_uses"),
   usedCount: integer("used_count").notNull().default(0),
   expiresAt: timestamp("expires_at"),
+  isActive: boolean("is_active").notNull().default(true),
 });
 
 // 16. Promo Redemptions
@@ -202,6 +212,7 @@ export const subscriptions = pgTable("subscriptions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   plan: text("plan").notNull(),
+  status: text("status").notNull().default("active"),
   expiresAt: timestamp("expires_at"),
 });
 
@@ -210,8 +221,11 @@ export const withdrawals = pgTable("withdrawals", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => users.id),
   amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+  tdsAmount: decimal("tds_amount", { precision: 12, scale: 2 }).notNull().default("0.00"),
   payoutMethodId: integer("payout_method_id"),
-  status: text("status").notNull().default("pending"),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected
+  utrRef: text("utr_ref"),
+  rejectionReason: text("rejection_reason"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -221,6 +235,7 @@ export const payoutMethods = pgTable("payout_methods", {
   userId: integer("user_id").notNull().references(() => users.id),
   type: text("type").notNull(), // UPI, Bank
   accountDetails: jsonb("account_details").notNull(),
+  isDefault: boolean("is_default").notNull().default(false),
 });
 
 // 20. KYC

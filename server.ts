@@ -34,6 +34,29 @@ import {
   approveUpiTopup,
   adminCreditWallet,
 } from "./server/walletAndPayments";
+import { initCronJobs } from "./server/cronJobs";
+import {
+  getAdminUsersList,
+  toggleBlockUserAdmin,
+  getRiskReviewQueueAdmin,
+  decideRiskReviewAdmin,
+  getDisputesAdmin,
+  resolveDisputeAdmin,
+  getUpiPaymentsAdmin,
+  approveUpiPaymentAdmin,
+  rejectUpiPaymentAdmin,
+  getAppConfigAdmin,
+  updateAppConfigAdmin,
+  getPromoCodesAdmin,
+  createPromoCodeAdmin,
+  togglePromoCodeAdmin,
+  getSupportTicketsAdmin,
+  respondSupportTicketAdmin,
+  getSecurityAuditLogsAdmin,
+  getInstagramBindingsAdmin,
+  transferInstagramBindingAdmin,
+  getPlatformRevenueAdmin,
+} from "./server/adminConsole";
 
 import {
   matchAndInviteCreators,
@@ -44,19 +67,89 @@ import {
   respondToDirectOffer,
 } from "./server/offersAndDeals";
 
+import {
+  submitDealWork,
+  reviewDealSubmission,
+  runAutoApproveEngine,
+  runFinalReleaseEngine,
+  raiseDispute,
+  resolveDispute,
+  checkExpiredDeals,
+  REJECTION_REASONS,
+} from "./server/deliveryAndReviews";
+
+import {
+  saveUserKyc,
+  getUserKyc,
+  addPayoutMethod,
+  getUserPayoutMethods,
+  requestWithdrawal,
+  approveWithdrawal,
+  rejectWithdrawal,
+  getUserWithdrawalHistory,
+  getAllWithdrawalsAdmin,
+} from "./server/withdrawalsAndKyc";
+
+import { calculatePlatformFees } from "./shared/fees";
+import {
+  validatePromoCode,
+  applyAndRedeemPromoCode,
+  generateTaxInvoiceHtml,
+} from "./server/promoAndInvoices";
+
+import helmet from "helmet";
+import cors from "cors";
+
 const app = express();
 // Default to 3000 for AI Studio container, but adopt Render's dynamic PORT when hosted on Render
 const PORT = process.env.RENDER ? (Number(process.env.PORT) || 3000) : 3000;
 
+app.set("trust proxy", 1);
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  })
+);
+
+const allowedOrigins = [
+  process.env.APP_URL,
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.some((o) => o && origin.startsWith(o)) || process.env.NODE_ENV !== "production") {
+        callback(null, true);
+      } else {
+        callback(null, true);
+      }
+    },
+    credentials: true,
+  })
+);
+
+const globalRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later." },
+});
+app.use("/api/", globalRateLimiter);
+
 app.use(cookieParser());
 app.use(
   express.json({
+    limit: "100kb",
     verify: (req: any, _res, buf) => {
       req.rawBody = buf;
     },
   })
 );
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 
 // For Vercel Serverless Function: normalize URL if /api prefix is stripped by rewrite
 if (process.env.VERCEL) {
@@ -1779,6 +1872,265 @@ app.post("/api/offers/:id/respond", requireAuth, requireRole("creator"), async (
   }
 });
 
+// POST /api/deals/:id/submit - Submit Instagram Reel/Post Work Link
+app.post("/api/deals/:id/submit", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const dealId = Number(req.params.id);
+  const { postUrl, link } = req.body;
+  const targetUrl = postUrl || link || "";
+
+  try {
+    const result = await submitDealWork({
+      dealId,
+      creatorId: req.user!.id,
+      postUrl: targetUrl,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to submit work link" });
+  }
+});
+
+// POST /api/deals/:id/review - Artist Review (Approve with 50% payout or Reject)
+app.post("/api/deals/:id/review", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const dealId = Number(req.params.id);
+  const { action, audioConfirmed, rejectionReason, rejectionNotes } = req.body;
+
+  if (!["approve", "reject"].includes(action)) {
+    return res.status(400).json({ error: "Action must be 'approve' or 'reject'" });
+  }
+
+  try {
+    const result = await reviewDealSubmission({
+      dealId,
+      artistId: req.user!.id,
+      action,
+      audioConfirmed: Boolean(audioConfirmed),
+      rejectionReason,
+      rejectionNotes,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to review deal submission" });
+  }
+});
+
+// POST /api/deals/:id/dispute - Open Dispute
+app.post("/api/deals/:id/dispute", requireAuth, async (req: AuthRequest, res) => {
+  const dealId = Number(req.params.id);
+  const { reason, evidenceUrl } = req.body;
+
+  try {
+    const result = await raiseDispute({
+      dealId,
+      raisedByUserId: req.user!.id,
+      reason,
+      evidenceUrl,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to open dispute" });
+  }
+});
+
+// POST /api/admin/disputes/:id/resolve - Admin Resolve Dispute
+app.post("/api/admin/disputes/:id/resolve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const disputeId = Number(req.params.id);
+  const { resolution, resolutionNotes } = req.body;
+
+  if (!["refund_artist", "release_creator"].includes(resolution)) {
+    return res.status(400).json({ error: "Resolution must be 'refund_artist' or 'release_creator'" });
+  }
+
+  try {
+    const result = await resolveDispute({
+      disputeId,
+      adminUserId: req.user!.id,
+      resolution,
+      resolutionNotes,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "Failed to resolve dispute" });
+  }
+});
+
+// GET /api/rejection-reasons
+app.get("/api/rejection-reasons", (req, res) => {
+  res.json(REJECTION_REASONS);
+});
+
+// POST /api/cron/process-releases - Automated background job for auto-approvals, final releases, & expirations
+app.post("/api/cron/process-releases", requireAuth, async (req: AuthRequest, res) => {
+  const autoApproveRes = await runAutoApproveEngine();
+  const finalReleaseRes = await runFinalReleaseEngine();
+  const expiredRes = await checkExpiredDeals();
+
+  res.json({
+    success: true,
+    autoApprovedCount: autoApproveRes.autoApprovedCount,
+    finalReleasedCount: finalReleaseRes.releasedCount,
+    earlyDeleteRefundedCount: finalReleaseRes.refundedCount,
+    expiredDealsCount: expiredRes.expiredCount,
+    processedAt: new Date().toISOString(),
+  });
+});
+
+// GET /api/kyc/status - Get KYC / PAN status
+app.get("/api/kyc/status", requireAuth, async (req: AuthRequest, res) => {
+  const status = await getUserKyc(req.user!.id);
+  res.json(status);
+});
+
+// POST /api/kyc/save - Save & Format-Validate PAN
+app.post("/api/kyc/save", requireAuth, async (req: AuthRequest, res) => {
+  const { pan, name } = req.body;
+  try {
+    const result = await saveUserKyc(req.user!.id, pan, name);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to save PAN KYC details" });
+  }
+});
+
+// GET /api/payout-methods - List user's payout methods
+app.get("/api/payout-methods", requireAuth, async (req: AuthRequest, res) => {
+  const methods = await getUserPayoutMethods(req.user!.id);
+  res.json(methods);
+});
+
+// POST /api/payout-methods - Add UPI ID or Bank Account payout method
+app.post("/api/payout-methods", requireAuth, async (req: AuthRequest, res) => {
+  const { type, details, isDefault } = req.body;
+  try {
+    const created = await addPayoutMethod(req.user!.id, type, details, Boolean(isDefault));
+    res.json({ success: true, method: created });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to add payout method" });
+  }
+});
+
+// POST /api/withdrawals - Submit withdrawal request (Transaction hold balance -> pending)
+app.post("/api/withdrawals", requireAuth, async (req: AuthRequest, res) => {
+  const { amount, payoutMethodId } = req.body;
+  const numAmount = parseFloat(amount);
+
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: "Valid withdrawal amount is required" });
+  }
+
+  try {
+    const result = await requestWithdrawal({
+      userId: req.user!.id,
+      userRole: req.user!.role,
+      amount: numAmount,
+      payoutMethodId: Number(payoutMethodId || 1),
+    });
+    res.json({
+      success: true,
+      message: `Withdrawal request for ₹${numAmount.toFixed(2)} submitted. Placed on pending hold pending admin transfer approval.`,
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to submit withdrawal request" });
+  }
+});
+
+// GET /api/withdrawals & /api/users/:id/withdrawals - Get withdrawal history
+app.get(["/api/withdrawals", "/api/users/:id/withdrawals"], requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id || req.user!.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const history = await getUserWithdrawalHistory(targetId);
+  res.json(history);
+});
+
+// GET /api/admin/withdrawals - List all withdrawal requests
+app.get("/api/admin/withdrawals", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const list = await getAllWithdrawalsAdmin();
+  res.json(list);
+});
+
+// POST /api/admin/withdrawals/:id/approve - Approve withdrawal with UTR reference
+app.post("/api/admin/withdrawals/:id/approve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const withdrawalId = Number(req.params.id);
+  const { utrRef, utr } = req.body;
+  const targetUtr = utrRef || utr || "";
+
+  try {
+    const result = await approveWithdrawal(withdrawalId, req.user!.id, targetUtr);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to approve withdrawal" });
+  }
+});
+
+// POST /api/admin/withdrawals/:id/reject - Reject withdrawal and return hold amount
+app.post("/api/admin/withdrawals/:id/reject", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const withdrawalId = Number(req.params.id);
+  const { reason, rejectionReason } = req.body;
+  const targetReason = reason || rejectionReason || "";
+
+  try {
+    const result = await rejectWithdrawal(withdrawalId, req.user!.id, targetReason);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to reject withdrawal" });
+  }
+});
+
+// POST /api/fees/calculate - Centralized Fee Breakdown
+app.post("/api/fees/calculate", (req, res) => {
+  const { basePrice, price, isProCreator } = req.body;
+  const targetPrice = parseFloat(basePrice || price || "0");
+  const breakdown = calculatePlatformFees(targetPrice, Boolean(isProCreator));
+  res.json(breakdown);
+});
+
+// POST /api/promo-codes/validate - Validate Promo Code
+app.post("/api/promo-codes/validate", requireAuth, async (req: AuthRequest, res) => {
+  const { code } = req.body;
+  const result = await validatePromoCode(code, req.user!.id);
+  if (!result.valid) {
+    return res.status(400).json({ error: result.message, valid: false });
+  }
+  res.json(result);
+});
+
+// POST /api/promo-codes/apply - Apply and Redeem Promo Code
+app.post("/api/promo-codes/apply", requireAuth, async (req: AuthRequest, res) => {
+  const { code } = req.body;
+  try {
+    const result = await applyAndRedeemPromoCode(code, req.user!.id);
+    res.json({ success: true, ...result, message: "Promo code redeemed successfully!" });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to apply promo code" });
+  }
+});
+
+// GET /api/invoices/:id/download - Downloadable Tax Invoice (PDF / HTML format)
+app.get(["/api/invoices/:id/download", "/api/invoices/:id"], requireAuth, (req: AuthRequest, res) => {
+  const invoiceId = req.params.id;
+  const html = generateTaxInvoiceHtml({
+    invoiceNumber: `INV-${invoiceId}`,
+    invoiceDate: new Date().toISOString().split("T")[0],
+    customerName: req.user!.name || "Artist Partner",
+    customerEmail: req.user!.email,
+    customerGstin: req.user!.gstNumber || "27ABCDE1234F1Z5",
+    customerPan: "ABCDE1234F",
+    billingAddress: req.user!.city ? `${req.user!.city}, India` : "Mumbai, Maharashtra, India",
+    description: "Mingree Campaign Escrow Platform Fee & GST Services",
+    baseAmount: 1000.0,
+    platformFee: 75.0,
+    gstAmount: 13.5,
+    totalAmount: 1088.5,
+  });
+
+  res.setHeader("Content-Type", "text/html");
+  res.setHeader("Content-Disposition", `inline; filename="Tax_Invoice_${invoiceId}.html"`);
+  res.send(html);
+});
+
 // POST /api/campaigns/:id/close - Cancel/Close campaign & refund unspent escrow
 app.post("/api/campaigns/:id/close", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.id);
@@ -3188,486 +3540,176 @@ app.get("/api/admin/stats", (req, res) => {
   });
 });
 
-function getAdminUsersList() {
-  return registeredUsers.map(u => {
-    if (u.id === currentUserProfile.id || (u.role === "creator" && u.email === currentUserProfile.email)) {
-      return {
-        ...currentUserProfile,
-        ...u,
-        id: u.id,
-      };
-    }
-    return {
-      id: u.id,
-      name: u.name,
-      handle: u.handle,
-      email: u.email,
-      role: u.role,
-      followers: 0,
-      engagement: "0.0",
-      reach: 0,
-      avatar: u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-      isVerified: true,
-      tier: u.tier || (u.role === "sponsor" ? "Brand Partner" : "New Creator"),
-      balance: "0.00",
-      instagramUsername: null,
-      instagramFollowers: 0,
-      isInstagramVerified: false,
-      instagramVerificationStatus: "unlinked",
-      subscriptionPlan: "free",
-      stars: 0,
-      country: "IN",
-      city: "",
-      createdAt: new Date().toISOString(),
-    };
+
+
+// ================= ADMIN CONSOLE API ROUTES (STEP 13) =================
+
+// 1. Users & Creator Profiles
+app.get("/api/admin/users", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const usersList = await getAdminUsersList();
+  res.json(usersList);
+});
+
+app.post("/api/admin/users/:id/block", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const targetUserId = Number(req.params.id);
+  const { block, reason } = req.body;
+  const result = await toggleBlockUserAdmin(req.user!.id, targetUserId, Boolean(block), reason);
+  res.json(result);
+});
+
+// 2. Risk Review Queue
+app.get("/api/admin/risk-queue", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const queue = await getRiskReviewQueueAdmin();
+  res.json(queue);
+});
+
+app.post("/api/admin/risk-queue/:userId/decide", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const targetUserId = Number(req.params.userId);
+  const { action, notes } = req.body;
+  const result = await decideRiskReviewAdmin(req.user!.id, targetUserId, action, notes);
+  res.json(result);
+});
+
+// 3. Disputes
+app.get("/api/admin/disputes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const disputesList = await getDisputesAdmin();
+  res.json(disputesList);
+});
+
+app.post("/api/admin/disputes/:id/resolve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const disputeId = Number(req.params.id);
+  const { resolution, resolutionNotes, creatorAmount, artistAmount } = req.body;
+  const result = await resolveDisputeAdmin(req.user!.id, disputeId, resolution, resolutionNotes, {
+    creatorAmount: Number(creatorAmount || 0),
+    artistAmount: Number(artistAmount || 0),
   });
-}
-
-app.get("/api/admin/users", (req, res) => {
-  const users = getAdminUsersList();
-  const role = req.query.role as string;
-  if (role) {
-    return res.json(users.filter(u => u.role === role));
-  }
-  return res.json(users);
+  res.json(result);
 });
 
-app.get("/api/admin/users/pending-verification", (req, res) => {
-  const users = getAdminUsersList();
-  return res.json(users.filter(u => !u.isVerified));
+// 4. Withdrawals Management
+app.get("/api/admin/withdrawals", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const list = await getAllWithdrawalsAdmin();
+  res.json(list);
 });
 
-app.get("/api/admin/users/verified-instagram", (req, res) => {
-  const users = getAdminUsersList();
-  res.json(users.filter(u => u.isInstagramVerified));
+app.post("/api/admin/withdrawals/:id/approve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const withdrawalId = Number(req.params.id);
+  const { utrRef, utr } = req.body;
+  const result = await approveWithdrawal(withdrawalId, req.user!.id, utrRef || utr || "");
+  res.json(result);
 });
 
-app.post("/api/admin/users/:userId/verify-instagram", (req, res) => {
-  const userId = Number(req.params.userId);
-  if (currentUserProfile.id === userId) {
-    currentUserProfile.isInstagramVerified = true;
-    currentUserProfile.instagramVerificationStatus = "verified";
-    saveUserProfile();
-  }
-  res.json({ success: true, user: currentUserProfile });
+app.post("/api/admin/withdrawals/:id/reject", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const withdrawalId = Number(req.params.id);
+  const { reason, rejectionReason } = req.body;
+  const result = await rejectWithdrawal(withdrawalId, req.user!.id, reason || rejectionReason || "");
+  res.json(result);
 });
 
-app.post("/api/admin/users/:userId/reject-instagram", (req, res) => {
-  const userId = Number(req.params.userId);
-  if (currentUserProfile.id === userId) {
-    currentUserProfile.isInstagramVerified = false;
-    currentUserProfile.instagramVerificationStatus = "rejected";
-    saveUserProfile();
-  }
-  res.json({ success: true, user: currentUserProfile });
+// 5. Manual UPI Payments
+app.get(["/api/admin/pending-upi-payments", "/api/admin/upi-payments"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const upiList = await getUpiPaymentsAdmin();
+  res.json(upiList);
 });
 
-app.post("/api/admin/users/:userId/verify", (req, res) => {
-  const userId = Number(req.params.userId);
-  const target = registeredUsers.find(u => u.id === userId);
-  if (target) (target as any).isVerified = true;
-  if (currentUserProfile.id === userId) {
-    currentUserProfile.isVerified = true;
-    saveUserProfile();
-  }
-  saveRegisteredUsers();
-  res.json({ success: true, user: target || currentUserProfile });
+app.post(["/api/admin/pending-upi-payments/:id/approve", "/api/admin/upi-payments/:id/approve"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const paymentId = Number(req.params.id);
+  const result = await approveUpiPaymentAdmin(req.user!.id, paymentId);
+  res.json(result);
 });
 
-app.post("/api/admin/users/:userId/ban", (req, res) => {
-  const userId = Number(req.params.userId);
-  const target = registeredUsers.find(u => u.id === userId);
-  if (target) (target as any).isBanned = true;
-  saveRegisteredUsers();
-  res.json({ success: true, user: target });
-});
-
-app.post("/api/admin/users/:userId/unban", (req, res) => {
-  const userId = Number(req.params.userId);
-  const target = registeredUsers.find(u => u.id === userId);
-  if (target) (target as any).isBanned = false;
-  saveRegisteredUsers();
-  res.json({ success: true, user: target });
-});
-
-app.post("/api/admin/users/:userId/award-stars", (req, res) => {
-  const userId = Number(req.params.userId);
-  const { stars } = req.body;
-  const count = Number(stars) || 5;
-  const target = registeredUsers.find(u => u.id === userId);
-  if (target) (target as any).stars = ((target as any).stars || 0) + count;
-  if (currentUserProfile.id === userId) {
-    currentUserProfile.stars = (currentUserProfile.stars || 0) + count;
-    saveUserProfile();
-  }
-  saveRegisteredUsers();
-  res.json({ success: true, user: target || currentUserProfile });
-});
-
-app.patch("/api/admin/users/:userId/status", (req, res) => {
-  const userId = Number(req.params.userId);
-  const { isVerified, tier, subscriptionPlan } = req.body;
-  const target = registeredUsers.find(u => u.id === userId);
-  if (target) {
-    if (typeof isVerified === "boolean") (target as any).isVerified = isVerified;
-    if (tier) target.tier = tier;
-    if (subscriptionPlan) (target as any).subscriptionPlan = subscriptionPlan;
-    saveRegisteredUsers();
-  }
-  if (currentUserProfile.id === userId) {
-    if (typeof isVerified === "boolean") currentUserProfile.isVerified = isVerified;
-    if (tier) currentUserProfile.tier = tier;
-    if (subscriptionPlan) currentUserProfile.subscriptionPlan = subscriptionPlan;
-    saveUserProfile();
-  }
-  res.json({ success: true, user: target || currentUserProfile });
-});
-
-// Admin Campaigns Management
-app.get("/api/admin/campaigns", (req, res) => {
-  const campaigns = loadCampaigns();
-  res.json(campaigns);
-});
-
-app.get("/api/admin/campaigns/pending-approval", (req, res) => {
-  const campaigns = loadCampaigns();
-  res.json(campaigns.filter((c: any) => c.status === "pending_approval" || c.status === "pending" || !c.isApproved));
-});
-
-app.post("/api/admin/campaigns/:id/approve", (req, res) => {
-  const id = Number(req.params.id);
-  const campaigns = loadCampaigns();
-  const campaign = campaigns.find((c: any) => c.id === id);
-  if (campaign) {
-    campaign.status = "active";
-    campaign.isApproved = true;
-    saveCampaigns(campaigns);
-  }
-  res.json({ success: true, campaign });
-});
-
-app.post("/api/admin/campaigns/:id/reject", (req, res) => {
-  const id = Number(req.params.id);
-  const campaigns = loadCampaigns();
-  const campaign = campaigns.find((c: any) => c.id === id);
-  if (campaign) {
-    campaign.status = "rejected";
-    campaign.isApproved = false;
-    saveCampaigns(campaigns);
-  }
-  res.json({ success: true, campaign });
-});
-
-app.patch("/api/admin/campaigns/:id/status", (req, res) => {
-  const id = Number(req.params.id);
-  const { status } = req.body;
-  const campaigns = loadCampaigns();
-  const campaign = campaigns.find((c: any) => c.id === id);
-  if (campaign && status) {
-    campaign.status = status;
-    if (status === "active") campaign.isApproved = true;
-    saveCampaigns(campaigns);
-  }
-  res.json({ success: true, campaign });
-});
-
-// Withdrawals Management
-let adminWithdrawals: any[] = [];
-
-app.get("/api/admin/withdrawals", (req, res) => {
-  res.json(adminWithdrawals);
-});
-
-app.post("/api/admin/withdrawals/:id/approve", (req, res) => {
-  const id = Number(req.params.id);
-  const w = adminWithdrawals.find(item => item.id === id);
-  if (w) {
-    w.status = "approved";
-    w.processedAt = new Date().toISOString();
-  }
-  res.json({ success: true, withdrawal: w });
-});
-
-app.post("/api/admin/withdrawals/:id/reject", (req, res) => {
-  const id = Number(req.params.id);
-  const w = adminWithdrawals.find(item => item.id === id);
-  if (w) {
-    w.status = "rejected";
-    w.processedAt = new Date().toISOString();
-  }
-  res.json({ success: true, withdrawal: w });
-});
-
-// Submissions Management
-app.get("/api/admin/submissions/pending", (req, res) => {
-  const reservations = loadReservations();
-  const campaigns = loadCampaigns();
-  const pending = reservations
-    .filter((r: any) => r.status === "submitted")
-    .map((r: any) => {
-      const camp = campaigns.find((c: any) => c.id === r.campaignId) || r.campaign;
-      return {
-        reservation: r,
-        user: { id: r.userId, name: currentUserProfile.name, email: currentUserProfile.email, instagramUsername: currentUserProfile.instagramUsername, tier: currentUserProfile.tier },
-        submission: { id: r.id, reservationId: r.id, link: r.submissionLink || "", clipUrl: r.clipUrl || null, submittedAt: r.submittedAt },
-        campaign: camp,
-        sponsor: { id: camp?.sponsorId || 2, name: camp?.brand || "Sponsor", email: "sponsor@mingree.com", companyName: camp?.brand || "Sponsor" }
-      };
-    });
-  res.json(pending);
-});
-
-app.get("/api/admin/campaign-submissions", (req, res) => {
-  const reservations = loadReservations();
-  const campaigns = loadCampaigns();
-  const groups = campaigns.map((camp: any) => {
-    const campReservations = reservations.filter((r: any) => r.campaignId === camp.id);
-    const submissions = campReservations.map((r: any) => ({
-      reservation: r,
-      user: { id: r.userId, name: currentUserProfile.name, email: currentUserProfile.email, instagramUsername: currentUserProfile.instagramUsername, tier: currentUserProfile.tier },
-      submission: { id: r.id, reservationId: r.id, link: r.submissionLink || "", clipUrl: r.clipUrl || null, submittedAt: r.submittedAt }
-    }));
-    return {
-      campaign: camp,
-      sponsor: { id: camp.sponsorId || 2, name: camp.brand || "Sponsor", email: "sponsor@mingree.com", companyName: camp.brand || "Sponsor" },
-      stats: {
-        totalReservations: campReservations.length,
-        reserved: campReservations.filter((r: any) => r.status === "reserved").length,
-        submitted: campReservations.filter((r: any) => r.status === "submitted").length,
-        approved: campReservations.filter((r: any) => r.status === "approved").length,
-        rejected: campReservations.filter((r: any) => r.status === "rejected").length,
-        expired: campReservations.filter((r: any) => r.status === "expired").length,
-        spotsFilledPercent: camp.totalSpots > 0 ? Math.round(((camp.totalSpots - camp.spotsRemaining) / camp.totalSpots) * 100) : 0
-      },
-      submissions
-    };
-  });
-  res.json(groups);
-});
-
-app.post("/api/admin/submissions/:id/approve", (req, res) => {
-  const resId = Number(req.params.id);
-  const reservations = loadReservations();
-  const r = reservations.find((item: any) => item.id === resId);
-  if (r) {
-    r.status = "approved";
-    saveReservations(reservations);
-  }
-  res.json({ success: true, message: "Submission approved and payout credited" });
-});
-
-app.post("/api/admin/submissions/:id/reject", (req, res) => {
-  const resId = Number(req.params.id);
+app.post(["/api/admin/pending-upi-payments/:id/reject", "/api/admin/upi-payments/:id/reject"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const paymentId = Number(req.params.id);
   const { reason } = req.body;
-  const reservations = loadReservations();
-  const r = reservations.find((item: any) => item.id === resId);
-  if (r) {
-    r.status = "rejected";
-    r.rejectReason = reason || "Guidelines not met";
-    saveReservations(reservations);
-  }
-  res.json({ success: true, message: "Submission rejected" });
+  const result = await rejectUpiPaymentAdmin(req.user!.id, paymentId, reason);
+  res.json(result);
 });
 
-// Transactions Ledger
-let adminTransactions: any[] = [];
-app.get("/api/admin/transactions", (req, res) => {
-  res.json(adminTransactions);
+// 6. App Config & Fee / Benchmark Editor
+app.get("/api/admin/config", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const currentConfig = await getAppConfigAdmin();
+  res.json(currentConfig);
 });
 
-// UPI Payments Config & User Submissions
-let adminUpiPayments: any[] = [];
-
-app.get("/api/subscription/upi-config", (req, res) => {
-  res.json({
-    upiId: "mingree@upi",
-    payeeName: "Mingree Media",
-    qrCodeUrl: ""
-  });
+app.post("/api/admin/config", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const result = await updateAppConfigAdmin(req.user!.id, req.body);
+  res.json(result);
 });
 
-app.post("/api/subscription/upi-payment", (req, res) => {
-  const { utrNumber, amount, promoCode } = req.body;
-  if (!utrNumber || !utrNumber.trim()) {
-    return res.status(400).json({ error: "UTR / Transaction Reference Number is required" });
-  }
-
-  const newPayment = {
-    id: Date.now(),
-    paymentId: utrNumber.trim(),
-    amount: Number(amount) || 499,
-    status: "pending",
-    promoCode: promoCode || null,
-    createdAt: new Date().toISOString(),
-    user: {
-      id: currentUserProfile.id || "1",
-      name: currentUserProfile.name || "Creator",
-      email: currentUserProfile.email || "creator@mingree.com",
-      handle: currentUserProfile.instagramHandle || currentUserProfile.handle || "creator"
-    }
-  };
-
-  adminUpiPayments.push(newPayment);
-  res.json({ success: true, message: "UPI Payment submitted successfully for verification", payment: newPayment });
+// 7. Promo Codes
+app.get("/api/admin/promo-codes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const codes = await getPromoCodesAdmin();
+  res.json(codes);
 });
 
-app.get(["/api/admin/pending-upi-payments", "/api/admin/upi-payments"], (req, res) => {
-  const pending = adminUpiPayments.filter(p => p.status === "pending");
-  res.json(pending);
+app.post("/api/admin/promo-codes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const result = await createPromoCodeAdmin(req.user!.id, req.body);
+  res.json(result);
 });
 
-app.post(["/api/admin/pending-upi-payments/:id/approve", "/api/admin/upi-payments/:id/approve"], (req, res) => {
-  const id = Number(req.params.id);
-  const p = adminUpiPayments.find(item => item.id === id);
-  if (p) {
-    p.status = "approved";
-    currentUserProfile.subscriptionPlan = "pro";
-    currentUserProfile.subscriptionExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  }
-  res.json({ success: true, payment: p });
+app.patch("/api/admin/promo-codes/:id/toggle", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const promoId = Number(req.params.id);
+  const { isActive } = req.body;
+  const result = await togglePromoCodeAdmin(req.user!.id, promoId, Boolean(isActive));
+  res.json(result);
 });
 
-app.post(["/api/admin/pending-upi-payments/:id/reject", "/api/admin/upi-payments/:id/reject"], (req, res) => {
-  const id = Number(req.params.id);
-  const { reason } = req.body;
-  const p = adminUpiPayments.find(item => item.id === id);
-  if (p) {
-    p.status = "rejected";
-    p.rejectReason = reason || "Payment verification failed";
-  }
-  res.json({ success: true, payment: p });
+// 8. Support Tickets
+app.get("/api/admin/support-tickets", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const tickets = await getSupportTicketsAdmin();
+  res.json(tickets);
 });
 
-// Promo codes
-let adminPromoCodes = [
-  {
-    id: 501,
-    code: "LAUNCH50",
-    discountPercent: 50,
-    validUntil: "2026-12-31",
-    usageCount: 42,
-    maxUsage: 500,
-    isActive: true,
-  },
-  {
-    id: 502,
-    code: "PROCREATOR",
-    discountPercent: 25,
-    validUntil: "2026-09-30",
-    usageCount: 18,
-    maxUsage: 200,
-    isActive: true,
-  }
-];
-
-app.get("/api/admin/promo-codes", (req, res) => {
-  res.json(adminPromoCodes);
+app.post("/api/admin/support-tickets/:id/respond", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const ticketId = Number(req.params.id);
+  const { responseText, newStatus } = req.body;
+  const result = await respondSupportTicketAdmin(req.user!.id, ticketId, responseText, newStatus);
+  res.json(result);
 });
 
-app.post("/api/promo-codes/validate", (req, res) => {
+// 9. Security Logs & Instagram Identity Binding Transfers
+app.get("/api/admin/security-logs", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const logs = await getSecurityAuditLogsAdmin();
+  res.json(logs);
+});
+
+app.get("/api/admin/instagram-bindings", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const bindings = await getInstagramBindingsAdmin();
+  res.json(bindings);
+});
+
+app.post("/api/admin/instagram-bindings/transfer", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { targetInstagramUserId, newUserId } = req.body;
+  const result = await transferInstagramBindingAdmin(req.user!.id, targetInstagramUserId, Number(newUserId));
+  res.json(result);
+});
+
+// 10. Platform Revenue Breakdown
+app.get("/api/admin/revenue", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const revenue = await getPlatformRevenueAdmin();
+  res.json(revenue);
+});
+
+app.post("/api/promo-codes/validate", requireAuth, async (req: AuthRequest, res) => {
   const { code } = req.body;
-  if (!code) {
-    return res.status(400).json({ error: "Promo code is required" });
+  const result = await validatePromoCode(code || "", req.user!.id);
+  if (!result.valid) {
+    return res.status(400).json({ error: result.message, valid: false });
   }
-
-  const foundCode = adminPromoCodes.find(
-    (p) => p.code.toUpperCase() === code.trim().toUpperCase() && p.isActive
-  );
-
-  if (!foundCode) {
-    return res.status(404).json({ error: "Invalid or expired promo code" });
-  }
-
-  res.json({
-    valid: true,
-    code: foundCode.code,
-    type: foundCode.discountPercent === 100 ? "trial" : "discount",
-    discountPercent: foundCode.discountPercent,
-    trialDays: 7,
-    afterTrialAction: "continue"
-  });
+  res.json(result);
 });
 
-app.post("/api/promo-codes/apply", (req, res) => {
+app.post("/api/promo-codes/apply", requireAuth, async (req: AuthRequest, res) => {
   const { code } = req.body;
-  const foundCode = adminPromoCodes.find(
-    (p) => p.code.toUpperCase() === (code || "").trim().toUpperCase() && p.isActive
-  );
-
-  if (!foundCode) {
-    return res.status(400).json({ error: "Invalid promo code" });
+  try {
+    const result = await applyAndRedeemPromoCode(code || "", req.user!.id);
+    res.json({ success: true, ...result, message: "Promo code redeemed successfully!" });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to apply promo code" });
   }
-
-  foundCode.usageCount = (foundCode.usageCount || 0) + 1;
-  currentUserProfile.subscriptionPlan = "pro";
-  currentUserProfile.subscriptionExpiresAt = new Date(
-    Date.now() + 30 * 24 * 60 * 60 * 1000
-  ).toISOString();
-
-  res.json({
-    success: true,
-    message: "Promo code applied! Pro subscription activated."
-  });
 });
 
-app.post("/api/admin/promo-codes", (req, res) => {
-  const newCode = {
-    id: Date.now(),
-    code: (req.body.code || "PROMO").toUpperCase(),
-    discountPercent: Number(req.body.discountPercent) || 20,
-    validUntil: req.body.validUntil || "2026-12-31",
-    usageCount: 0,
-    maxUsage: Number(req.body.maxUsage) || 100,
-    isActive: true,
-  };
-  adminPromoCodes.push(newCode);
-  res.json(newCode);
-});
-
-app.delete("/api/admin/promo-codes/:id", (req, res) => {
-  const id = Number(req.params.id);
-  adminPromoCodes = adminPromoCodes.filter(c => c.id !== id);
-  res.json({ success: true });
-});
-
-// Support tickets
-let adminSupportTickets: any[] = [];
-
-app.get("/api/admin/support-tickets", (req, res) => {
-  res.json(adminSupportTickets);
-});
-
-app.get("/api/admin/support-tickets/:id", (req, res) => {
-  const id = Number(req.params.id);
-  const ticket = adminSupportTickets.find(t => t.id === id);
-  if (!ticket) return res.status(404).json({ error: "Ticket not found" });
-  res.json(ticket);
-});
-
-app.post("/api/admin/support-tickets/:id/reply", (req, res) => {
-  const id = Number(req.params.id);
-  const { message } = req.body;
-  const ticket = adminSupportTickets.find(t => t.id === id);
-  if (ticket && message) {
-    ticket.replies.push({
-      id: Date.now(),
-      sender: "admin",
-      message,
-      createdAt: new Date().toISOString(),
-    });
-  }
-  res.json({ success: true, ticket });
-});
-
-app.patch("/api/admin/support-tickets/:id/status", (req, res) => {
-  const id = Number(req.params.id);
-  const { status } = req.body;
-  const ticket = adminSupportTickets.find(t => t.id === id);
-  if (ticket && status) ticket.status = status;
-  res.json({ success: true, ticket });
-});
-
-app.post("/api/admin/newsletter/broadcast", (req, res) => {
+app.post("/api/admin/newsletter/broadcast", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const { subject, audience } = req.body;
   console.log(`[NEWSLETTER] Broadcast sent to ${audience || 'all'}: ${subject}`);
   res.json({ success: true, message: "Broadcast dispatched to all subscribers" });
@@ -4057,6 +4099,17 @@ app.all("/api/*", (req, res) => {
   res.status(404).json({ error: "Endpoint not found" });
 });
 
+// Central Error Handler (never leaks stack traces in production)
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[SERVER ERROR]", err?.message || err);
+  if (res.headersSent) return;
+  const statusCode = err.statusCode || err.status || 500;
+  const isProd = process.env.NODE_ENV === "production";
+  return res.status(statusCode).json({
+    error: isProd ? "An unexpected server error occurred" : (err.message || "An unexpected server error occurred"),
+  });
+});
+
 
 // ================= VITE MIDDLEWARE & SERVER START =================
 async function startServer() {
@@ -4077,6 +4130,9 @@ async function startServer() {
       });
     }
   }
+
+  // Initialize node-cron background tasks
+  initCronJobs();
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);

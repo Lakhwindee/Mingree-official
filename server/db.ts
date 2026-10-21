@@ -9,4 +9,11 @@ export const pool = new Pool({
   ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("render.com") ? { rejectUnauthorized: false } : undefined,
 });
 
+pool.on("error", (err: any) => {
+  if (err?.code === "ECONNREFUSED" || err?.message?.includes("ECONNREFUSED")) {
+    return;
+  }
+  console.error("[PG POOL ERROR]", err);
+});
+
 export const db = drizzle(pool, { schema });
