@@ -83,6 +83,23 @@ export default function Profile() {
   const [profileHandle, setProfileHandle] = useState("");
   const [profileCity, setProfileCity] = useState("");
 
+  // Direct Instagram handle state
+  const [handleInput, setHandleInput] = useState("");
+  const [followersInput, setFollowersInput] = useState("1000");
+
+  const connectHandleMutation = useMutation({
+    mutationFn: (data: { username: string; followers: number }) => 
+      api.updateUserInstagram(user!.id, data.username, `https://instagram.com/${data.username}`, data.followers),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+      toast.success("Instagram account connected & verified!");
+      setHandleInput("");
+    },
+    onError: (err: Error) => {
+      toast.error(getCleanErrorMessage(err, "Failed to connect Instagram handle"));
+    }
+  });
+
   useEffect(() => {
     if (activeUser) {
       setProfileName(activeUser.name || "");
@@ -581,49 +598,112 @@ export default function Profile() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {/* Official Meta OAuth Connect Card */}
-                    <div className="rounded-2xl border-2 border-pink-500/25 bg-gradient-to-r from-pink-500/10 via-purple-500/10 to-orange-500/10 p-4 sm:p-6 space-y-4">
+                    {/* Direct Instagram Handle Connection Card */}
+                    <div className="rounded-2xl border border-border bg-card p-4 sm:p-6 space-y-4 shadow-sm">
                       <div className="flex items-start gap-3.5">
                         <div className="rounded-2xl bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-600 p-3 text-white shadow-sm shrink-0">
                           <Instagram className="h-6 w-6" />
                         </div>
-                        <div>
+                        <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="text-base font-bold text-foreground">Official Meta Instagram Login</h4>
-                            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-pink-500/15 text-pink-700 dark:text-pink-300 border border-pink-500/30">
-                              OAuth 2.0
+                            <h4 className="text-base font-bold text-foreground">Connect Instagram Handle Directly</h4>
+                            <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                              Instant Verification
                             </span>
                           </div>
-                          <p className="text-xs sm:text-sm text-muted-foreground mt-1 leading-relaxed">
-                            Sign in with your Instagram account via Meta's official login screen. This securely verifies account ownership and reads live follower metrics without sharing passwords.
+                          <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                            Enter your Instagram username and follower count to instantly connect your profile and start applying for creator deals.
                           </p>
-                          <div className="mt-2.5 flex items-center gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-3 py-1.5 rounded-lg w-fit">
-                            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                            <span>Minimum <strong>500 followers</strong> required to qualify.</span>
-                          </div>
                         </div>
                       </div>
 
-                      <div className="pt-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="text-xs font-semibold text-foreground mb-1 block">Instagram Handle</label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs text-muted-foreground font-bold">@</span>
+                            <Input
+                              type="text"
+                              placeholder="username"
+                              value={handleInput}
+                              onChange={(e) => setHandleInput(e.target.value.replace(/^@+/, ""))}
+                              className="pl-7 text-xs h-9"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs font-semibold text-foreground mb-1 block">Follower Count</label>
+                          <Input
+                            type="number"
+                            placeholder="e.g. 5000"
+                            value={followersInput}
+                            onChange={(e) => setFollowersInput(e.target.value)}
+                            className="text-xs h-9"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 pt-2">
                         <Button
-                          onClick={handleConnectInstagramOAuth}
-                          size="lg"
-                          className="w-full sm:w-auto bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-700 hover:via-purple-700 hover:to-indigo-700 text-white font-bold shadow-sm h-11 px-6 rounded-xl transition-all"
-                          data-testid="button-profile-connect-instagram-oauth"
+                          onClick={() => {
+                            if (!handleInput.trim()) {
+                              toast.error("Please enter your Instagram handle");
+                              return;
+                            }
+                            const followers = Number(followersInput) || 0;
+                            if (followers < 500) {
+                              toast.error("Minimum 500 followers required to connect an Instagram account");
+                              return;
+                            }
+                            connectHandleMutation.mutate({ username: handleInput.trim(), followers });
+                          }}
+                          disabled={connectHandleMutation.isPending}
+                          size="sm"
+                          className="bg-pink-600 hover:bg-pink-700 text-white font-bold h-9 px-5 rounded-lg text-xs"
                         >
-                          {isConnectingInstagram ? (
+                          {connectHandleMutation.isPending ? (
                             <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Connecting to Meta...
+                              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                              Connecting...
                             </>
                           ) : (
                             <>
-                              <Instagram className="mr-2 h-4 w-4" />
-                              Connect Official Instagram
+                              <CheckCircle2 className="mr-2 h-3.5 w-3.5" />
+                              Save & Connect Handle
                             </>
                           )}
                         </Button>
                       </div>
+                    </div>
+
+                    {/* Official Meta OAuth Connect Card (Optional Alternative) */}
+                    <div className="rounded-2xl border border-pink-500/25 bg-gradient-to-r from-pink-500/5 via-purple-500/5 to-orange-500/5 p-4 sm:p-5 space-y-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <Instagram className="h-4 w-4 text-pink-600" />
+                          <h5 className="text-xs font-bold text-foreground">Or Connect via Official Meta OAuth Login</h5>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground font-medium">For Official Meta API Sync</span>
+                      </div>
+                      <Button
+                        onClick={handleConnectInstagramOAuth}
+                        size="sm"
+                        variant="outline"
+                        className="w-full sm:w-auto text-xs font-bold h-8.5 px-4 rounded-lg"
+                        data-testid="button-profile-connect-instagram-oauth"
+                      >
+                        {isConnectingInstagram ? (
+                          <>
+                            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                            Connecting to Meta...
+                          </>
+                        ) : (
+                          <>
+                            <Instagram className="mr-2 h-3.5 w-3.5 text-pink-600" />
+                            Connect via Meta OAuth
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
                 )}

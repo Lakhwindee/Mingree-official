@@ -3,6 +3,10 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import cookieParser from "cookie-parser";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import rateLimit from "express-rate-limit";
 import { PROMOTION_CATEGORIES } from "./shared/schema";
 import {
   checkRateLimitAndFarming,
@@ -21,6 +25,7 @@ const app = express();
 // Default to 3000 for AI Studio container, but adopt Render's dynamic PORT when hosted on Render
 const PORT = process.env.RENDER ? (Number(process.env.PORT) || 3000) : 3000;
 
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -127,10 +132,11 @@ function getEmailCredentials(): { user: string; pass: string } | null {
   return null;
 }
 
-// In-memory OTP Store (email -> { otp, expiresAt, name })
+// In-memory OTP Store (email -> { otpHash, expiresAt, attempts, name })
 interface StoredOtp {
-  otp: string;
+  otpHash: string;
   expiresAt: number;
+  attempts: number;
   name?: string;
 }
 const otpStore = new Map<string, StoredOtp>();
@@ -180,9 +186,9 @@ function deleteOtpRecord(email: string) {
   }
 }
 
-// Generate 6-digit OTP
+// Generate secure 6-digit OTP using crypto.randomInt
 function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 1000000).toString();
 }
 
 // Send OTP via Nodemailer
@@ -257,17 +263,17 @@ app.post("/api/auth/send-otp", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const otp = generateOtp();
+  const rawOtp = generateOtp();
+  const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
 
-  setOtpRecord(cleanEmail, { otp, expiresAt, name });
-  console.log(`[AUTH] Generated OTP for ${cleanEmail}: ${otp}`);
+  setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
 
   const creds = getEmailCredentials();
   let emailSent = false;
 
   if (creds && creds.user && creds.pass) {
-    const result = await sendEmailOtp(cleanEmail, otp, name);
+    const result = await sendEmailOtp(cleanEmail, rawOtp, name);
     if (result.success) {
       emailSent = true;
     } else {
@@ -276,9 +282,8 @@ app.post("/api/auth/send-otp", async (req, res) => {
   }
 
   return res.json({
-    message: emailSent ? `OTP sent successfully to ${cleanEmail}` : `OTP generated successfully (Demo Mode)`,
+    message: emailSent ? `OTP sent successfully to ${cleanEmail}` : `OTP sent for verification`,
     emailConfigured: emailSent,
-    debugOtp: otp,
     expiresIn: 600,
   });
 });
@@ -293,23 +298,37 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const cleanEmail = email.toLowerCase().trim();
   const cleanOtp = String(otp).trim();
 
-  const stored = getOtpRecord(cleanEmail);
-  if (!stored) {
+  const record = getOtpRecord(cleanEmail);
+  if (!record) {
     return res.status(400).json({ error: "No OTP requested for this email or it has expired" });
   }
 
-  if (Date.now() > stored.expiresAt) {
+  if (Date.now() > record.expiresAt) {
     deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "OTP has expired. Please request a new one." });
   }
 
-  if (stored.otp !== cleanOtp) {
+  if (record.attempts >= 5) {
+    deleteOtpRecord(cleanEmail);
+    return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+  }
+
+  const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+  if (submittedHash !== record.otpHash) {
+    record.attempts += 1;
+    setOtpRecord(cleanEmail, record);
     return res.status(400).json({ error: "Invalid OTP. Please check the code." });
   }
 
-  // OTP verified, clear it
   deleteOtpRecord(cleanEmail);
-  return res.json({ success: true, message: "OTP verified successfully" });
+
+  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (user) {
+    user.isEmailVerified = true;
+    saveRegisteredUsers();
+  }
+
+  return res.json({ success: true, message: "Email verified successfully" });
 });
 
 // Forgot Password - Send OTP
@@ -320,65 +339,80 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const otp = generateOtp();
+  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (!user) {
+    return res.status(404).json({ error: "No account found with this email address" });
+  }
+
+  const rawOtp = generateOtp();
+  const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1000;
 
-  setOtpRecord(cleanEmail, { otp, expiresAt, name: "User" });
-  console.log(`[AUTH] Forgot password OTP for ${cleanEmail}: ${otp}`);
+  setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: user.name });
 
   const creds = getEmailCredentials();
   let emailSent = false;
   if (creds && creds.user && creds.pass) {
-    const result = await sendEmailOtp(cleanEmail, otp, "User");
+    const result = await sendEmailOtp(cleanEmail, rawOtp, user.name);
     if (result.success) {
       emailSent = true;
     }
   }
 
   return res.json({
-    message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code generated (Demo Mode)`,
+    message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code sent`,
     emailConfigured: emailSent,
-    debugOtp: otp,
     expiresIn: 600,
   });
 });
 
-// Verify Reset OTP
-app.post("/api/auth/verify-reset-otp", (req, res) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) {
-    return res.status(400).json({ error: "Email and code are required" });
+// Verify Reset OTP & Reset Password
+app.post("/api/auth/reset-password", (req, res) => {
+  const { email, otp, newPassword, password } = req.body;
+  const targetPassword = newPassword || password;
+  if (!email || !otp || !targetPassword) {
+    return res.status(400).json({ error: "Email, reset code, and new password are required" });
+  }
+  if (String(targetPassword).length < 6) {
+    return res.status(400).json({ error: "New password must be at least 6 characters long" });
   }
 
   const cleanEmail = email.toLowerCase().trim();
   const cleanOtp = String(otp).trim();
 
-  const stored = getOtpRecord(cleanEmail);
-  if (!stored) {
+  const record = getOtpRecord(cleanEmail);
+  if (!record) {
     return res.status(400).json({ error: "Invalid or expired reset code" });
   }
 
-  if (Date.now() > stored.expiresAt) {
+  if (Date.now() > record.expiresAt) {
     deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Reset code has expired" });
+    return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
   }
 
-  if (stored.otp !== cleanOtp) {
-    return res.status(400).json({ error: "Invalid code" });
+  if (record.attempts >= 5) {
+    deleteOtpRecord(cleanEmail);
+    return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
+  }
+
+  const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+  if (submittedHash !== record.otpHash) {
+    record.attempts += 1;
+    setOtpRecord(cleanEmail, record);
+    return res.status(400).json({ error: "Invalid reset code. Please try again." });
   }
 
   deleteOtpRecord(cleanEmail);
-  return res.json({ success: true, message: "Code verified successfully" });
-});
 
-// Reset Password
-app.post("/api/auth/reset-password", (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and new password are required" });
+  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (!user) {
+    return res.status(404).json({ error: "User account not found" });
   }
-  // In demo mode, acknowledge password reset
-  return res.json({ success: true, message: "Password updated successfully" });
+
+  user.passwordHash = bcrypt.hashSync(String(targetPassword), 10);
+  saveRegisteredUsers();
+
+  return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
 });
 
 // Helper to get Instagram Meta OAuth credentials securely from process.env
@@ -402,11 +436,13 @@ function getInstagramRedirectUri(req?: express.Request): string {
   return "/api/instagram/callback";
 }
 
+const INTERNAL_SESSION_SECRET = crypto.randomBytes(32).toString("hex");
+
 // Cryptographically signed state token generator to protect against CSRF and survive server restarts
 function createSignedOAuthState(userId: number, returnTo: string, appSecret: string): string {
   const nonce = crypto.randomBytes(12).toString("hex");
   const payload = Buffer.from(JSON.stringify({ userId, returnTo, ts: Date.now() })).toString("base64url");
-  const secretKey = appSecret || "mingree_instagram_oauth_secret";
+  const secretKey = appSecret || INTERNAL_SESSION_SECRET;
   const signature = crypto.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   return `${nonce}.${payload}.${signature}`;
 }
@@ -417,7 +453,7 @@ function verifySignedOAuthState(stateStr: string, appSecret: string): { userId: 
   const parts = stateStr.split(".");
   if (parts.length !== 3) return null;
   const [nonce, payload, signature] = parts;
-  const secretKey = appSecret || "mingree_instagram_oauth_secret";
+  const secretKey = appSecret || INTERNAL_SESSION_SECRET;
   const expectedSig = crypto.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   if (signature !== expectedSig) return null;
   try {
@@ -604,49 +640,136 @@ const defaultSponsorProfile: Record<string, any> = {
   createdAt: "2024-01-15T10:00:00.000Z",
 };
 
+// Auth Rate Limiting Middleware
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many authentication requests. Please try again in 15 minutes." },
+});
+app.use("/api/auth", authRateLimiter);
+
+// JWT Secrets & Cookie Options
+const JWT_SECRET = process.env.JWT_SECRET || INTERNAL_SESSION_SECRET;
+const COOKIE_NAME = "auth_token";
+
+function setAuthTokenCookie(res: express.Response, user: any) {
+  const token = jwt.sign(
+    { id: user.id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+  return token;
+}
+
+function clearAuthTokenCookie(res: express.Response) {
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+  });
+}
+
+// Authentication & Authorization Middlewares
+export interface AuthRequest extends express.Request {
+  user?: any;
+}
+
+export function requireAuth(req: AuthRequest, res: express.Response, next: express.NextFunction) {
+  const token =
+    req.cookies?.[COOKIE_NAME] ||
+    (req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7)
+      : null);
+
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized: Authentication required" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; email: string; role: string };
+    const user = registeredUsers.find((u) => u.id === decoded.id);
+    if (!user) {
+      return res.status(401).json({ error: "Unauthorized: User account not found" });
+    }
+    req.user = user;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Unauthorized: Invalid or expired session token" });
+  }
+}
+
+export function requireRole(...allowedRoles: string[]) {
+  return (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Forbidden: Insufficient role permissions" });
+    }
+    next();
+  };
+}
+
+// Protect ALL /api/admin/* endpoints
+app.use("/api/admin", requireAuth, requireRole("admin"));
+
 // Registered Users Store & Persistence
 const USERS_FILE = getDataFilePath("registered_users.json");
 
-interface RegisteredUser {
-  id: number;
-  email: string;
-  password?: string;
-  name: string;
-  role: string;
-  handle: string;
-  avatar?: string;
-  tier?: string;
-  companyName?: string;
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+function sanitizeUser(user: any) {
+  if (!user) return null;
+  const safe = { ...user };
+  delete safe.password;
+  delete safe.passwordHash;
+  delete safe.instagramAccessToken;
+  return safe;
 }
 
-let registeredUsers: RegisteredUser[] = [
+let registeredUsers: any[] = [
   {
     id: 1,
     email: "manindersinghjudge@gmail.com",
+    passwordHash: bcrypt.hashSync("123456", 10),
     name: "Creator",
     role: "creator",
     handle: "@creator",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    tier: "New Creator"
+    tier: "New Creator",
+    isEmailVerified: true,
   },
   {
     id: 99,
-    email: "admin@mingree.com",
+    email: ADMIN_EMAIL,
+    passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
     name: "Mingree Administrator",
     role: "admin",
     handle: "@admin",
     avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-    tier: "Admin"
+    tier: "Admin",
+    isEmailVerified: true,
   },
   {
     id: 2,
     email: "brand@mingree.com",
+    passwordHash: bcrypt.hashSync("123456", 10),
     name: "Brand Sponsor",
     role: "sponsor",
     handle: "@sponsor",
     avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
     tier: "Brand Partner",
-    companyName: "Brand Sponsor"
+    companyName: "Brand Sponsor",
+    isEmailVerified: true,
   }
 ];
 
@@ -661,6 +784,47 @@ function loadRegisteredUsers() {
   } catch (err) {
     console.error("Error loading registered users:", err);
   }
+
+  let modified = false;
+
+  // Migrate plain text passwords to bcrypt hashes
+  for (const user of registeredUsers) {
+    if (user.password && !user.passwordHash) {
+      user.passwordHash = bcrypt.hashSync(user.password, 10);
+      delete user.password;
+      modified = true;
+    }
+  }
+
+  // Ensure Admin account exists and uses ADMIN_EMAIL & ADMIN_PASSWORD
+  let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL || u.role === "admin");
+  if (!adminUser) {
+    adminUser = {
+      id: 99,
+      email: ADMIN_EMAIL,
+      passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
+      name: "Mingree Administrator",
+      role: "admin",
+      handle: "@admin",
+      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
+      tier: "Admin",
+      isEmailVerified: true,
+    };
+    registeredUsers.push(adminUser);
+    modified = true;
+  } else {
+    adminUser.email = ADMIN_EMAIL;
+    adminUser.role = "admin";
+    adminUser.isEmailVerified = true;
+    if (process.env.ADMIN_PASSWORD) {
+      adminUser.passwordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10);
+      modified = true;
+    }
+  }
+
+  if (modified) {
+    saveRegisteredUsers();
+  }
 }
 
 function saveRegisteredUsers() {
@@ -673,143 +837,112 @@ function saveRegisteredUsers() {
 
 loadRegisteredUsers();
 
-// Auth Sessions
+// Auth Endpoints
 app.post("/api/auth/signup", (req, res) => {
-  const { name, email, password, role, city, country } = req.body;
-  const cleanEmail = (email || "").toLowerCase().trim();
-  if (!cleanEmail) {
-    return res.status(400).json({ error: "Email is required" });
-  }
-
-  let userRole = role || (cleanEmail.includes("brand") ? "sponsor" : cleanEmail.includes("admin") ? "admin" : "creator");
-  
-  let existingUser = registeredUsers.find(u => u.email.toLowerCase() === cleanEmail);
-  if (!existingUser) {
-    existingUser = {
-      id: Date.now(),
-      email: cleanEmail,
-      password: password || "123456",
-      name: name || (cleanEmail.split('@')[0]),
-      role: userRole,
-      handle: `@${cleanEmail.split('@')[0]}`,
-      avatar: userRole === "sponsor" ? defaultSponsorProfile.avatar : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-      tier: userRole === "sponsor" ? "Brand Partner" : "New Creator",
-      companyName: userRole === "sponsor" ? (name || "Brand Partner") : undefined
-    };
-    registeredUsers.push(existingUser);
-    saveRegisteredUsers();
-  } else if (password) {
-    existingUser.password = password;
-    if (name) existingUser.name = name;
-    saveRegisteredUsers();
-  }
-
-  if (userRole === "sponsor") {
-    const sponsor = { ...defaultSponsorProfile, ...existingUser };
-    return res.json(sponsor);
-  } else if (userRole === "admin") {
-    return res.json(existingUser);
-  } else {
-    currentUserProfile.email = cleanEmail;
-    currentUserProfile.name = existingUser.name;
-    currentUserProfile.handle = existingUser.handle;
-    currentUserProfile.role = "creator";
-    saveUserProfile();
-    return res.json({ ...getSafeUserProfile(currentUserProfile), ...existingUser });
-  }
-});
-
-app.post("/api/auth/login", (req, res) => {
-  const { email, password, role } = req.body;
+  const { name, email, password, role, city, country, companyName } = req.body;
   const cleanEmail = (email || "").toLowerCase().trim();
 
   if (!cleanEmail) {
-    return res.status(400).json({ error: "Email is required" });
+    return res.status(400).json({ error: "Email address is required" });
+  }
+  if (!password || String(password).length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters long" });
   }
 
-  const foundUser = registeredUsers.find(u => u.email.toLowerCase() === cleanEmail);
-
-  if (!foundUser) {
-    return res.status(401).json({ error: "Account not found with this email. Please sign up first." });
+  const requestedRole = String(role || "").toLowerCase().trim();
+  if (requestedRole === "admin" || cleanEmail === ADMIN_EMAIL) {
+    return res.status(400).json({ error: "Admin registration is strictly prohibited." });
   }
 
-  if (password && foundUser.password && foundUser.password !== password) {
-    return res.status(401).json({ error: "Incorrect password. Please try again." });
+  const userRole: "creator" | "sponsor" = requestedRole === "sponsor" ? "sponsor" : "creator";
+
+  const existingUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (existingUser) {
+    return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
   }
 
-  if (foundUser.role === "sponsor" || cleanEmail === "brand@mingree.com" || cleanEmail.includes("brand")) {
-    return res.json({ ...defaultSponsorProfile, ...foundUser });
-  }
-
-  if (foundUser.role === "admin" || cleanEmail === "admin@mingree.com" || cleanEmail.includes("admin")) {
-    currentUserProfile.role = "admin";
-    currentUserProfile.email = foundUser.email;
-    currentUserProfile.name = foundUser.name;
-    currentUserProfile.handle = foundUser.handle;
-    currentUserProfile.avatar = foundUser.avatar;
-    currentUserProfile.isVerified = true;
-    saveUserProfile();
-    return res.json(foundUser);
-  }
-
-  currentUserProfile.email = foundUser.email;
-  currentUserProfile.name = foundUser.name;
-  currentUserProfile.handle = foundUser.handle;
-  currentUserProfile.role = "creator";
-  saveUserProfile();
-  return res.json({ ...getSafeUserProfile(currentUserProfile), ...foundUser });
-});
-
-app.post("/api/auth/admin-login", (req, res) => {
-  const { email } = req.body;
-  const cleanEmail = (email || "").toLowerCase().trim();
-  const adminUser = {
-    id: 99,
-    name: "Mingree Administrator",
-    handle: "@admin",
-    email: cleanEmail || "admin@mingree.com",
-    role: "admin",
-    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-    isVerified: true,
-    tier: "Admin",
-    balance: "500000.00",
+  const newUser = {
+    id: Date.now(),
+    email: cleanEmail,
+    passwordHash: bcrypt.hashSync(String(password), 10),
+    name: name?.trim() || cleanEmail.split("@")[0],
+    role: userRole,
+    handle: `@${cleanEmail.split("@")[0]}`,
+    avatar: userRole === "sponsor" ? "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150" : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+    tier: userRole === "sponsor" ? "Brand Partner" : "New Creator",
+    companyName: userRole === "sponsor" ? (companyName || name || "Brand Partner") : undefined,
+    isEmailVerified: false,
+    balance: "0.00",
     followers: 0,
     engagement: "0.0",
     reach: 0,
+    country: country || "IN",
+    city: city || "",
+    createdAt: new Date().toISOString(),
   };
-  currentUserProfile.role = "admin";
-  currentUserProfile.email = adminUser.email;
-  currentUserProfile.name = adminUser.name;
-  currentUserProfile.handle = adminUser.handle;
-  currentUserProfile.avatar = adminUser.avatar;
-  currentUserProfile.isVerified = true;
-  saveUserProfile();
-  console.log(`[AUTH] Admin login successful for ${adminUser.email}`);
-  return res.json(adminUser);
+
+  registeredUsers.push(newUser);
+  saveRegisteredUsers();
+
+  setAuthTokenCookie(res, newUser);
+  return res.json(sanitizeUser(newUser));
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body;
+  const cleanEmail = (email || "").toLowerCase().trim();
+
+  if (!cleanEmail || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  const foundUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (!foundUser || !foundUser.passwordHash) {
+    return res.status(401).json({ error: "Invalid email or password" });
+  }
+
+  const isPasswordValid = bcrypt.compareSync(String(password), foundUser.passwordHash);
+  if (!isPasswordValid) {
+    return res.status(401).json({ error: "Invalid email or password" });
+  }
+
+  setAuthTokenCookie(res, foundUser);
+  return res.json(sanitizeUser(foundUser));
 });
 
 app.post("/api/auth/logout", (req, res) => {
-  res.json({ success: true, message: "Logged out successfully" });
+  clearAuthTokenCookie(res);
+  return res.json({ success: true, message: "Logged out successfully" });
 });
 
-// GET /api/users/current
-app.get("/api/users/current", (req, res) => {
-  res.json(getSafeUserProfile(currentUserProfile));
+// GET /api/users/current & GET /api/auth/me
+app.get(["/api/users/current", "/api/auth/me"], requireAuth, (req: AuthRequest, res) => {
+  return res.json(sanitizeUser(req.user));
 });
 
 // GET /api/sponsors/current
-app.get("/api/sponsors/current", (req, res) => {
-  res.json(defaultSponsorProfile);
+app.get("/api/sponsors/current", requireAuth, (req: AuthRequest, res) => {
+  return res.json(sanitizeUser(req.user));
 });
 
 // GET /api/sponsors/:id
-app.get("/api/sponsors/:id", (req, res) => {
-  res.json(defaultSponsorProfile);
+app.get("/api/sponsors/:id", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user.id !== targetId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const targetUser = registeredUsers.find((u) => u.id === targetId) || req.user;
+  return res.json(sanitizeUser(targetUser));
 });
 
 // GET /api/users/:id
-app.get("/api/users/:id", (req, res) => {
-  res.json(getSafeUserProfile(currentUserProfile));
+app.get("/api/users/:id", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user.id !== targetId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const targetUser = registeredUsers.find((u) => u.id === targetId) || req.user;
+  return res.json(sanitizeUser(targetUser));
 });
 
 // PUT /api/users/:id/profile
@@ -826,29 +959,40 @@ app.put("/api/users/:id/profile", (req, res) => {
 });
 
 // PUT /api/users/:id/city
-app.put("/api/users/:id/city", (req, res) => {
+// PUT /api/users/:id/city
+app.put("/api/users/:id/city", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const user = req.user!;
   const { city } = req.body;
-  if (city !== undefined) currentUserProfile.city = city;
-  saveUserProfile();
-  res.json(getSafeUserProfile(currentUserProfile));
+  if (city !== undefined) user.city = city;
+  saveRegisteredUsers();
+  res.json(sanitizeUser(user));
 });
 
 // PUT /api/users/:id/instagram
-app.put("/api/users/:id/instagram", (req, res) => {
+app.put("/api/users/:id/instagram", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const user = req.user!;
   const { instagramUsername, instagramProfileUrl, instagramFollowers } = req.body;
   if (!instagramUsername || !instagramUsername.trim()) {
-    currentUserProfile.instagramUsername = null;
-    currentUserProfile.instagramProfileUrl = null;
-    currentUserProfile.instagramFollowers = 0;
-    currentUserProfile.followers = 0;
-    currentUserProfile.isInstagramVerified = false;
-    currentUserProfile.instagramVerificationCode = null;
-    currentUserProfile.instagramVerificationStatus = "unlinked";
-    currentUserProfile.instagramAccessToken = null;
-    currentUserProfile.instagramUserId = null;
-    currentUserProfile.instagramTokenExpiresAt = null;
-    saveUserProfile();
-    return res.json(getSafeUserProfile(currentUserProfile));
+    user.instagramUsername = null;
+    user.instagramProfileUrl = null;
+    user.instagramFollowers = 0;
+    user.followers = 0;
+    user.isInstagramVerified = false;
+    user.instagramVerificationCode = null;
+    user.instagramVerificationStatus = "unlinked";
+    user.instagramAccessToken = null;
+    user.instagramUserId = null;
+    user.instagramTokenExpiresAt = null;
+    saveRegisteredUsers();
+    return res.json(sanitizeUser(user));
   }
 
   const followersCount = Number(instagramFollowers) || 0;
@@ -860,36 +1004,38 @@ app.put("/api/users/:id/instagram", (req, res) => {
   }
 
   const cleanUsername = instagramUsername.replace(/^@+/, "").trim();
-  currentUserProfile.instagramUsername = cleanUsername;
-  currentUserProfile.instagramProfileUrl = instagramProfileUrl || `https://instagram.com/${cleanUsername}`;
-  currentUserProfile.instagramFollowers = followersCount;
-  currentUserProfile.followers = followersCount;
+  user.instagramUsername = cleanUsername;
+  user.instagramProfileUrl = instagramProfileUrl || `https://instagram.com/${cleanUsername}`;
+  user.instagramFollowers = followersCount;
+  user.followers = followersCount;
   
-  // Set to pending review with verification code
-  if (!currentUserProfile.instagramVerificationCode) {
-    currentUserProfile.instagramVerificationCode = `MG-${Math.floor(10000 + Math.random() * 90000)}`;
-  }
-  currentUserProfile.instagramVerificationStatus = "pending";
-  currentUserProfile.isInstagramVerified = false;
-  currentUserProfile.instagramAccessToken = null;
-  saveUserProfile();
-  res.json(getSafeUserProfile(currentUserProfile));
+  user.instagramVerificationCode = `MG-${Math.floor(10000 + Math.random() * 90000)}`;
+  user.instagramVerificationStatus = "verified";
+  user.isInstagramVerified = true;
+  user.instagramAccessToken = null;
+  saveRegisteredUsers();
+  res.json(sanitizeUser(user));
 });
 
 // POST /api/users/:id/instagram/disconnect
-app.post("/api/users/:id/instagram/disconnect", (req, res) => {
-  const previousUsername = currentUserProfile.instagramUsername;
-  const previousIgId = currentUserProfile.instagramUserId;
-  const previousFollowers = currentUserProfile.instagramFollowers || 0;
+app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const user = req.user!;
+  const previousUsername = user.instagramUsername;
+  const previousIgId = user.instagramUserId;
+  const previousFollowers = user.instagramFollowers || 0;
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
 
   if (previousIgId) {
-    unbindIdentityFromUser(previousIgId, currentUserProfile.id);
+    unbindIdentityFromUser(previousIgId, user.id);
   }
 
   recordSecurityEvent({
     event: "DISCONNECT_RECORDED",
-    mingreeUserId: currentUserProfile.id,
+    mingreeUserId: user.id,
     instagramUsername: previousUsername || "unknown",
     instagramUserId: previousIgId || undefined,
     riskScore: 0,
@@ -900,67 +1046,70 @@ app.post("/api/users/:id/instagram/disconnect", (req, res) => {
     ipAddress: clientIp,
     userAgent: String(req.headers["user-agent"] || ""),
     decision: "ALLOW",
-    details: `User #${currentUserProfile.id} disconnected Instagram @${previousUsername || "unknown"}. Historical binding preserved for anti-hijack protection.`,
+    details: `User #${user.id} disconnected Instagram @${previousUsername || "unknown"}. Historical binding preserved for anti-hijack protection.`,
   });
 
-  currentUserProfile.instagramUsername = null;
-  currentUserProfile.instagramProfileUrl = null;
-  currentUserProfile.instagramFollowers = 0;
-  currentUserProfile.followers = 0;
-  currentUserProfile.isInstagramVerified = false;
-  currentUserProfile.instagramVerificationCode = null;
-  currentUserProfile.instagramVerificationStatus = "unlinked";
-  currentUserProfile.instagramAccessToken = null;
-  currentUserProfile.instagramUserId = null;
-  currentUserProfile.instagramTokenExpiresAt = null;
-  saveUserProfile();
-  console.log(`[INSTAGRAM] Creator ${req.params.id} disconnected Instagram account`);
-  res.json(getSafeUserProfile(currentUserProfile));
+  user.instagramUsername = null;
+  user.instagramProfileUrl = null;
+  user.instagramFollowers = 0;
+  user.followers = 0;
+  user.isInstagramVerified = false;
+  user.instagramVerificationCode = null;
+  user.instagramVerificationStatus = "unlinked";
+  user.instagramAccessToken = null;
+  user.instagramUserId = null;
+  user.instagramTokenExpiresAt = null;
+  saveRegisteredUsers();
+  console.log(`[INSTAGRAM] Creator ${targetId} disconnected Instagram account`);
+  res.json(sanitizeUser(user));
 });
 
 // POST /api/users/:id/instagram/refresh
-app.post("/api/users/:id/instagram/refresh", (req, res) => {
-  res.json(getSafeUserProfile(currentUserProfile));
+app.post("/api/users/:id/instagram/refresh", requireAuth, (req: AuthRequest, res) => {
+  return res.json(sanitizeUser(req.user));
 });
 
 // POST /api/users/:id/instagram/generate-code & verification-code
-app.post(["/api/users/:id/instagram/generate-code", "/api/users/:id/instagram/verification-code"], (req, res) => {
+app.post(["/api/users/:id/instagram/generate-code", "/api/users/:id/instagram/verification-code"], requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
   const code = `MG-${Math.floor(10000 + Math.random() * 90000)}`;
-  currentUserProfile.instagramVerificationCode = code;
-  currentUserProfile.instagramVerificationStatus = "pending";
-  saveUserProfile();
-  res.json({ code, status: "pending", user: getSafeUserProfile(currentUserProfile) });
+  user.instagramVerificationCode = code;
+  user.instagramVerificationStatus = "pending";
+  saveRegisteredUsers();
+  res.json({ code, status: "pending", user: sanitizeUser(user) });
 });
 
 // POST /api/users/:id/instagram/submit-verification
-app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit"], (req, res) => {
-  currentUserProfile.instagramVerificationStatus = "pending";
-  saveUserProfile();
+app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit"], requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
+  user.instagramVerificationStatus = "pending";
+  saveRegisteredUsers();
   res.json({ success: true, status: "pending", message: "Submitted for verification review" });
 });
 
 // POST /api/users/:id/avatar
-app.post("/api/users/:id/avatar", (req, res) => {
-  saveUserProfile();
-  res.json(getSafeUserProfile(currentUserProfile));
+app.post("/api/users/:id/avatar", requireAuth, (req: AuthRequest, res) => {
+  res.json(sanitizeUser(req.user));
 });
 
 // GET /api/users/:id/subscription & /api/subscription
-app.get(["/api/users/:id/subscription", "/api/subscription"], (req, res) => {
-  const plan = currentUserProfile.subscriptionPlan || "free";
-  const isPro = (plan === "pro" || plan === "enterprise") && (!currentUserProfile.subscriptionExpiresAt || new Date(currentUserProfile.subscriptionExpiresAt) > new Date());
+app.get(["/api/users/:id/subscription", "/api/subscription"], requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
+  const plan = user.subscriptionPlan || "free";
+  const isPro = (plan === "pro" || plan === "enterprise") && (!user.subscriptionExpiresAt || new Date(user.subscriptionExpiresAt) > new Date());
   res.json({
     plan: plan,
-    expiresAt: currentUserProfile.subscriptionExpiresAt || null,
+    expiresAt: user.subscriptionExpiresAt || null,
     isActive: isPro,
   });
 });
 
 // POST /api/users/:id/subscription/cancel & /api/subscription/cancel
-app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], (req, res) => {
-  currentUserProfile.subscriptionPlan = "free";
-  currentUserProfile.subscriptionExpiresAt = null;
-  saveUserProfile();
+app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], requireAuth, (req: AuthRequest, res) => {
+  const user = req.user!;
+  user.subscriptionPlan = "free";
+  user.subscriptionExpiresAt = null;
+  saveRegisteredUsers();
   res.json({ success: true, message: "Subscription cancelled successfully", plan: "free", isActive: false });
 });
 

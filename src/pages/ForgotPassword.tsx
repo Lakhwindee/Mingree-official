@@ -60,10 +60,8 @@ export default function ForgotPassword() {
       setStep("otp");
       setResendTimer(60);
       toast({
-        title: data.emailConfigured ? "Reset Code Sent" : "Reset Code Generated (Demo Mode)",
-        description: data.emailConfigured 
-          ? `A 6-digit code has been sent to ${email}`
-          : `Demo Reset code is: ${data.debugOtp}`,
+        title: "Reset Code Sent",
+        description: `A 6-digit code has been sent to ${email}`,
       });
     } catch (error: any) {
       toast({
