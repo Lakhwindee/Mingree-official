@@ -1,12 +1,16 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
-import { Mail, Lock, ArrowLeft, KeyRound, Loader2, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Send = __DummyIcon;
+
+
 
 export default function ForgotPassword() {
   const [, setLocation] = useLocation();
@@ -181,63 +185,51 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-gradient-to-br from-zinc-950 via-[#180828] to-zinc-950 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-sm"
-      >
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
         <button
           onClick={() => step === "email" ? setLocation("/login") : setStep("email")}
-          className="mb-4 flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-sm"
+          className="mb-4 text-xs text-muted-foreground hover:text-foreground font-medium"
           data-testid="button-back"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>{step === "email" ? "Back to Login" : "Back"}</span>
+          {step === "email" ? "Back to Login" : "Back"}
         </button>
 
-        <Card className="border-purple-500/20 bg-black/60 backdrop-blur-2xl text-white shadow-2xl rounded-3xl overflow-hidden">
-          <CardHeader className="text-center pt-8 pb-4">
-            <div className="mx-auto mb-3 h-16 w-16 rounded-2xl bg-gradient-to-tr from-pink-500 via-purple-500 to-amber-400 p-[2px] shadow-lg">
-              <div className="h-full w-full rounded-[14px] bg-zinc-950 flex items-center justify-center">
-                <KeyRound className="h-7 w-7 text-white" />
-              </div>
-            </div>
-            <CardTitle className="text-2xl font-bold text-white tracking-tight">
+        <Card className="border-border">
+          <CardHeader className="text-center pt-6 pb-4">
+            <CardTitle className="text-xl font-bold tracking-tight text-foreground">
               {step === "email" && "Forgot Password"}
               {step === "otp" && "Verify Code"}
               {step === "reset" && "Set New Password"}
             </CardTitle>
-            <CardDescription className="text-zinc-400 text-sm mt-1">
+            <CardDescription className="text-xs text-muted-foreground mt-1">
               {step === "email" && "Enter your email to receive a reset code"}
               {step === "otp" && `Enter the code sent to ${email}`}
               {step === "reset" && "Create a new secure password"}
             </CardDescription>
           </CardHeader>
 
-          <CardContent className="px-6 pb-8">
+          <CardContent className="px-6 pb-6">
             {step === "email" && (
               <div className="space-y-4">
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <div>
                   <Input
                     type="email"
                     placeholder="Enter your email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9"
                     data-testid="input-email"
                   />
                 </div>
 
                 <Button
                   onClick={sendResetOtp}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500"
+                  className="w-full text-xs font-semibold h-9"
                   disabled={isLoading || !email}
                   data-testid="button-send-code"
                 >
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send Reset Code"}
+                  {isLoading ? "Sending..." : "Send Reset Code"}
                 </Button>
               </div>
             )}
@@ -252,31 +244,31 @@ export default function ForgotPassword() {
                     data-testid="input-otp"
                   >
                     <InputOTPGroup>
-                      <InputOTPSlot index={0} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={1} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={2} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={3} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={4} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={5} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
+                      <InputOTPSlot index={0} className="w-10 h-10 text-base" />
+                      <InputOTPSlot index={1} className="w-10 h-10 text-base" />
+                      <InputOTPSlot index={2} className="w-10 h-10 text-base" />
+                      <InputOTPSlot index={3} className="w-10 h-10 text-base" />
+                      <InputOTPSlot index={4} className="w-10 h-10 text-base" />
+                      <InputOTPSlot index={5} className="w-10 h-10 text-base" />
                     </InputOTPGroup>
                   </InputOTP>
                 </div>
 
                 <Button
                   onClick={verifyOtp}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500"
+                  className="w-full text-xs font-semibold h-9"
                   disabled={isLoading || otp.length !== 6}
                   data-testid="button-verify"
                 >
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify Code"}
+                  {isLoading ? "Verifying..." : "Verify Code"}
                 </Button>
 
-                <p className="text-center text-sm text-gray-400">
+                <p className="text-center text-xs text-muted-foreground">
                   Didn't receive code?{" "}
                   <button
                     onClick={resendOtp}
                     disabled={resendTimer > 0}
-                    className={`font-medium ${resendTimer > 0 ? "text-gray-500" : "text-purple-400 hover:text-purple-300"}`}
+                    className={`font-semibold ${resendTimer > 0 ? "text-muted-foreground" : "text-foreground hover:underline"}`}
                     data-testid="button-resend"
                   >
                     {resendTimer > 0 ? `Resend in ${resendTimer}s` : "Resend"}
@@ -286,51 +278,49 @@ export default function ForgotPassword() {
             )}
 
             {step === "reset" && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
                     type={showPassword ? "text" : "password"}
                     placeholder="New Password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    className="pl-10 pr-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9 pr-14"
                     data-testid="input-new-password"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? "Hide" : "Show"}
                   </button>
                 </div>
 
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <div>
                   <Input
                     type={showPassword ? "text" : "password"}
                     placeholder="Confirm Password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9"
                     data-testid="input-confirm-password"
                   />
                 </div>
 
                 <Button
                   onClick={resetPassword}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500"
+                  className="w-full text-xs font-semibold h-9"
                   disabled={isLoading || !newPassword || !confirmPassword}
                   data-testid="button-reset"
                 >
-                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Reset Password"}
+                  {isLoading ? "Resetting..." : "Reset Password"}
                 </Button>
               </div>
             )}
           </CardContent>
         </Card>
-      </motion.div>
+      </div>
     </div>
   );
 }

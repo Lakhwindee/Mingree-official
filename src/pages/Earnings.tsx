@@ -1,186 +1,188 @@
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { api, type ApiTransaction, type ApiBankAccount, type ApiWithdrawalRequest, formatINR } from "@/lib/api";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion } from "motion/react";
-import { DollarSign, Download, History, ArrowDownLeft, Wallet as WalletIcon, AlertCircle, Plus, Trash2, Check, Clock, CreditCard, XCircle, Instagram } from "lucide-react";
-import { useState, useEffect } from "react";
-import { toast } from "sonner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { api, type ApiCampaign, type ApiReservation, formatINR } from "@/lib/api";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
+import { useState, useMemo } from "react";
+import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 
-const MIN_WITHDRAWAL_AMOUNT = 500;
-const WITHDRAWAL_GST_PERCENT = 18;
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+
+
 
 export default function Earnings() {
+  const queryClient = useQueryClient();
   const { user: authUser } = useAuth();
-  const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>("");
   const [isWithdrawDialogOpen, setIsWithdrawDialogOpen] = useState(false);
   const [isBankDialogOpen, setIsBankDialogOpen] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>("");
   const [upiForm, setUpiForm] = useState({
     accountHolderName: "",
     upiId: "",
   });
-  const queryClient = useQueryClient();
 
   const { data: user } = useQuery({
     queryKey: ["currentUser"],
     queryFn: api.getCurrentUser,
     initialData: () => (authUser && authUser.role === "creator" ? (authUser as any) : undefined),
+    refetchInterval: 30000,
   });
 
   const activeUser = user || (authUser as any);
 
   const { data: transactions = [] } = useQuery({
     queryKey: ["transactions", activeUser?.id],
-    queryFn: () => activeUser ? api.getUserTransactions(activeUser.id) : [],
+    queryFn: () => (activeUser ? api.getTransactions(activeUser.id) : []),
+    enabled: !!activeUser,
+  });
+
+  const { data: withdrawalRequests = [] } = useQuery({
+    queryKey: ["withdrawalRequests", activeUser?.id],
+    queryFn: () => (activeUser ? api.getWithdrawalRequests(activeUser.id) : []),
     enabled: !!activeUser,
   });
 
   const { data: bankAccounts = [] } = useQuery({
-    queryKey: ["bankAccounts"],
-    queryFn: api.getBankAccounts,
-  });
-
-  const { data: withdrawalRequests = [] } = useQuery({
-    queryKey: ["withdrawalRequests"],
-    queryFn: api.getWithdrawalRequests,
-  });
-
-  // Fetch user reservations for rejected history
-  const { data: reservations = [] } = useQuery({
-    queryKey: ["reservations", activeUser?.id],
-    queryFn: () => activeUser ? api.getUserReservations(activeUser.id) : [],
+    queryKey: ["bankAccounts", activeUser?.id],
+    queryFn: () => (activeUser ? api.getBankAccounts(activeUser.id) : []),
     enabled: !!activeUser,
   });
 
-  // Filter rejected reservations
-  const rejectedReservations = reservations.filter(r => r.status === 'rejected' && r.campaign);
-
-  // Auto-select default bank account when opening withdrawal dialog
-  useEffect(() => {
-    if (isWithdrawDialogOpen && bankAccounts.length > 0 && !selectedBankAccountId) {
-      const defaultAccount = bankAccounts.find(a => a.isDefault) || bankAccounts[0];
-      if (defaultAccount) {
-        setSelectedBankAccountId(defaultAccount.id.toString());
-      }
-    }
-  }, [isWithdrawDialogOpen, bankAccounts, selectedBankAccountId]);
-
-  const addBankAccountMutation = useMutation({
-    mutationFn: api.addBankAccount,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bankAccounts"] });
-      setIsBankDialogOpen(false);
-      setUpiForm({ accountHolderName: "", upiId: "" });
-      toast.success("UPI added successfully!");
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || "Failed to add UPI");
-    },
+  const { data: reservations = [] } = useQuery({
+    queryKey: ["reservations", activeUser?.id],
+    queryFn: () => (activeUser ? api.getUserReservations(activeUser.id) : []),
+    enabled: !!activeUser,
   });
 
-  const deleteBankAccountMutation = useMutation({
-    mutationFn: api.deleteBankAccount,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bankAccounts"] });
-      toast.success("UPI removed");
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || "Failed to remove UPI");
-    },
-  });
+  const rejectedReservations = useMemo(() => {
+    return reservations.filter((r: ApiReservation & { campaign?: ApiCampaign }) => r.status === 'rejected' && r.campaign);
+  }, [reservations]);
 
-  const withdrawMutation = useMutation({
-    mutationFn: ({ amount, bankAccountId }: { amount: number; bankAccountId: number }) => {
-      return api.createWithdrawalRequest(amount, bankAccountId);
-    },
+  const requestWithdrawalMutation = useMutation({
+    mutationFn: ({ amount, bankAccountId }: { amount: number; bankAccountId: number }) =>
+      api.requestWithdrawal(amount, bankAccountId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["withdrawalRequests"] });
-      setWithdrawAmount("");
-      setSelectedBankAccountId("");
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
       setIsWithdrawDialogOpen(false);
-      toast.success("Withdrawal request submitted! You will receive the funds within 2-3 business days.");
+      setWithdrawAmount("");
+      toast.success("Withdrawal request submitted successfully");
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to submit withdrawal request");
     },
   });
 
-  const handleAddUpi = () => {
-    if (!upiForm.accountHolderName || !upiForm.upiId) {
-      toast.error("Please enter your name and UPI ID");
-      return;
-    }
-    addBankAccountMutation.mutate({
-      accountHolderName: upiForm.accountHolderName,
-      accountNumber: "UPI-" + Date.now(),
-      ifscCode: "UPI00000",
-      bankName: upiForm.upiId.includes("@") ? upiForm.upiId.split("@")[1].toUpperCase() : "UPI",
-      upiId: upiForm.upiId,
-    });
-  };
+  const addBankAccountMutation = useMutation({
+    mutationFn: (data: { accountHolderName: string; upiId: string }) =>
+      api.addBankAccount({
+        ...data,
+        accountNumber: "UPI-" + Date.now(),
+        ifscCode: "UPI0000000",
+        bankName: "UPI",
+        accountType: "current",
+        isDefault: true,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bankAccounts"] });
+      setIsBankDialogOpen(false);
+      setUpiForm({ accountHolderName: "", upiId: "" });
+      toast.success("UPI ID added successfully");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to add UPI ID");
+    },
+  });
+
+  const deleteBankAccountMutation = useMutation({
+    mutationFn: (id: number) => api.deleteBankAccount(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bankAccounts"] });
+      toast.success("UPI ID removed");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to delete UPI ID");
+    },
+  });
 
   const handleWithdraw = () => {
     const amount = parseFloat(withdrawAmount);
-    if (!activeUser || isNaN(amount) || amount <= 0) {
+    if (!amount || amount <= 0) {
       toast.error("Please enter a valid amount");
       return;
     }
-    if (amount < MIN_WITHDRAWAL_AMOUNT) {
-      toast.error(`Minimum withdrawal amount is ₹${MIN_WITHDRAWAL_AMOUNT}`);
-      return;
-    }
-    if (amount > parseFloat(activeUser.balance || "0")) {
+    if (activeUser && amount > parseFloat(activeUser.balance)) {
       toast.error("Insufficient balance");
       return;
     }
     if (!selectedBankAccountId) {
-      toast.error("Please select a bank account");
+      toast.error("Please select a UPI ID");
       return;
     }
-    withdrawMutation.mutate({ amount, bankAccountId: parseInt(selectedBankAccountId) });
+    requestWithdrawalMutation.mutate({
+      amount,
+      bankAccountId: parseInt(selectedBankAccountId),
+    });
   };
 
-  const currentBalance = activeUser ? parseFloat(activeUser.balance || "0") : 0;
-  const canWithdraw = currentBalance >= MIN_WITHDRAWAL_AMOUNT && bankAccounts.length > 0;
-  const pendingWithdrawal = withdrawalRequests.find(r => r.status === "pending");
+  const handleAddUpi = () => {
+    if (!upiForm.accountHolderName || !upiForm.upiId) {
+      toast.error("Please fill in your name and UPI ID");
+      return;
+    }
+    if (!upiForm.upiId.includes("@")) {
+      toast.error("Please enter a valid UPI ID (e.g. name@okhdfcbank)");
+      return;
+    }
+    addBankAccountMutation.mutate(upiForm);
+  };
 
-  const totalEarnings = (transactions || [])
-    .filter(t => t && t.type === 'credit')
+  const MIN_WITHDRAWAL_AMOUNT = 500;
+  const WITHDRAWAL_GST_PERCENT = 18;
+  const currentBalance = activeUser ? parseFloat(activeUser.balance) : 0;
+  const canWithdraw = currentBalance >= MIN_WITHDRAWAL_AMOUNT;
+
+  const pendingWithdrawal = withdrawalRequests.find(
+    (w) => w.status === "pending" || w.status === "processing"
+  );
+
+  const totalEarnings = transactions
+    .filter((t) => t.type === "credit")
     .reduce((sum, t) => {
-      const val = parseFloat(t.net || "0");
+      const val = parseFloat(t.net);
       return sum + (isNaN(val) ? 0 : val);
     }, 0);
 
-  const totalTaxes = (transactions || [])
-    .filter(t => t && t.type === 'credit')
+  const totalTaxes = transactions
+    .filter((t) => t.type === "credit")
     .reduce((sum, t) => {
-      const val = parseFloat(t.tax || "0");
+      const val = parseFloat(t.tax);
       return sum + (isNaN(val) ? 0 : val);
     }, 0);
-
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
-        return <Badge variant="outline" className="bg-yellow-50 text-yellow-700 border-yellow-200"><Clock className="w-3 h-3 mr-1" /> Pending</Badge>;
+        return <Badge variant="outline" className="text-yellow-700 border-yellow-200">Pending</Badge>;
       case "processing":
-        return <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200"><Clock className="w-3 h-3 mr-1" /> Processing</Badge>;
+        return <Badge variant="outline" className="text-blue-700 border-blue-200">Processing</Badge>;
       case "completed":
-        return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200"><Check className="w-3 h-3 mr-1" /> Completed</Badge>;
+        return <Badge variant="outline" className="text-green-700 border-green-200">Completed</Badge>;
       case "rejected":
-        return <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200"><AlertCircle className="w-3 h-3 mr-1" /> Rejected</Badge>;
+        return <Badge variant="outline" className="text-red-700 border-red-200">Rejected</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -190,8 +192,8 @@ export default function Earnings() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" />
-          <p className="mt-4 text-muted-foreground">Loading...</p>
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent mx-auto" />
+          <p className="mt-3 text-xs text-muted-foreground">Loading earnings...</p>
         </div>
       </div>
     );
@@ -200,103 +202,92 @@ export default function Earnings() {
   return (
     <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <Sidebar />
-
-      {/* Mobile Sticky Top Header */}
-      <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 dark:bg-zinc-950/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full shadow-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-base font-bold text-foreground truncate">Earnings & Wallet</h1>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 whitespace-nowrap">{formatINR(activeUser.balance)}</span>
-        </div>
-        {activeUser && <NotificationDropdown userId={activeUser.id} />}
-      </header>
-
       <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
-        <div className="w-full max-w-5xl mx-auto px-3.5 py-4 sm:px-6 sm:py-6 overflow-x-hidden box-border">
+        {/* Mobile Header */}
+        <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-base font-bold text-foreground truncate">Earnings & Wallet</h1>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">
+              {activeUser.tier || "Creator"}
+            </span>
+          </div>
+          <NotificationDropdown userId={activeUser.id} />
+        </header>
+
+        <div className="w-full max-w-6xl mx-auto px-4 py-5 sm:px-6 sm:py-8 space-y-6 sm:space-y-8">
+          {/* Desktop Executive Header Bar */}
           <div className="hidden md:flex mb-6 sm:mb-8 flex-col justify-between gap-4 md:flex-row md:items-center">
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Earnings & Wallet</h1>
-              <p className="text-muted-foreground">Track your revenue, taxes, and withdrawals.</p>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">Track your revenue, taxes, and withdrawals.</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" data-testid="button-statement">
-                <Download className="mr-2 h-4 w-4" />
+              <Button variant="outline" className="text-xs font-semibold h-9 rounded-lg" data-testid="button-statement">
                 Statement
               </Button>
               
               <Dialog open={isWithdrawDialogOpen} onOpenChange={setIsWithdrawDialogOpen}>
                 <DialogTrigger asChild>
                   <Button 
-                    className="bg-green-600 hover:bg-green-700 text-white" 
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold h-9 rounded-lg shadow-xs" 
                     data-testid="button-withdraw"
                     disabled={!!pendingWithdrawal}
                   >
-                    <DollarSign className="mr-2 h-4 w-4" />
                     {pendingWithdrawal ? "Withdrawal Pending" : "Withdraw Funds"}
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="max-w-md">
+                <DialogContent className="max-w-md rounded-2xl border-border/80">
                   <DialogHeader>
-                    <DialogTitle>Withdraw Funds</DialogTitle>
-                    <DialogDescription>
-                      Transfer funds to your bank account. Processing takes 2-3 business days.
+                    <DialogTitle className="text-base font-bold text-foreground">Withdraw Funds</DialogTitle>
+                    <DialogDescription className="text-xs text-muted-foreground">
+                      Transfer cleared funds to your linked UPI address. Processing takes 2-3 business days.
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="grid gap-4 py-4">
-                    <div className="grid gap-2">
-                      <Label>Available Balance</Label>
-                      <p className="text-2xl font-bold text-green-600" data-testid="text-available-balance">{formatINR(activeUser.balance)}</p>
+                  <div className="grid gap-4 py-3">
+                    <div className="p-3.5 rounded-xl border border-border/80 bg-muted/30">
+                      <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Available Balance</Label>
+                      <p className="text-2xl font-bold text-foreground tabular-nums mt-1" data-testid="text-available-balance">{formatINR(activeUser.balance)}</p>
                     </div>
                     
                     {bankAccounts.length === 0 && (
-                      <div className="flex items-center gap-2 p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800">
-                        <AlertCircle className="h-5 w-5 text-orange-500 flex-shrink-0" />
-                        <div>
-                          <p className="text-sm text-orange-700 dark:text-orange-400">
-                            Please add a UPI ID first to withdraw funds.
-                          </p>
-                          <Button 
-                            variant="link" 
-                            className="h-auto p-0 text-orange-600" 
-                            onClick={() => { setIsWithdrawDialogOpen(false); setIsBankDialogOpen(true); }}
-                          >
-                            Add UPI
-                          </Button>
-                        </div>
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
+                        <p>Please add a UPI ID first to withdraw funds.</p>
+                        <Button 
+                          variant="link" 
+                          className="h-auto p-0 text-xs font-semibold text-amber-700 dark:text-amber-400 mt-1" 
+                          onClick={() => { setIsWithdrawDialogOpen(false); setIsBankDialogOpen(true); }}
+                        >
+                          Add UPI Address
+                        </Button>
                       </div>
                     )}
                     
                     {!canWithdraw && bankAccounts.length > 0 && currentBalance < MIN_WITHDRAWAL_AMOUNT && (
-                      <div className="flex items-center gap-2 p-3 rounded-lg bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800">
-                        <AlertCircle className="h-5 w-5 text-orange-500" />
-                        <p className="text-sm text-orange-700 dark:text-orange-400">
-                          Minimum balance of ₹{MIN_WITHDRAWAL_AMOUNT} required. You need ₹{(MIN_WITHDRAWAL_AMOUNT - currentBalance).toFixed(0)} more.
-                        </p>
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
+                        Minimum balance of ₹{MIN_WITHDRAWAL_AMOUNT} required. You need ₹{(MIN_WITHDRAWAL_AMOUNT - currentBalance).toFixed(0)} more.
                       </div>
                     )}
                     
                     {canWithdraw && (
                       <>
-                        <div className="grid gap-2">
-                          <Label>Select UPI Account</Label>
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs font-medium">Select UPI Account</Label>
                           <Select value={selectedBankAccountId} onValueChange={setSelectedBankAccountId}>
-                            <SelectTrigger data-testid="select-bank-account">
+                            <SelectTrigger className="h-9 text-xs rounded-xl" data-testid="select-bank-account">
                               <SelectValue placeholder="Choose UPI account" />
                             </SelectTrigger>
                             <SelectContent>
                               {bankAccounts.map(account => (
                                 <SelectItem key={account.id} value={account.id.toString()}>
-                                  <div className="flex items-center gap-2">
-                                    <CreditCard className="h-4 w-4 text-green-600" />
-                                    <span>{account.upiId || account.accountHolderName}</span>
-                                  </div>
+                                  <span>{account.upiId || account.accountHolderName}</span>
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </div>
                         
-                        <div className="grid gap-2">
-                          <Label htmlFor="amount">Withdrawal Amount (Min: ₹{MIN_WITHDRAWAL_AMOUNT})</Label>
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="amount" className="text-xs font-medium">Withdrawal Amount (Min: ₹{MIN_WITHDRAWAL_AMOUNT})</Label>
                           <Input 
                             id="amount" 
                             type="number"
@@ -305,42 +296,21 @@ export default function Earnings() {
                             max={currentBalance}
                             value={withdrawAmount}
                             onChange={(e) => setWithdrawAmount(e.target.value)}
+                            className="h-9 text-xs rounded-xl"
                             data-testid="input-withdraw-amount"
                           />
-                          <p className="text-xs text-muted-foreground">
-                            Maximum: {formatINR(activeUser.balance)}
-                          </p>
                         </div>
-                        
-                        {parseFloat(withdrawAmount) >= MIN_WITHDRAWAL_AMOUNT && (
-                          <div className="p-4 rounded-lg bg-muted/50 border space-y-2">
-                            <h4 className="font-medium text-sm">Payment Breakdown</h4>
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">Withdrawal Amount</span>
-                              <span>{formatINR(withdrawAmount)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">GST ({WITHDRAWAL_GST_PERCENT}%)</span>
-                              <span className="text-red-500">- {formatINR(Math.round(parseFloat(withdrawAmount) * WITHDRAWAL_GST_PERCENT / 100))}</span>
-                            </div>
-                            <div className="flex justify-between text-sm pt-2 border-t font-medium">
-                              <span>You will receive</span>
-                              <span className="text-green-600">
-                                {formatINR(parseFloat(withdrawAmount) - Math.round(parseFloat(withdrawAmount) * WITHDRAWAL_GST_PERCENT / 100))}
-                              </span>
-                            </div>
-                          </div>
-                        )}
                       </>
                     )}
                   </div>
                   <DialogFooter>
                     <Button 
                       onClick={handleWithdraw} 
-                      disabled={withdrawMutation.isPending || !canWithdraw || !selectedBankAccountId}
+                      disabled={!canWithdraw || requestWithdrawalMutation.isPending || !withdrawAmount || !selectedBankAccountId}
+                      className="w-full text-xs font-semibold rounded-xl h-9"
                       data-testid="button-confirm-withdraw"
                     >
-                      {withdrawMutation.isPending ? "Processing..." : "Submit Withdrawal Request"}
+                      {requestWithdrawalMutation.isPending ? "Processing..." : "Confirm Withdrawal"}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -348,71 +318,51 @@ export default function Earnings() {
             </div>
           </div>
 
-          <div className="grid gap-6 md:grid-cols-3 mb-8">
-            <Card className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-100 dark:border-green-900">
-              <CardContent className="p-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-sm font-medium text-green-700 dark:text-green-400">Wallet Balance</p>
-                    <h3 className="mt-2 text-3xl font-bold text-green-800 dark:text-green-300" data-testid="text-balance">{formatINR(activeUser.balance)}</h3>
-                  </div>
-                  <div className="p-2 bg-green-100 dark:bg-green-900/50 rounded-full">
-                    <WalletIcon className="h-6 w-6 text-green-700 dark:text-green-400" />
-                  </div>
-                </div>
-                <p className="mt-4 text-xs font-medium text-green-600/80 dark:text-green-500/80 flex items-center">
+          <div className="grid gap-4 md:grid-cols-3 mb-6 sm:mb-8">
+            <Card className="rounded-xl border border-border/80 bg-card">
+              <CardContent className="p-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Wallet Balance</p>
+                <h3 className="mt-2 text-2xl sm:text-3xl font-bold text-foreground tabular-nums" data-testid="text-balance">{formatINR(activeUser.balance)}</h3>
+                <p className="mt-3 text-xs text-muted-foreground">
                   Available for withdrawal (Min: ₹{MIN_WITHDRAWAL_AMOUNT})
                 </p>
               </CardContent>
             </Card>
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">GST Deducted (YTD)</p>
-                    <h3 className="mt-2 text-3xl font-bold" data-testid="text-taxes">{formatINR(totalTaxes)}</h3>
-                  </div>
-                  <div className="p-2 bg-orange-100 dark:bg-orange-900/50 rounded-full">
-                    <DollarSign className="h-6 w-6 text-orange-700 dark:text-orange-400" />
-                  </div>
-                </div>
-                <p className="mt-4 text-xs text-muted-foreground">{WITHDRAWAL_GST_PERCENT}% GST on Withdrawals</p>
+
+            <Card className="rounded-xl border border-border/80 bg-card">
+              <CardContent className="p-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">GST Deducted (YTD)</p>
+                <h3 className="mt-2 text-2xl sm:text-3xl font-bold text-foreground tabular-nums" data-testid="text-taxes">{formatINR(totalTaxes)}</h3>
+                <p className="mt-3 text-xs text-muted-foreground">{WITHDRAWAL_GST_PERCENT}% GST on withdrawals</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Total Earnings</p>
-                    <h3 className="mt-2 text-3xl font-bold" data-testid="text-total-earnings">{formatINR(totalEarnings)}</h3>
-                  </div>
-                  <div className="p-2 bg-purple-100 dark:bg-purple-900/50 rounded-full">
-                    <History className="h-6 w-6 text-purple-700 dark:text-purple-400" />
-                  </div>
-                </div>
-                <p className="mt-4 text-xs text-muted-foreground">Net after tax deduction</p>
+
+            <Card className="rounded-xl border border-border/80 bg-card">
+              <CardContent className="p-5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total Earnings</p>
+                <h3 className="mt-2 text-2xl sm:text-3xl font-bold text-foreground tabular-nums" data-testid="text-total-earnings">{formatINR(totalEarnings)}</h3>
+                <p className="mt-3 text-xs text-muted-foreground">Net lifetime earned across campaigns</p>
               </CardContent>
             </Card>
           </div>
 
-          <Tabs defaultValue="transactions" className="space-y-6">
+          <Tabs defaultValue="transactions" className="space-y-4">
             <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-              <TabsList className="w-full md:w-auto inline-flex">
-                <TabsTrigger value="transactions" className="text-xs md:text-sm whitespace-nowrap">History</TabsTrigger>
-                <TabsTrigger value="withdrawals" className="text-xs md:text-sm whitespace-nowrap">Withdrawals</TabsTrigger>
-                <TabsTrigger value="rejected" className="text-xs md:text-sm whitespace-nowrap">Rejected</TabsTrigger>
-                <TabsTrigger value="bank-accounts" className="text-xs md:text-sm whitespace-nowrap">Bank Accounts</TabsTrigger>
+              <TabsList className="h-9 p-1 bg-muted/70 rounded-xl border border-border/60 inline-flex">
+                <TabsTrigger value="transactions" className="text-xs font-semibold rounded-lg">History</TabsTrigger>
+                <TabsTrigger value="withdrawals" className="text-xs font-semibold rounded-lg">Withdrawals</TabsTrigger>
+                <TabsTrigger value="rejected" className="text-xs font-semibold rounded-lg">Rejected</TabsTrigger>
+                <TabsTrigger value="bank-accounts" className="text-xs font-semibold rounded-lg">UPI & Accounts</TabsTrigger>
               </TabsList>
             </div>
 
             <TabsContent value="transactions">
-              <Card>
-                <CardContent className="p-6">
+              <Card className="rounded-xl border border-border/80 bg-card">
+                <CardContent className="p-4 sm:p-5">
                   {transactions.length === 0 ? (
                     <div className="py-12 text-center">
-                      <History className="mx-auto h-12 w-12 text-muted-foreground/50" />
-                      <p className="mt-4 text-sm text-muted-foreground">No transactions yet</p>
-                      <p className="text-xs text-muted-foreground/80">Complete campaigns to start earning</p>
+                      <p className="text-sm font-semibold text-foreground">No transactions yet</p>
+                      <p className="text-xs text-muted-foreground mt-1">Complete campaigns to start earning</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -425,33 +375,24 @@ export default function Earnings() {
                           className="flex items-center justify-between rounded-lg border p-4"
                           data-testid={`transaction-${transaction.id}`}
                         >
-                          <div className="flex items-center gap-4">
-                            <div className={`rounded-full p-2 ${transaction.type === 'credit' ? 'bg-green-100 dark:bg-green-900/30' : 'bg-red-100 dark:bg-red-900/30'}`}>
-                              {transaction.type === 'credit' ? (
-                                <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
-                              ) : (
-                                <ArrowDownLeft className="h-4 w-4 text-red-600 dark:text-red-400" />
+                          <div>
+                            <p className="font-medium text-sm text-foreground">{transaction.description}</p>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                              <span>{new Date(transaction.createdAt).toLocaleDateString()}</span>
+                              {transaction.type === 'credit' && (
+                                <>
+                                  <span>&bull;</span>
+                                  <span className="text-amber-600 dark:text-amber-400">Tax: {formatINR(transaction.tax)}</span>
+                                </>
                               )}
-                            </div>
-                            <div>
-                              <p className="font-medium">{transaction.description}</p>
-                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                <span>{new Date(transaction.createdAt).toLocaleDateString()}</span>
-                                {transaction.type === 'credit' && (
-                                  <>
-                                    <span>•</span>
-                                    <span className="text-orange-600">Tax: {formatINR(transaction.tax)}</span>
-                                  </>
-                                )}
-                              </div>
                             </div>
                           </div>
                           <div className="text-right">
-                            <p className={`text-lg font-bold ${transaction.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
+                            <p className={`text-lg font-bold tabular-nums ${transaction.type === 'credit' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                               {transaction.type === 'credit' ? '+' : '-'}{formatINR(transaction.net)}
                             </p>
                             {transaction.type === 'credit' && (
-                              <p className="text-xs text-muted-foreground">
+                              <p className="text-xs text-muted-foreground tabular-nums">
                                 Gross: {formatINR(transaction.amount)}
                               </p>
                             )}
@@ -469,9 +410,8 @@ export default function Earnings() {
                 <CardContent className="p-6">
                   {withdrawalRequests.length === 0 ? (
                     <div className="py-12 text-center">
-                      <CreditCard className="mx-auto h-12 w-12 text-muted-foreground/50" />
-                      <p className="mt-4 text-sm text-muted-foreground">No withdrawal requests yet</p>
-                      <p className="text-xs text-muted-foreground/80">Withdraw your earnings when you're ready</p>
+                      <p className="text-sm font-semibold text-foreground">No withdrawal requests yet</p>
+                      <p className="text-xs text-muted-foreground mt-1">Withdraw your earnings when you're ready</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -486,28 +426,23 @@ export default function Earnings() {
                             className="flex items-center justify-between rounded-lg border p-4"
                             data-testid={`withdrawal-${request.id}`}
                           >
-                            <div className="flex items-center gap-4">
-                              <div className="rounded-full p-2 bg-blue-100 dark:bg-blue-900/30">
-                                <CreditCard className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                              </div>
-                              <div>
-                                <p className="font-medium">Withdrawal Request #{request.id}</p>
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <span>{new Date(request.requestedAt).toLocaleDateString()}</span>
-                                  {bankAccount && (
-                                    <>
-                                      <span>•</span>
-                                      <span>UPI: {bankAccount.upiId}</span>
-                                    </>
-                                  )}
-                                </div>
-                                {request.utrNumber && (
-                                  <p className="text-xs text-green-600 mt-1">UTR: {request.utrNumber}</p>
+                            <div>
+                              <p className="font-medium text-sm text-foreground">Withdrawal Request #{request.id}</p>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                                <span>{new Date(request.requestedAt).toLocaleDateString()}</span>
+                                {bankAccount && (
+                                  <>
+                                    <span>&bull;</span>
+                                    <span>UPI: {bankAccount.upiId}</span>
+                                  </>
                                 )}
                               </div>
+                              {request.utrNumber && (
+                                <p className="text-xs text-green-600 dark:text-green-400 mt-1">UTR: {request.utrNumber}</p>
+                              )}
                             </div>
                             <div className="text-right">
-                              <p className="text-lg font-bold text-blue-600">{formatINR(request.amount)}</p>
+                              <p className="text-lg font-bold text-foreground tabular-nums">{formatINR(request.amount)}</p>
                               {getStatusBadge(request.status)}
                             </div>
                           </motion.div>
@@ -524,9 +459,8 @@ export default function Earnings() {
                 <CardContent className="p-6">
                   {rejectedReservations.length === 0 ? (
                     <div className="py-12 text-center">
-                      <XCircle className="mx-auto h-12 w-12 text-muted-foreground/50" />
-                      <p className="mt-4 text-sm text-muted-foreground">No rejected campaigns</p>
-                      <p className="text-xs text-muted-foreground/80">Rejected submissions will appear here</p>
+                      <p className="text-sm font-semibold text-foreground">No rejected campaigns</p>
+                      <p className="text-xs text-muted-foreground mt-1">Rejected submissions will appear here</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -541,36 +475,23 @@ export default function Earnings() {
                             className="flex items-center justify-between rounded-lg border border-red-200 dark:border-red-900/50 p-4 bg-red-50/30 dark:bg-red-950/10"
                             data-testid={`rejected-campaign-${reservation.id}`}
                           >
-                            <div className="flex items-center gap-4">
-                              <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-                                {campaign.brandLogo ? (
-                                  <img src={campaign.brandLogo} alt={campaign.brand} className="max-h-8 max-w-[32px] object-contain mix-blend-multiply" />
-                                ) : (
-                                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-gray-400 to-gray-500 flex items-center justify-center text-white text-sm font-bold">
-                                    {campaign.brand.charAt(0).toUpperCase()}
-                                  </div>
-                                )}
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium text-sm">{campaign.title}</p>
+                                <Badge className="bg-destructive text-xs">
+                                  Rejected
+                                </Badge>
                               </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-sm">{campaign.title}</p>
-                                  <Badge className="bg-red-500 text-xs">
-                                    <XCircle className="w-3 h-3 mr-1" /> Rejected
-                                  </Badge>
-                                </div>
-                                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                                  <span>{campaign.brand}</span>
-                                  <span>•</span>
-                                  <Badge variant="outline" className="text-xs">{campaign.tier}</Badge>
-                                  <span>•</span>
-                                  <span className="flex items-center gap-1">
-                                    <Instagram className="h-3 w-3" /> {campaign.type}
-                                  </span>
-                                </div>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                                <span>{campaign.brand}</span>
+                                <span>&bull;</span>
+                                <Badge variant="outline" className="text-xs">{campaign.tier}</Badge>
+                                <span>&bull;</span>
+                                <span>{campaign.type}</span>
                               </div>
                             </div>
                             <div className="text-right">
-                              <p className="font-medium text-muted-foreground line-through">{formatINR(campaign.payAmount)}</p>
+                              <p className="font-medium text-muted-foreground line-through tabular-nums">{formatINR(campaign.payAmount)}</p>
                               <p className="text-xs text-muted-foreground">
                                 {new Date(reservation.reservedAt).toLocaleDateString()}
                               </p>
@@ -587,11 +508,10 @@ export default function Earnings() {
             <TabsContent value="bank-accounts">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle>Linked UPI Accounts</CardTitle>
+                  <CardTitle className="text-base font-bold">Linked UPI Accounts</CardTitle>
                   <Dialog open={isBankDialogOpen} onOpenChange={setIsBankDialogOpen}>
                     <DialogTrigger asChild>
-                      <Button data-testid="button-add-bank">
-                        <Plus className="mr-2 h-4 w-4" />
+                      <Button size="sm" className="text-xs font-semibold rounded-lg" data-testid="button-add-bank">
                         Add UPI
                       </Button>
                     </DialogTrigger>
@@ -643,9 +563,8 @@ export default function Earnings() {
                 <CardContent>
                   {bankAccounts.length === 0 ? (
                     <div className="py-12 text-center">
-                      <CreditCard className="mx-auto h-12 w-12 text-muted-foreground/50" />
-                      <p className="mt-4 text-sm text-muted-foreground">No UPI linked</p>
-                      <p className="text-xs text-muted-foreground/80">Add your Google Pay, PhonePe or Paytm UPI ID to withdraw earnings</p>
+                      <p className="text-sm font-semibold text-foreground">No UPI linked</p>
+                      <p className="text-xs text-muted-foreground mt-1">Add your Google Pay, PhonePe or Paytm UPI ID to withdraw earnings</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -658,31 +577,26 @@ export default function Earnings() {
                           className="flex items-center justify-between rounded-lg border p-4"
                           data-testid={`bank-account-${account.id}`}
                         >
-                          <div className="flex items-center gap-4">
-                            <div className="rounded-full p-2 bg-green-100 dark:bg-green-900/30">
-                              <CreditCard className="h-4 w-4 text-green-600 dark:text-green-400" />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-sm">UPI</p>
+                              {account.isDefault && (
+                                <Badge variant="secondary" className="text-xs">Default</Badge>
+                              )}
                             </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="font-medium">UPI</p>
-                                <Badge className="bg-green-500 text-xs">UPI</Badge>
-                                {account.isDefault && (
-                                  <Badge variant="secondary" className="text-xs">Default</Badge>
-                                )}
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                {account.accountHolderName} • {account.upiId}
-                              </p>
-                            </div>
+                            <p className="text-sm text-muted-foreground mt-0.5">
+                              {account.accountHolderName} &bull; {account.upiId}
+                            </p>
                           </div>
                           <Button
                             variant="ghost"
-                            size="icon"
+                            size="sm"
+                            className="text-xs text-destructive hover:bg-destructive/10"
                             onClick={() => deleteBankAccountMutation.mutate(account.id)}
                             disabled={deleteBankAccountMutation.isPending}
                             data-testid={`button-delete-bank-${account.id}`}
                           >
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            Remove
                           </Button>
                         </motion.div>
                       ))}

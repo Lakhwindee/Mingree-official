@@ -1,18 +1,15 @@
 import React, { useState } from 'react';
-import {
-  Instagram,
-  ShieldCheck,
-  Sparkles,
-  MapPin,
-  RefreshCw,
-  Award,
-  Download,
-  ExternalLink,
-  ChevronRight,
-  Gift,
-} from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { CreatorProfile as ICreatorProfile, TIERS, Tier } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+const Save = __DummyIcon;
+const Star = __DummyIcon;
+
+
 
 interface CreatorProfileProps {
   profile: ICreatorProfile;
@@ -74,7 +71,7 @@ export const CreatorProfileView: React.FC<CreatorProfileProps> = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <h2 className="text-base font-bold text-white truncate">{profile.name}</h2>
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+            
           </div>
 
           <p className="text-xs text-zinc-400">{profile.email}</p>
@@ -84,7 +81,7 @@ export const CreatorProfileView: React.FC<CreatorProfileProps> = ({
               {profile.tier.name}
             </span>
             <span className="text-[10px] text-zinc-400 flex items-center gap-0.5">
-              <MapPin className="w-3 h-3 text-zinc-500" />
+              
               {profile.city}, {profile.country}
             </span>
           </div>
@@ -157,7 +154,7 @@ export const CreatorProfileView: React.FC<CreatorProfileProps> = ({
       <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-zinc-900 to-amber-500/5 border border-amber-500/30 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-amber-400 fill-amber-400" />
+            
             <div>
               <h3 className="text-xs font-bold text-white">Gold Stars Balance</h3>
               <span className="text-[11px] text-amber-300 font-bold">{profile.stars} Total Stars</span>
@@ -182,7 +179,7 @@ export const CreatorProfileView: React.FC<CreatorProfileProps> = ({
             onClick={handleClaimFreeProCode}
             className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs shadow flex items-center justify-center gap-1.5 cursor-pointer"
           >
-            <Gift className="w-3.5 h-3.5" />
+            
             <span>Claim 1 Free Pro Month Promo Code</span>
           </button>
         )}
@@ -192,7 +189,7 @@ export const CreatorProfileView: React.FC<CreatorProfileProps> = ({
       <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Download className="w-4 h-4 text-[#FF3399]" />
+            
             <h3 className="text-xs font-bold text-white">Android APK & Project Bundle</h3>
           </div>
           <span className="text-[10px] text-emerald-400 font-mono">v1.0.0</span>
@@ -205,7 +202,7 @@ export const CreatorProfileView: React.FC<CreatorProfileProps> = ({
           className="w-full mt-1 py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-700/60"
         >
           <span>Open APK Download Center</span>
-          <ChevronRight className="w-3.5 h-3.5" />
+          
         </button>
       </div>
     </div>

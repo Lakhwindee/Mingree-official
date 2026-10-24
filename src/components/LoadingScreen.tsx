@@ -1,5 +1,3 @@
-import { Loader2 } from "lucide-react";
-
 interface LoadingScreenProps {
   message?: string;
   fullScreen?: boolean;
@@ -12,9 +10,9 @@ export function LoadingScreen({ message = "Loading...", fullScreen = true }: Loa
 
   return (
     <div className={containerClass}>
-      <div className="text-center space-y-4">
-        <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto" />
-        <p className="text-muted-foreground text-sm">{message}</p>
+      <div className="text-center space-y-2">
+        <div className="h-6 w-6 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto" />
+        <p className="text-muted-foreground text-xs">{message}</p>
       </div>
     </div>
   );
@@ -22,18 +20,18 @@ export function LoadingScreen({ message = "Loading...", fullScreen = true }: Loa
 
 export function LoadingSpinner({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
   const sizeClass = {
-    sm: "h-4 w-4",
-    md: "h-6 w-6", 
-    lg: "h-8 w-8"
+    sm: "h-3.5 w-3.5",
+    md: "h-5 w-5", 
+    lg: "h-7 w-7"
   }[size];
 
-  return <Loader2 className={`${sizeClass} animate-spin text-primary`} />;
+  return <div className={`${sizeClass} border-2 border-foreground border-t-transparent rounded-full animate-spin`} />;
 }
 
 export function PageLoader() {
   return (
     <div className="flex-1 flex items-center justify-center">
-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="h-6 w-6 border-2 border-foreground border-t-transparent rounded-full animate-spin" />
     </div>
   );
 }

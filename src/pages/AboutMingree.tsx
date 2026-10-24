@@ -1,55 +1,33 @@
-import { motion } from "framer-motion";
 import { Link } from "wouter";
-import { 
-  Sparkles, 
-  TrendingUp, 
-  Wallet, 
-  Users, 
-  ShieldCheck, 
-  ArrowLeft,
-  Instagram, 
-  Star, 
-  Zap, 
-  Shield, 
-  BarChart3, 
-  Building2, 
-  Target, 
-  Megaphone, 
-  BadgeCheck,
-  CheckCircle2,
-  ChevronDown,
-  HelpCircle,
-  Award,
-  Layers
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Sidebar } from "@/components/Sidebar";
-import mingreeLogo from "@assets/generated_images/mingree_mg_circular_logo.png";
 import { useAuth } from "@/lib/auth-context";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+
+
 
 export default function AboutMingree() {
   const { isAuthenticated, user } = useAuth();
 
   const creatorFeatures = [
     {
-      icon: <Sparkles className="h-5 w-5 text-pink-500" />,
       title: "Discover Campaigns",
       description: "Browse verified brand campaigns matching your niche, content style, and audience size."
     },
     {
-      icon: <TrendingUp className="h-5 w-5 text-purple-500" />,
       title: "Dynamic Follower Tiers",
       description: "As your Instagram followers and engagement grow, higher payout tiers unlock automatically."
     },
     {
-      icon: <Wallet className="h-5 w-5 text-emerald-500" />,
       title: "Instant Secure Payouts",
       description: "Escrow-backed earnings deposited directly to your bank account or UPI with zero payment delays."
     },
     {
-      icon: <Instagram className="h-5 w-5 text-amber-500" />,
       title: "Official Meta Verification",
       description: "Sync your live Instagram metrics and get the verified badge to qualify for high-ticket sponsorships."
     }
@@ -57,22 +35,18 @@ export default function AboutMingree() {
 
   const brandFeatures = [
     {
-      icon: <Target className="h-5 w-5 text-indigo-500" />,
       title: "Hyper-Targeted Matching",
       description: "Filter creators by exact follower brackets, regional languages, location, and content categories."
     },
     {
-      icon: <Shield className="h-5 w-5 text-blue-500" />,
       title: "Escrow Budget Protection",
       description: "Funds are locked safely in escrow and only released once you review and approve creator content."
     },
     {
-      icon: <BarChart3 className="h-5 w-5 text-pink-500" />,
       title: "Real-Time Tracking",
       description: "Track reservation status, review submissions, and analyze live ROI from your brand dashboard."
     },
     {
-      icon: <BadgeCheck className="h-5 w-5 text-emerald-500" />,
       title: "100% Genuine Audiences",
       description: "Meta API integration guarantees verified accounts with genuine engagement and no fake metrics."
     }
@@ -125,66 +99,57 @@ export default function AboutMingree() {
       {/* Top Header */}
       <div className="flex items-center justify-between gap-4">
         <Link href={isAuthenticated ? (user?.role === "sponsor" ? "/sponsor" : "/dashboard") : "/login"}>
-          <Button variant="ghost" size="sm" className="gap-2 text-zinc-600 dark:text-zinc-400 hover:text-foreground">
-            <ArrowLeft className="h-4 w-4" />
-            <span>{isAuthenticated ? "Back to Dashboard" : "Back to Login"}</span>
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground">
+            {isAuthenticated ? "Back to Dashboard" : "Back to Login"}
           </Button>
         </Link>
-        <div className="flex items-center gap-2">
-          <img src={mingreeLogo} alt="Mingree" className="h-7 w-7 rounded-lg object-cover" />
-          <span className="font-bold text-base">Mingree Guide</span>
-        </div>
+        <span className="font-bold text-sm tracking-tight text-foreground">Mingree Guide</span>
       </div>
 
       {/* Hero Banner */}
-      <motion.div
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-3xl bg-gradient-to-tr from-purple-950 via-zinc-900 to-black p-6 sm:p-8 md:p-10 text-white shadow-xl border border-purple-500/20"
-      >
-        <div className="relative z-10 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-pink-500/20 border border-pink-500/30 text-pink-300 text-xs font-semibold mb-4">
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>About Mingree Platform</span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight">
-            Where Creators Turn Influence Into <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-purple-400 to-amber-300">Guaranteed Income</span>
+      <div className="rounded-xl bg-card border border-border p-6 sm:p-8">
+        <div className="max-w-2xl">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block mb-2">
+            About Mingree Platform
+          </span>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+            Where Creators Turn Influence Into Guaranteed Income
           </h1>
-          <p className="mt-3 text-sm sm:text-base text-zinc-300 leading-relaxed">
+          <p className="mt-3 text-sm text-muted-foreground leading-relaxed">
             Mingree connects verified Instagram creators with top brands for sponsored reels, product reviews, and brand launches with escrow-guaranteed payouts.
           </p>
           
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-6 flex flex-wrap gap-2.5">
             <Link href={isAuthenticated ? "/campaigns" : "/signup"}>
-              <Button className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold shadow-md">
+              <Button size="sm" className="text-xs font-semibold">
                 {isAuthenticated ? "Explore Campaigns" : "Get Started Free"}
               </Button>
             </Link>
             <Link href={isAuthenticated ? "/support" : "/login"}>
-              <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+              <Button variant="outline" size="sm" className="text-xs">
                 Contact Support
               </Button>
             </Link>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* How It Works Section */}
       <div>
-        <div className="text-center mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-foreground">How Mingree Works</h2>
-          <p className="text-xs sm:text-sm text-muted-foreground mt-1">Simple 4-step workflow from discovery to instant payout</p>
+        <div className="mb-5">
+          <h2 className="text-lg font-bold text-foreground">How Mingree Works</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Simple 4-step workflow from discovery to instant payout</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {howItWorks.map((item) => (
-            <Card key={item.step} className="border-border/80 shadow-xs">
-              <CardContent className="p-5 flex items-start gap-4">
-                <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-pink-500 to-purple-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-sm">
+            <Card key={item.step} className="border-border/80">
+              <CardContent className="p-4 flex items-start gap-3">
+                <div className="h-8 w-8 rounded bg-muted text-foreground flex items-center justify-center font-bold text-xs shrink-0 border border-border">
                   {item.step}
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm text-foreground">{item.title}</h3>
+                  <h3 className="font-bold text-xs sm:text-sm text-foreground">{item.title}</h3>
                   <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
                 </div>
               </CardContent>
@@ -195,25 +160,17 @@ export default function AboutMingree() {
 
       {/* Creator Features */}
       <div>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-2 rounded-xl bg-pink-500/10 text-pink-600">
-            <Instagram className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">For Content Creators</h2>
-            <p className="text-xs text-muted-foreground">Built to help creators monetize at every follower stage</p>
-          </div>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold text-foreground">For Content Creators</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Built to help creators monetize at every follower stage</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {creatorFeatures.map((feat, i) => (
-            <Card key={i} className="border-border/80 shadow-xs">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-xl bg-muted">{feat.icon}</div>
-                  <h3 className="font-semibold text-sm text-foreground">{feat.title}</h3>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{feat.description}</p>
+            <Card key={i} className="border-border/80">
+              <CardContent className="p-4">
+                <h3 className="font-semibold text-xs sm:text-sm text-foreground">{feat.title}</h3>
+                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{feat.description}</p>
               </CardContent>
             </Card>
           ))}
@@ -222,25 +179,17 @@ export default function AboutMingree() {
 
       {/* Brand & Sponsor Features */}
       <div>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600">
-            <Building2 className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">For Brands & Agencies</h2>
-            <p className="text-xs text-muted-foreground">Launch scalable influencer campaigns with guaranteed delivery</p>
-          </div>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold text-foreground">For Brands & Agencies</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Launch scalable influencer campaigns with guaranteed delivery</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {brandFeatures.map((feat, i) => (
-            <Card key={i} className="border-border/80 shadow-xs">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-xl bg-muted">{feat.icon}</div>
-                  <h3 className="font-semibold text-sm text-foreground">{feat.title}</h3>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{feat.description}</p>
+            <Card key={i} className="border-border/80">
+              <CardContent className="p-4">
+                <h3 className="font-semibold text-xs sm:text-sm text-foreground">{feat.title}</h3>
+                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{feat.description}</p>
               </CardContent>
             </Card>
           ))}
@@ -248,36 +197,29 @@ export default function AboutMingree() {
       </div>
 
       {/* Trust & Safety Banner */}
-      <Card className="border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-950/20">
-        <CardContent className="p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 shrink-0">
-              <ShieldCheck className="h-6 w-6" />
-            </div>
-            <div>
-              <h3 className="font-bold text-base text-foreground">100% Escrow & Meta Verified</h3>
-              <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                Zero payment disputes. Brands fund campaigns upfront, and creators are guaranteed payment upon approved delivery.
-              </p>
-            </div>
-          </div>
+      <Card className="border-border/80 bg-muted/20">
+        <CardContent className="p-5">
+          <h3 className="font-bold text-sm text-foreground">100% Escrow & Meta Verified</h3>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            Zero payment disputes. Brands fund campaigns upfront, and creators are guaranteed payment upon approved delivery.
+          </p>
         </CardContent>
       </Card>
 
       {/* FAQs */}
       <div>
-        <div className="text-center mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-foreground">Frequently Asked Questions</h2>
-          <p className="text-xs sm:text-sm text-muted-foreground mt-1">Everything you need to know about Mingree</p>
+        <div className="mb-4">
+          <h2 className="text-lg font-bold text-foreground">Frequently Asked Questions</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Everything you need to know about Mingree</p>
         </div>
 
         <Accordion type="single" collapsible className="w-full space-y-2">
           {faqs.map((faq, index) => (
-            <AccordionItem key={index} value={`item-${index}`} className="border rounded-xl px-4 py-1 bg-card">
-              <AccordionTrigger className="text-sm font-semibold hover:no-underline text-left">
+            <AccordionItem key={index} value={`item-${index}`} className="border rounded-lg px-4 py-1 bg-card">
+              <AccordionTrigger className="text-xs sm:text-sm font-semibold hover:no-underline text-left">
                 {faq.q}
               </AccordionTrigger>
-              <AccordionContent className="text-xs sm:text-sm text-muted-foreground leading-relaxed pt-1 pb-3">
+              <AccordionContent className="text-xs text-muted-foreground leading-relaxed pt-1 pb-3">
                 {faq.a}
               </AccordionContent>
             </AccordionItem>

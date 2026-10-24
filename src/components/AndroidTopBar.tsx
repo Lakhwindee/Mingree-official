@@ -1,6 +1,5 @@
-import React from 'react';
-import { Bell, Sparkles, UserCheck, Briefcase } from 'lucide-react';
-import { Role } from '../types';
+import React from "react";
+import { Role } from "../types";
 
 interface AndroidTopBarProps {
   role: Role;
@@ -20,70 +19,58 @@ export const AndroidTopBar: React.FC<AndroidTopBarProps> = ({
   onOpenProfile,
 }) => {
   return (
-    <div className="sticky top-0 z-40 bg-[#0A0A0B]/95 backdrop-blur-md px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-      {/* Brand & Logo */}
+    <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-md px-4 py-3 border-b border-border flex items-center justify-between">
+      {/* Brand */}
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#FF3399] via-[#FF5E62] to-[#FF9966] p-0.5 flex items-center justify-center shadow-md shadow-[#FF3399]/20">
-          <div className="w-full h-full bg-[#0A0A0B] rounded-[10px] flex items-center justify-center">
-            <span className="text-[#FF3399] font-black text-sm tracking-tight">M</span>
-          </div>
-        </div>
-        <div>
-          <div className="flex items-center gap-1.5">
-            <span className="font-extrabold text-base tracking-tight text-white">Mingree</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/10 text-[#FF3399] font-semibold border border-pink-500/20">
-              APP
-            </span>
-          </div>
-        </div>
+        <span className="font-bold text-base tracking-tight text-foreground">Mingree</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-semibold">
+          APP
+        </span>
       </div>
 
-      {/* Center: Role Switcher Pill */}
-      <div className="flex items-center bg-zinc-900 p-0.5 rounded-full border border-zinc-800">
+      {/* Center: Role Switcher */}
+      <div className="flex items-center bg-muted p-0.5 rounded border border-border">
         <button
-          onClick={() => setRole('creator')}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-            role === 'creator'
-              ? 'bg-gradient-to-r from-[#FF3399] to-[#FF6B6B] text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
+          onClick={() => setRole("creator")}
+          className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+            role === "creator"
+              ? "bg-foreground text-background shadow-xs"
+              : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <UserCheck className="w-3 h-3" />
-          <span>Creator</span>
+          Creator
         </button>
         <button
-          onClick={() => setRole('sponsor')}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-            role === 'sponsor'
-              ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-sm'
-              : 'text-zinc-400 hover:text-zinc-200'
+          onClick={() => setRole("sponsor")}
+          className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+            role === "sponsor"
+              ? "bg-foreground text-background shadow-xs"
+              : "text-muted-foreground hover:text-foreground"
           }`}
         >
-          <Briefcase className="w-3 h-3" />
-          <span>Sponsor</span>
+          Sponsor
         </button>
       </div>
 
-      {/* Right Actions: Stars (Creator) or Notifications */}
+      {/* Right Actions: Stars or Notifications */}
       <div className="flex items-center gap-2">
-        {role === 'creator' && (
+        {role === "creator" && (
           <div
             onClick={onOpenProfile}
-            className="flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 px-2 py-1 rounded-full cursor-pointer hover:bg-amber-500/20 transition-colors"
-            title="Gold Stars Balance"
+            className="flex items-center gap-1 bg-muted px-2 py-1 rounded cursor-pointer text-foreground border border-border"
+            title="Stars Balance"
           >
-            <Sparkles className="w-3 h-3 text-amber-400 fill-amber-400" />
-            <span className="text-[11px] font-bold text-amber-300">{stars}</span>
+            <span className="text-[11px] font-bold">{stars} Stars</span>
           </div>
         )}
 
         <button
           onClick={onOpenNotifications}
-          className="relative w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300 hover:text-white transition-colors cursor-pointer"
+          className="relative px-2.5 py-1 rounded bg-muted border border-border text-[11px] font-medium text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
         >
-          <Bell className="w-4 h-4" />
+          Alerts
           {unreadNotifications > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#FF3399] text-[9px] font-bold text-white flex items-center justify-center shadow-sm">
+            <span className="ml-1 px-1 py-0.2 rounded-full bg-foreground text-[9px] font-bold text-background inline-block">
               {unreadNotifications}
             </span>
           )}

@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
-import { PlusCircle, Sparkles, X, Check, Calculator } from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { Campaign, CATEGORIES, TIERS } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+
+
 
 interface CreateCampaignModalProps {
   isOpen: boolean;
@@ -74,7 +80,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
         <div className="flex items-center justify-between border-b border-zinc-800/80 pb-3">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-xl bg-purple-600/20 text-purple-400 flex items-center justify-center">
-              <PlusCircle className="w-4 h-4" />
+              
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Create Brand Campaign</h3>
@@ -85,7 +91,7 @@ export const CreateCampaignModal: React.FC<CreateCampaignModalProps> = ({
             onClick={onClose}
             className="w-7 h-7 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors cursor-pointer"
           >
-            <X className="w-3.5 h-3.5" />
+            
           </button>
         </div>
 

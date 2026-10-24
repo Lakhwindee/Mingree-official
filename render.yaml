@@ -19,31 +19,27 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
-        sync: false
+        generateValue: true
       - key: TOKEN_ENC_KEY
-        sync: false
-      - key: INSTAGRAM_APP_ID
-        sync: false
-      - key: INSTAGRAM_APP_SECRET
-        sync: false
-      - key: INSTAGRAM_CLIENT_ID
-        sync: false
-      - key: INSTAGRAM_CLIENT_SECRET
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: "admin@mingree.com"
+      - key: ADMIN_PASSWORD
         sync: false
       - key: GMAIL_USER
         sync: false
       - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
         sync: false
       - key: CASHFREE_APP_ID
         sync: false
       - key: CASHFREE_SECRET_KEY
         sync: false
       - key: CASHFREE_MODE
-        sync: false
-      - key: RAPIDAPI_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
+        value: "PRODUCTION"
       - key: FEE_ARTIST_PERCENT
         value: "7.5"
       - key: FEE_CREATOR_PERCENT
@@ -55,7 +51,7 @@ services:
       - key: GST_PERCENT
         value: "18"
       - key: MIN_CREATOR_FOLLOWERS
-        value: "500"
+        value: "5000"
       - key: MIN_CREATOR_WITHDRAWAL
         value: "500"
       - key: MIN_ARTIST_WITHDRAWAL
@@ -65,7 +61,7 @@ services:
       - key: LIVE_HOLD_DAYS
         value: "7"
       - key: RELEASE_FIRST_PERCENT
-        value: "50"
+        value: "100"
       - key: RATE_CHANGE_COOLDOWN_DAYS
         value: "7"
       - key: AUTOPILOT_HIDE_MULTIPLIER

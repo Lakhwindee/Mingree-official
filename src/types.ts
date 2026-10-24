@@ -1,3 +1,8 @@
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Star = __DummyIcon;
+
 export interface Tier {
   id: number;
   name: string; // Filter label: Starter, Nano, Micro, Mid, Macro, Mega
@@ -102,12 +107,12 @@ export interface SponsorDeposit {
 }
 
 export const TIERS: Tier[] = [
-  { id: 1, name: "Starter", minFollowers: 500, maxFollowers: 2000, basePayment: 0 },
-  { id: 2, name: "Nano", minFollowers: 2000, maxFollowers: 10000, basePayment: 0 },
-  { id: 3, name: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
-  { id: 4, name: "Mid", minFollowers: 50000, maxFollowers: 250000, basePayment: 0 },
-  { id: 5, name: "Macro", minFollowers: 250000, maxFollowers: 1000000, basePayment: 0 },
-  { id: 6, name: "Mega", minFollowers: 1000000, maxFollowers: Infinity, basePayment: 0 },
+  { id: 1, name: "Tier 1", minFollowers: 500, maxFollowers: 5000, basePayment: 0 },
+  { id: 2, name: "Tier 2", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
+  { id: 3, name: "Tier 3", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
+  { id: 4, name: "Tier 4", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
+  { id: 5, name: "Tier 5", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
+  { id: 6, name: "Tier 6", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
 ];
 
 export const CATEGORIES = [

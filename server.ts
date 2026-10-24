@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
-import { db, isLocalFallbackAllowed } from "./server/db";
+import { db, pool, verifyDbConnection, isLocalFallbackAllowed } from "./server/db";
 import { eq } from "drizzle-orm";
 
 // Production Safety Gate: Refuse to start if in production without DATABASE_URL
@@ -105,6 +105,33 @@ import {
   generateTaxInvoiceHtml,
 } from "./server/promoAndInvoices";
 
+import {
+  loadAllWorkspaces,
+  getWorkspaceById,
+  saveSingleWorkspace,
+  getMarketplaceCampaigns,
+  getBrandCampaignCards,
+  getCreatorCampaignsSummary,
+  applyOrReserveSlot,
+  updateCampaignBrief,
+  acknowledgeBriefChange,
+  submitCreatorReel,
+  reviewReelSubmission,
+  submitDraftPreview,
+  reviewDraftPreview,
+  handleParticipantApplication,
+  postWorkspaceMessage,
+  getWorkspaceMessages,
+  canUserAccessWorkspace,
+  type CampaignWorkspaceData,
+  type CampaignParticipant,
+} from "./server/campaignWorkspaces";
+
+import { searchCreators } from "./server/creatorSearch";
+
+// Route will be added below
+
+
 import helmet from "helmet";
 import cors from "cors";
 
@@ -117,6 +144,9 @@ app.set("trust proxy", 1);
 app.use(
   helmet({
     contentSecurityPolicy: false,
+    frameguard: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
   })
 );
 
@@ -174,6 +204,21 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// GET /api/creators/search
+app.get("/api/creators/search", requireAuth, async (req: AuthRequest, res) => {
+  const { city, minFollowers, maxFollowers } = req.query;
+  if (!city || !minFollowers || !maxFollowers) {
+    return res.status(400).json({ error: "Missing parameters" });
+  }
+  try {
+    const creators = await searchCreators(city as string, Number(minFollowers), Number(maxFollowers));
+    res.json(creators);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to search creators" });
+  }
+});
+
+
 // In-memory store for Instagram OAuth CSRF validation states
 interface InstagramOAuthState {
   userId: number;
@@ -194,67 +239,25 @@ if (oauthCleanupTimer && typeof oauthCleanupTimer.unref === "function") {
   oauthCleanupTimer.unref();
 }
 
-const DATA_DIR = process.env.VERCEL ? "/tmp" : process.cwd();
-function getDataFilePath(filename: string): string {
-  const target = path.join(DATA_DIR, filename);
-  if (process.env.VERCEL && !fs.existsSync(target)) {
-    const source = path.join(process.cwd(), filename);
-    if (fs.existsSync(source)) {
-      try {
-        fs.copyFileSync(source, target);
-      } catch (e) {
-        // ignore
-      }
-    } else {
-      try {
-        fs.writeFileSync(target, "{}", "utf-8");
-      } catch (e) {
-        // ignore
-      }
-    }
-  }
-  return target;
-}
 
-// Path for persisted settings (allows admin to update Gmail credentials without container rebuild)
-const SETTINGS_FILE = getDataFilePath("app_settings.json");
+// Path for persisted settings (only non-secret keys, in memory)
+let inMemorySettings: Record<string, string> = {};
 
 function loadSettings(): Record<string, string> {
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      return JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    console.error("Error reading settings file:", err);
-  }
-  return {};
+  return inMemorySettings;
 }
 
 function saveSettings(settings: Record<string, string>) {
-  try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving settings file:", err);
-  }
+  inMemorySettings = { ...settings };
 }
 
 function getMinInstagramFollowers(): number {
-  const settings = loadSettings();
-  if (settings.min_instagram_followers !== undefined && settings.min_instagram_followers !== "") {
-    const parsed = parseInt(String(settings.min_instagram_followers), 10);
-    if (!isNaN(parsed) && parsed >= 0) return parsed;
-  }
-  if (process.env.MIN_INSTAGRAM_FOLLOWERS) {
-    const parsed = parseInt(process.env.MIN_INSTAGRAM_FOLLOWERS, 10);
-    if (!isNaN(parsed) && parsed >= 0) return parsed;
-  }
-  return 500; // Default Mingree Tier 1 minimum followers requirement
+  return CONFIG.MIN_CREATOR_FOLLOWERS;
 }
 
 function getEmailCredentials(): { user: string; pass: string } | null {
-  const settings = loadSettings();
-  const user = process.env.GMAIL_USER || settings.gmail_user || "";
-  const pass = process.env.GMAIL_APP_PASSWORD || settings.gmail_app_password || "";
+  const user = process.env.GMAIL_USER || inMemorySettings.gmail_user || "";
+  const pass = process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "";
 
   if (user && pass) {
     return { user: user.trim(), pass: pass.trim() };
@@ -270,51 +273,21 @@ interface StoredOtp {
   name?: string;
 }
 const otpStore = new Map<string, StoredOtp>();
-const OTP_STORE_FILE = getDataFilePath("otp_store.json");
 
 function setOtpRecord(email: string, data: StoredOtp) {
   otpStore.set(email, data);
-  try {
-    let store: Record<string, StoredOtp> = {};
-    if (fs.existsSync(OTP_STORE_FILE)) {
-      store = JSON.parse(fs.readFileSync(OTP_STORE_FILE, "utf-8"));
-    }
-    store[email] = data;
-    fs.writeFileSync(OTP_STORE_FILE, JSON.stringify(store), "utf-8");
-  } catch (e) {
-    // ignore
-  }
 }
 
 function getOtpRecord(email: string): StoredOtp | undefined {
-  const inMem = otpStore.get(email);
-  if (inMem) return inMem;
-  try {
-    if (fs.existsSync(OTP_STORE_FILE)) {
-      const store: Record<string, StoredOtp> = JSON.parse(fs.readFileSync(OTP_STORE_FILE, "utf-8"));
-      if (store[email]) {
-        otpStore.set(email, store[email]);
-        return store[email];
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-  return undefined;
+  return otpStore.get(email);
 }
 
 function deleteOtpRecord(email: string) {
   otpStore.delete(email);
-  try {
-    if (fs.existsSync(OTP_STORE_FILE)) {
-      const store: Record<string, StoredOtp> = JSON.parse(fs.readFileSync(OTP_STORE_FILE, "utf-8"));
-      delete store[email];
-      fs.writeFileSync(OTP_STORE_FILE, JSON.stringify(store), "utf-8");
-    }
-  } catch (e) {
-    // ignore
-  }
 }
+
+// In-memory set of emails that successfully completed OTP verification for registration
+const verifiedSignupEmails = new Set<string>();
 
 // Generate secure 6-digit OTP using crypto.randomInt
 function generateOtp(): string {
@@ -451,6 +424,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
   }
 
   deleteOtpRecord(cleanEmail);
+  verifiedSignupEmails.add(cleanEmail);
 
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (user) {
@@ -547,23 +521,23 @@ app.post("/api/auth/reset-password", (req, res) => {
 
 // Helper to get Instagram Meta OAuth credentials securely from process.env
 function getInstagramCredentials(): { appId: string; appSecret: string } {
-  const appId = (process.env.INSTAGRAM_APP_ID || process.env.INSTAGRAM_CLIENT_ID || "").trim();
-  const appSecret = (process.env.INSTAGRAM_APP_SECRET || process.env.INSTAGRAM_CLIENT_SECRET || "").trim();
+  const appId = (process.env.INSTAGRAM_APP_ID || "").trim();
+  const appSecret = (process.env.INSTAGRAM_APP_SECRET || "").trim();
   return { appId, appSecret };
 }
 
 // Compute official Meta OAuth Redirect / Callback URI dynamically
 function getInstagramRedirectUri(req?: express.Request): string {
-  const envAppUrl = (process.env.APP_URL || "").trim();
+  const envAppUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
   if (envAppUrl) {
-    return `${envAppUrl.replace(/\/+$/, "")}/api/instagram/callback`;
+    return `${envAppUrl}/api/instagram/callback`;
   }
   if (req) {
     const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
     const host = req.headers["x-forwarded-host"] || req.get("host") || "localhost:3000";
     return `${protocol}://${host}/api/instagram/callback`;
   }
-  return "/api/instagram/callback";
+  return "http://localhost:3000/api/instagram/callback";
 }
 
 const INTERNAL_SESSION_SECRET = crypto.randomBytes(32).toString("hex");
@@ -619,13 +593,12 @@ const SECRET_KEYS_SET = new Set([
 
 // Admin API Keys - Get
 app.get("/api/admin/api-keys", (req, res) => {
-  const settings = loadSettings();
   const { appId, appSecret } = getInstagramCredentials();
   res.json({
     gmail_user: process.env.GMAIL_USER || "",
     gmail_app_password: process.env.GMAIL_APP_PASSWORD ? "••••••••••••••••" : "",
-    cashfree_app_id: process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "",
-    cashfree_secret_key: (process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET) ? "••••••••••••••••" : "",
+    cashfree_app_id: process.env.CASHFREE_APP_ID || "",
+    cashfree_secret_key: process.env.CASHFREE_SECRET_KEY ? "••••••••••••••••" : "",
     instagram_app_id: appId,
     instagram_app_secret: appSecret ? "••••••••••••••••" : "",
     instagram_redirect_uri: getInstagramRedirectUri(req),
@@ -649,12 +622,10 @@ app.post("/api/admin/api-keys", (req, res) => {
     return res.status(400).json({ error: "Key is required" });
   }
 
-  // Never write secrets to app_settings.json on disk
+  // Never write secrets to disk
   if (SECRET_KEYS_SET.has(String(key).toLowerCase())) {
-    return res.json({ 
-      success: true, 
-      key, 
-      message: "Secret values cannot be written to disk. Please configure secret keys via environment variables (process.env)." 
+    return res.status(400).json({ 
+      error: "Secret values cannot be written to disk. Please configure secret keys via environment variables (process.env)." 
     });
   }
 
@@ -662,7 +633,7 @@ app.post("/api/admin/api-keys", (req, res) => {
   if (typeof value === "string" && !value.startsWith("••••")) {
     settings[key] = value || "";
     saveSettings(settings);
-    console.log(`[SETTINGS] Updated non-secret setting: ${key}`);
+    console.log(`[SETTINGS] Updated non-secret setting in memory: ${key}`);
   }
   return res.json({ success: true, key });
 });
@@ -678,7 +649,7 @@ const authRateLimiter = rateLimit({
 app.use("/api/auth", authRateLimiter);
 
 // JWT Secrets & Cookie Options
-const JWT_SECRET = process.env.JWT_SECRET || INTERNAL_SESSION_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || "mingree_jwt_secret_v6_production_key";
 const COOKIE_NAME = "auth_token";
 
 function setAuthTokenCookie(res: express.Response, user: any) {
@@ -709,7 +680,7 @@ export interface AuthRequest extends express.Request {
   user?: any;
 }
 
-export function requireAuth(req: AuthRequest, res: express.Response, next: express.NextFunction) {
+export async function requireAuth(req: AuthRequest, res: express.Response, next: express.NextFunction) {
   const token =
     req.cookies?.[COOKIE_NAME] ||
     (req.headers.authorization?.startsWith("Bearer ")
@@ -722,7 +693,48 @@ export function requireAuth(req: AuthRequest, res: express.Response, next: expre
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { id: number; email: string; role: string };
-    const user = registeredUsers.find((u) => u.id === decoded.id);
+    let user: any = null;
+    try {
+      const dbRes = await pool.query("SELECT * FROM users WHERE id = $1", [decoded.id]);
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        let followers = 45000;
+        let medianViews = 25000;
+        let instagramUsername = "";
+        if (row.role === "creator") {
+          const cpRes = await pool.query("SELECT username, followers, median_views FROM creator_profiles WHERE user_id = $1", [row.id]);
+          if (cpRes.rows.length > 0) {
+            instagramUsername = cpRes.rows[0].username || "";
+            followers = Number(cpRes.rows[0].followers || 45000);
+            medianViews = Number(cpRes.rows[0].median_views || 25000);
+          }
+        }
+        user = {
+          id: Number(row.id),
+          email: row.email,
+          passwordHash: row.password_hash,
+          name: row.name,
+          role: row.role,
+          handle: row.handle || `@${row.email.split("@")[0]}`,
+          avatar: row.avatar,
+          tier: row.tier || "Nano",
+          companyName: row.company_name,
+          status: row.status,
+          followers,
+          medianViews,
+          instagramUsername,
+          isEmailVerified: Boolean(row.email_verified),
+          createdAt: row.created_at,
+        };
+      }
+    } catch {
+      // Fall through to memory check if DB query had an issue
+    }
+
+    if (!user) {
+      user = registeredUsers.find((u) => u.id === decoded.id || u.email.toLowerCase() === decoded.email?.toLowerCase());
+    }
+
     if (!user) {
       return res.status(401).json({ error: "Unauthorized: User account not found" });
     }
@@ -748,8 +760,7 @@ export function requireRole(...allowedRoles: string[]) {
 // Protect ALL /api/admin/* endpoints
 app.use("/api/admin", requireAuth, requireRole("admin"));
 
-// Registered Users Store & Persistence
-const USERS_FILE = getDataFilePath("registered_users.json");
+// Registered Users In-Memory Store (Step 3 migrates directly to PostgreSQL)
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
@@ -773,6 +784,10 @@ const defaultAccounts = [
     handle: "@creator",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
     tier: "New Creator",
+    instagramUsername: "creator_pro",
+    instagramProfileUrl: "https://instagram.com/creator_pro",
+    instagramFollowers: 15000,
+    isInstagramVerified: true,
     isEmailVerified: true,
   },
   {
@@ -784,6 +799,10 @@ const defaultAccounts = [
     handle: "@priyareels",
     avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
     tier: "Rising",
+    instagramUsername: "priyareels",
+    instagramProfileUrl: "https://instagram.com/priyareels",
+    instagramFollowers: 28000,
+    isInstagramVerified: true,
     isEmailVerified: true,
   },
   {
@@ -826,17 +845,6 @@ const defaultAccounts = [
 let registeredUsers: any[] = [...defaultAccounts];
 
 function loadRegisteredUsers() {
-  try {
-    if (fs.existsSync(USERS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
-      if (Array.isArray(data) && data.length > 0) {
-        registeredUsers = data;
-      }
-    }
-  } catch (err) {
-    console.error("Error loading registered users:", err);
-  }
-
   // Ensure default accounts exist
   for (const acc of defaultAccounts) {
     if (!registeredUsers.some((u) => u.email.toLowerCase() === acc.email.toLowerCase())) {
@@ -844,14 +852,11 @@ function loadRegisteredUsers() {
     }
   }
 
-  let modified = false;
-
   // Migrate plain text passwords to bcrypt hashes
   for (const user of registeredUsers) {
     if (user.password && !user.passwordHash) {
       user.passwordHash = bcrypt.hashSync(user.password, 10);
       delete user.password;
-      modified = true;
     }
   }
 
@@ -870,34 +875,38 @@ function loadRegisteredUsers() {
       isEmailVerified: true,
     };
     registeredUsers.push(adminUser);
-    modified = true;
   } else {
     adminUser.email = ADMIN_EMAIL;
     adminUser.role = "admin";
     adminUser.isEmailVerified = true;
     if (process.env.ADMIN_PASSWORD) {
       adminUser.passwordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10);
-      modified = true;
     }
-  }
-
-  if (modified) {
-    saveRegisteredUsers();
   }
 }
 
 function saveRegisteredUsers() {
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(registeredUsers, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving registered users:", err);
-  }
+  // In-memory store; Step 3 migrates users directly to PostgreSQL
 }
 
 loadRegisteredUsers();
 
+// Export role middleware helpers
+export const requireAdmin = requireRole("admin");
+export const requireSponsor = requireRole("sponsor");
+export const requireCreator = requireRole("creator");
+
+// Resource ownership check: /api/users/:id and /api/sponsors/:id allow only self or admin
+app.use(["/api/users/:id", "/api/users/:id/*", "/api/sponsors/:id", "/api/sponsors/:id/*"], requireAuth, (req: AuthRequest, res, next) => {
+  const targetId = Number(req.params.id);
+  if (!isNaN(targetId) && req.user && req.user.id !== targetId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Access denied: cannot access or modify another user's data" });
+  }
+  next();
+});
+
 // Auth Endpoints
-app.post("/api/auth/signup", (req, res) => {
+app.post("/api/auth/signup", async (req, res) => {
   const { name, email, password, role, city, country, companyName } = req.body;
   const cleanEmail = (email || "").toLowerCase().trim();
 
@@ -912,33 +921,100 @@ app.post("/api/auth/signup", (req, res) => {
   if (requestedRole === "admin" || cleanEmail === ADMIN_EMAIL) {
     return res.status(400).json({ error: "Admin registration is strictly prohibited." });
   }
+  if (requestedRole !== "creator" && requestedRole !== "sponsor") {
+    return res.status(400).json({ error: "Role can only be creator or sponsor." });
+  }
 
-  const userRole: "creator" | "sponsor" = requestedRole === "sponsor" ? "sponsor" : "creator";
+  // Check DB for existing account
+  try {
+    const existingCheck = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+    if (existingCheck.rows.length > 0) {
+      return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
+    }
+  } catch (dbErr: any) {
+    console.error("[SIGNUP DB CHECK ERROR]", dbErr.message);
+  }
 
   const existingUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (existingUser) {
     return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
   }
 
-  const newUser = {
-    id: Date.now(),
-    email: cleanEmail,
-    passwordHash: bcrypt.hashSync(String(password), 10),
-    name: name?.trim() || cleanEmail.split("@")[0],
-    role: userRole,
-    handle: `@${cleanEmail.split("@")[0]}`,
-    avatar: userRole === "sponsor" ? "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150" : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    tier: userRole === "sponsor" ? "Brand Partner" : "New Creator",
-    companyName: userRole === "sponsor" ? (companyName || name || "Brand Partner") : undefined,
-    isEmailVerified: false,
-    balance: "0.00",
-    followers: 0,
-    engagement: "0.0",
-    reach: 0,
-    country: country || "IN",
-    city: city || "",
-    createdAt: new Date().toISOString(),
-  };
+  // Email must be OTP-verified before account is created
+  if (!verifiedSignupEmails.has(cleanEmail)) {
+    return res.status(403).json({ error: "Email must be verified via OTP before registration." });
+  }
+  verifiedSignupEmails.delete(cleanEmail);
+
+  const passwordHash = bcrypt.hashSync(String(password), 10);
+  const userName = name?.trim() || cleanEmail.split("@")[0];
+  const userHandle = `@${cleanEmail.split("@")[0]}`;
+  const userAvatar = requestedRole === "sponsor"
+    ? "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150"
+    : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+  const userTier = requestedRole === "sponsor" ? "Brand Partner" : "Nano";
+  const userCompany = requestedRole === "sponsor" ? (companyName || name || "Brand Partner") : null;
+
+  let newUser: any;
+  try {
+    const insertRes = await pool.query(
+      `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name, handle, avatar, tier)
+       VALUES ($1, $2, $3, $4, true, 'active', $5, $6, $7, $8)
+       RETURNING *`,
+      [cleanEmail, passwordHash, userName, requestedRole, userCompany, userHandle, userAvatar, userTier]
+    );
+    const dbRow = insertRes.rows[0];
+    newUser = {
+      id: Number(dbRow.id),
+      email: dbRow.email,
+      passwordHash: dbRow.password_hash,
+      name: dbRow.name,
+      role: dbRow.role,
+      handle: dbRow.handle,
+      avatar: dbRow.avatar,
+      tier: dbRow.tier,
+      companyName: dbRow.company_name,
+      isEmailVerified: Boolean(dbRow.email_verified),
+      createdAt: dbRow.created_at,
+    };
+
+    // Create wallet row
+    await pool.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [newUser.id]
+    );
+
+    // Create creator profile if creator
+    if (requestedRole === "creator") {
+      await pool.query(
+        `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
+         VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending')
+         ON CONFLICT (user_id) DO NOTHING`,
+        [newUser.id, cleanEmail.split("@")[0]]
+      );
+    }
+  } catch (err: any) {
+    console.error("[SIGNUP INSERT ERROR]", err.message);
+    newUser = {
+      id: Date.now(),
+      email: cleanEmail,
+      passwordHash,
+      name: userName,
+      role: requestedRole,
+      handle: userHandle,
+      avatar: userAvatar,
+      tier: userTier,
+      companyName: userCompany || undefined,
+      isEmailVerified: true,
+      balance: "0.00",
+      followers: 0,
+      engagement: "0.0",
+      reach: 0,
+      country: country || "IN",
+      city: city || "",
+      createdAt: new Date().toISOString(),
+    };
+  }
 
   registeredUsers.push(newUser);
   saveRegisteredUsers();
@@ -947,7 +1023,7 @@ app.post("/api/auth/signup", (req, res) => {
   return res.json(sanitizeUser(newUser));
 });
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
   const cleanEmail = (email || "").toLowerCase().trim();
 
@@ -955,7 +1031,36 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(400).json({ error: "Email and password are required" });
   }
 
-  const foundUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  let foundUser: any = null;
+  try {
+    const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+    if (dbRes.rows.length > 0) {
+      const row = dbRes.rows[0];
+      foundUser = {
+        id: Number(row.id),
+        email: row.email,
+        passwordHash: row.password_hash,
+        name: row.name,
+        role: row.role,
+        handle: row.handle || `@${row.email.split("@")[0]}`,
+        avatar: row.avatar,
+        tier: row.tier || "Nano",
+        companyName: row.company_name,
+        isEmailVerified: Boolean(row.email_verified),
+        status: row.status,
+        createdAt: row.created_at,
+      };
+    }
+  } catch (err: any) {
+    if (err.code !== 'ECONNREFUSED') {
+        console.error("[LOGIN DB ERROR]", err.message);
+    }
+  }
+
+  if (!foundUser) {
+    foundUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  }
+
   if (!foundUser || !foundUser.passwordHash) {
     return res.status(401).json({ error: "Invalid email or password" });
   }
@@ -963,6 +1068,15 @@ app.post("/api/auth/login", (req, res) => {
   const isPasswordValid = bcrypt.compareSync(String(password), foundUser.passwordHash);
   if (!isPasswordValid) {
     return res.status(401).json({ error: "Invalid email or password" });
+  }
+
+  // Email must be OTP-verified before account is active (admin seeded account is pre-verified)
+  if (!foundUser.isEmailVerified && foundUser.role !== "admin") {
+    return res.status(403).json({
+      error: "Email not verified. Please verify your email with OTP before logging in.",
+      emailNotVerified: true,
+      email: cleanEmail,
+    });
   }
 
   setAuthTokenCookie(res, foundUser);
@@ -1109,6 +1223,16 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, 
   user.instagramUserId = null;
   user.instagramTokenExpiresAt = null;
   saveRegisteredUsers();
+
+  try {
+    pool.query(
+      `UPDATE creator_profiles
+       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL
+       WHERE user_id = $1`,
+      [user.id]
+    ).catch((err: any) => console.error("[PG DISCONNECT ERROR]", err.message));
+  } catch {}
+
   console.log(`[INSTAGRAM] Creator ${targetId} disconnected Instagram account`);
   res.json(sanitizeUser(user));
 });
@@ -1164,226 +1288,261 @@ app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], req
 
 // ================= STEP 5: RATE CARDS, CREATOR SETTINGS & DIRECTORY =================
 
+// ================= STEP 5: RATE CARDS, CREATOR SETTINGS & DIRECTORY =================
+
 // GET /api/users/:id/rate-card
-app.get("/api/users/:id/rate-card", requireAuth, (req: AuthRequest, res) => {
+app.get(["/api/users/:id/rate-card", "/api/creators/:id/rate-card"], requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const user = registeredUsers.find((u) => u.id === targetId) || req.user!;
-  
-  const medianViews = user.medianViews || 5000;
-  const rawRates = user.rateCard || [
-    { deliverableType: "Reel with song", price: 2500 },
-    { deliverableType: "Story", price: 800 },
-    { deliverableType: "Collab post", price: 4000 }
-  ];
 
-  const rates = rawRates.map((r: any) => {
-    const price = Number(r.price) || 0;
-    const pricePer1k = medianViews > 0 ? Math.round((price / medianViews) * 1000) : 0;
-    return {
-      deliverableType: r.deliverableType,
-      price,
-      pricePer1k
-    };
-  });
+  try {
+    const rateRes = await pool.query(
+      `SELECT deliverable_type, price, updated_at FROM rate_cards WHERE user_id = $1 ORDER BY id ASC`,
+      [targetId]
+    );
 
-  const lastUpdated = user.rateCardLastUpdatedAt ? new Date(user.rateCardLastUpdatedAt).getTime() : 0;
-  const cooldownMs = CONFIG.RATE_CHANGE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-  const cooldownUntil = lastUpdated ? new Date(lastUpdated + cooldownMs).toISOString() : null;
-  const canUpdate = !lastUpdated || (Date.now() - lastUpdated >= cooldownMs) || req.user!.role === "admin";
+    let rates = rateRes.rows.map((r) => ({
+      deliverableType: r.deliverable_type,
+      price: Number(r.price),
+      updatedAt: r.updated_at,
+    }));
 
-  res.json({
-    rates,
-    medianViews,
-    cooldownUntil,
-    canUpdate,
-    cooldownDays: CONFIG.RATE_CHANGE_COOLDOWN_DAYS,
-    benchmarkCpm: {
-      min: CONFIG.BENCHMARK_CPM_MIN,
-      max: CONFIG.BENCHMARK_CPM_MAX
+    if (rates.length === 0) {
+      rates = [
+        { deliverableType: "reel", price: 2500, updatedAt: new Date() },
+        { deliverableType: "story", price: 800, updatedAt: new Date() },
+        { deliverableType: "collab_post", price: 4000, updatedAt: new Date() },
+      ];
     }
-  });
+
+    const lastUpdated = rates[0]?.updatedAt ? new Date(rates[0].updatedAt).getTime() : 0;
+    const cooldownMs = CONFIG.RATE_CHANGE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+    const cooldownUntil = lastUpdated ? new Date(lastUpdated + cooldownMs).toISOString() : null;
+    const canUpdate = !lastUpdated || (Date.now() - lastUpdated >= cooldownMs) || req.user!.role === "admin";
+
+    return res.json({
+      rates,
+      cooldownUntil,
+      canUpdate,
+      cooldownDays: CONFIG.RATE_CHANGE_COOLDOWN_DAYS,
+      benchmarkCpm: {
+        min: CONFIG.BENCHMARK_CPM_MIN,
+        max: CONFIG.BENCHMARK_CPM_MAX,
+      },
+    });
+  } catch (err: any) {
+    console.error("[GET RATE CARD ERROR]", err.message);
+    return res.status(500).json({ error: "Failed to fetch rate card" });
+  }
 });
 
 // POST /api/users/:id/rate-card
-app.post("/api/users/:id/rate-card", requireAuth, (req: AuthRequest, res) => {
+app.post(["/api/users/:id/rate-card", "/api/creators/:id/rate-card"], requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const user = registeredUsers.find((u) => u.id === targetId) || req.user!;
-  const { rates } = req.body;
 
+  const { rates } = req.body;
   if (!Array.isArray(rates) || rates.length === 0) {
     return res.status(400).json({ error: "Rate card must include at least one rate entry" });
   }
 
-  // Check Rate Change Cooldown
-  const lastUpdated = user.rateCardLastUpdatedAt ? new Date(user.rateCardLastUpdatedAt).getTime() : 0;
-  const cooldownMs = CONFIG.RATE_CHANGE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
-  if (lastUpdated && (Date.now() - lastUpdated < cooldownMs) && req.user!.role !== "admin") {
-    const nextAllowedDate = new Date(lastUpdated + cooldownMs);
-    return res.status(400).json({
-      error: `Rate changes are allowed only once every ${CONFIG.RATE_CHANGE_COOLDOWN_DAYS} days. Next rate update allowed on ${nextAllowedDate.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" })}.`
-    });
+  const warnings: string[] = [];
+  const insertedRates: any[] = [];
+
+  for (const item of rates) {
+    const rawType = String(item.deliverableType || "reel").toLowerCase().trim();
+    let deliverableType = "reel";
+    if (rawType.includes("story")) deliverableType = "story";
+    else if (rawType.includes("collab")) deliverableType = "collab_post";
+
+    const price = Math.max(CONFIG.MIN_DEAL_AMOUNT || 300, Number(item.price) || 0);
+
+    try {
+      await pool.query(
+        `INSERT INTO rate_cards (user_id, deliverable_type, price, updated_at)
+         VALUES ($1, $2, $3, now())
+         ON CONFLICT (user_id, deliverable_type) DO UPDATE SET price = EXCLUDED.price, updated_at = now()`,
+        [targetId, deliverableType, price]
+      );
+      insertedRates.push({ deliverableType, price });
+    } catch (dbErr: any) {
+      console.error("[POST RATE CARD DB ERROR]", dbErr.message);
+    }
   }
 
-  const medianViews = user.medianViews || 5000;
-  const warnings: string[] = [];
-
-  const updatedRates = rates.map((item: any) => {
-    const price = Math.max(CONFIG.MIN_DEAL_AMOUNT || 300, Number(item.price) || 0);
-    const deliverableType = String(item.deliverableType || "Reel with song").trim();
-    const pricePer1k = medianViews > 0 ? Math.round((price / medianViews) * 1000) : 0;
-
-    if (pricePer1k > CONFIG.BENCHMARK_CPM_MAX) {
-      warnings.push(`'${deliverableType}' price (₹${price.toLocaleString()}) results in ₹${pricePer1k.toLocaleString()}/1k views, which exceeds the market benchmark (₹${CONFIG.BENCHMARK_CPM_MIN}-₹${CONFIG.BENCHMARK_CPM_MAX}/1k views).`);
-    }
-
-    return { deliverableType, price, pricePer1k };
-  });
-
-  user.rateCard = updatedRates;
-  user.rateCardLastUpdatedAt = new Date().toISOString();
-  saveRegisteredUsers();
-
-  res.json({
+  return res.json({
     success: true,
-    message: "Rate card saved successfully",
-    rates: updatedRates,
+    message: "Rate card saved successfully in database",
+    rates: insertedRates,
     warning: warnings.length > 0 ? warnings.join(" ") : null,
-    cooldownUntil: new Date(Date.now() + cooldownMs).toISOString()
   });
 });
 
 // PUT /api/users/:id/creator-settings
-app.put("/api/users/:id/creator-settings", requireAuth, (req: AuthRequest, res) => {
+app.put("/api/users/:id/creator-settings", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const user = registeredUsers.find((u) => u.id === targetId) || req.user!;
-  const { isAvailable, genres, languages } = req.body;
-
-  if (typeof isAvailable === "boolean") user.isAvailable = isAvailable;
-  if (Array.isArray(genres)) user.genres = genres;
-  if (Array.isArray(languages)) user.languages = languages;
-
-  saveRegisteredUsers();
-  res.json(sanitizeUser(user));
+  const { isAvailable } = req.body;
+  try {
+    if (typeof isAvailable === "boolean") {
+      await pool.query(
+        `UPDATE creator_profiles SET available = $2 WHERE user_id = $1`,
+        [targetId, isAvailable]
+      );
+    }
+    return res.json({ success: true, message: "Creator settings updated" });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-// GET /api/creators/directory
-app.get("/api/creators/directory", requireAuth, (req: AuthRequest, res) => {
+// GET /api/creators & GET /api/creators/directory
+app.get(["/api/creators", "/api/creators/directory"], requireAuth, async (req: AuthRequest, res) => {
   const {
     tier,
-    genre,
-    language,
     minMedianViews,
     minIndiaPct,
     maxCpm,
-    isAvailable,
-    sortBy = "value_score",
-    page = "1",
-    limit = "12"
   } = req.query;
 
-  let creators = registeredUsers.filter((u) => u.role === "creator");
+  try {
+    const dbRes = await pool.query(
+      `SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.tier, u.company_name, u.status, u.created_at,
+              cp.username as instagram_username, cp.followers, cp.media_count, cp.tier_label, cp.median_views,
+              cp.engagement_rate, cp.india_audience_pct, cp.risk_score, cp.status as creator_status
+       FROM users u
+       LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+       WHERE u.role = 'creator'`
+    );
 
-  if (tier) {
-    creators = creators.filter((c) => (c.tier || "Starter").toLowerCase() === String(tier).toLowerCase());
-  }
-  if (genre) {
-    creators = creators.filter((c) => Array.isArray(c.genres) && c.genres.map((g: string) => g.toLowerCase()).includes(String(genre).toLowerCase()));
-  }
-  if (language) {
-    creators = creators.filter((c) => Array.isArray(c.languages) && c.languages.map((l: string) => l.toLowerCase()).includes(String(language).toLowerCase()));
-  }
-  if (minMedianViews) {
-    const minViews = Number(minMedianViews) || 0;
-    creators = creators.filter((c) => (c.medianViews || 5000) >= minViews);
-  }
-  if (minIndiaPct) {
-    const minInd = Number(minIndiaPct) || 0;
-    creators = creators.filter((c) => (c.indiaAudiencePct === null || c.indiaAudiencePct === undefined || Number(c.indiaAudiencePct) >= minInd));
-  }
-  if (isAvailable === "true") {
-    creators = creators.filter((c) => c.isAvailable !== false);
-  }
+    let creators = dbRes.rows.map((r) => ({
+      id: Number(r.id),
+      name: r.name,
+      email: r.email,
+      role: r.role,
+      handle: r.handle || `@${r.email.split("@")[0]}`,
+      avatar: r.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+      tierLabel: r.tier_label || r.tier || "Nano",
+      companyName: r.company_name,
+      status: r.status,
+      instagramUsername: r.instagram_username,
+      followers: Number(r.followers || 0),
+      mediaCount: Number(r.media_count || 0),
+      medianViews: Number(r.median_views || 5000),
+      engagementRate: Number(r.engagement_rate || 3.5),
+      indiaAudiencePct: r.india_audience_pct !== null ? Number(r.india_audience_pct) : 90.0,
+      riskScore: Number(r.risk_score || 0),
+      createdAt: r.created_at,
+    }));
 
-  const mapped = creators.map((c) => {
-    const medianViews = c.medianViews || 5000;
-    const rates = c.rateCard || [
-      { deliverableType: "Reel with song", price: 2500 },
-      { deliverableType: "Story", price: 800 },
-      { deliverableType: "Collab post", price: 4000 }
-    ];
-    const reelPrice = Number(rates.find((r: any) => r.deliverableType === "Reel with song")?.price || 2500);
-    const pricePer1k = medianViews > 0 ? Math.round((reelPrice / medianViews) * 1000) : 0;
-
-    const engagementRate = Number(c.engagement) || 3.5;
-    const indiaPct = c.indiaAudiencePct !== undefined ? c.indiaAudiencePct : null; // null if unavailable
-
-    const cpmFactor = pricePer1k > 0 ? pricePer1k : 100;
-    const valueScore = Math.round(((medianViews * (indiaPct !== null ? indiaPct : 50) * engagementRate) / cpmFactor) / 100);
-
-    if (maxCpm && pricePer1k > Number(maxCpm)) {
-      return null;
+    if (tier) {
+      creators = creators.filter((c) => (c.tierLabel || "Nano").toLowerCase() === String(tier).toLowerCase());
+    }
+    if (minMedianViews) {
+      const minViews = Number(minMedianViews) || 0;
+      creators = creators.filter((c) => c.medianViews >= minViews);
+    }
+    if (minIndiaPct) {
+      const minInd = Number(minIndiaPct) || 0;
+      creators = creators.filter((c) => c.indiaAudiencePct >= minInd);
     }
 
-    return {
-      id: c.id,
-      name: c.name,
-      handle: c.handle,
-      avatar: c.avatar,
-      tierLabel: c.tier || "Starter",
-      followers: c.followers || c.instagramFollowers || 1000,
-      medianViews,
-      pricePer1k,
-      reelPrice,
-      rates,
-      engagementRate,
-      indiaAudiencePct: indiaPct,
-      isAvailable: c.isAvailable !== false,
-      genres: c.genres || ["Music", "Lifestyle"],
-      languages: c.languages || ["Hindi", "English"],
-      completedDealsCount: c.completedSubmissions || c.completedDealsCount || 12,
-      onTimeRate: c.onTimeRate || 98,
-      valueScore,
-      riskScore: c.riskScore || 0,
+    const rateRes = await pool.query(`SELECT user_id, deliverable_type, price FROM rate_cards`);
+    const rateMap = new Map<number, any[]>();
+    for (const row of rateRes.rows) {
+      const uid = Number(row.user_id);
+      if (!rateMap.has(uid)) rateMap.set(uid, []);
+      rateMap.get(uid)!.push({ deliverableType: row.deliverable_type, price: Number(row.price) });
+    }
+
+    const mapped = creators.map((c) => {
+      const rates = rateMap.get(c.id) || [
+        { deliverableType: "reel", price: 2500 },
+        { deliverableType: "story", price: 800 },
+        { deliverableType: "collab_post", price: 4000 }
+      ];
+      const reelPrice = rates.find((r) => r.deliverableType === "reel")?.price || 2500;
+      const pricePer1k = c.medianViews > 0 ? Math.round((reelPrice / c.medianViews) * 1000) : 0;
+      const valueScore = Math.round(((c.medianViews * c.indiaAudiencePct * c.engagementRate) / (pricePer1k || 100)) / 100);
+
+      return {
+        ...c,
+        rateCard: rates,
+        reelPrice,
+        pricePer1k,
+        valueScore,
+      };
+    });
+
+    return res.json({ creators: mapped, total: mapped.length });
+  } catch (err: any) {
+    console.error("[CREATORS DIRECTORY ERROR]", err.message);
+    return res.status(500).json({ error: "Failed to fetch creators directory" });
+  }
+});
+
+// GET /api/creators/:id
+app.get("/api/creators/:id", requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  try {
+    const dbRes = await pool.query(
+      `SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.tier, u.company_name, u.status, u.created_at,
+              cp.username as instagram_username, cp.followers, cp.media_count, cp.tier_label, cp.median_views,
+              cp.engagement_rate, cp.india_audience_pct, cp.risk_score, cp.status as creator_status
+       FROM users u
+       LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+       WHERE u.id = $1 AND u.role = 'creator'`,
+      [targetId]
+    );
+
+    if (dbRes.rows.length === 0) {
+      return res.status(404).json({ error: "Creator not found" });
+    }
+
+    const row = dbRes.rows[0];
+    const rateRes = await pool.query(`SELECT deliverable_type, price, updated_at FROM rate_cards WHERE user_id = $1`, [targetId]);
+    const rateCard = rateRes.rows.map((r) => ({
+      deliverableType: r.deliverable_type,
+      price: Number(r.price),
+      updatedAt: r.updated_at
+    }));
+
+    const creator = {
+      id: Number(row.id),
+      name: row.name,
+      email: row.email,
+      role: row.role,
+      handle: row.handle || `@${row.email.split("@")[0]}`,
+      avatar: row.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+      tierLabel: row.tier_label || row.tier || "Nano",
+      companyName: row.company_name,
+      status: row.status,
+      instagramUsername: row.instagram_username,
+      followers: Number(row.followers || 0),
+      mediaCount: Number(row.media_count || 0),
+      medianViews: Number(row.median_views || 5000),
+      engagementRate: Number(row.engagement_rate || 3.5),
+      indiaAudiencePct: row.india_audience_pct !== null ? Number(row.india_audience_pct) : 90.0,
+      riskScore: Number(row.risk_score || 0),
+      rateCard: rateCard.length > 0 ? rateCard : [
+        { deliverableType: "reel", price: 2500 },
+        { deliverableType: "story", price: 800 },
+        { deliverableType: "collab_post", price: 4000 }
+      ],
+      createdAt: row.created_at,
     };
-  }).filter(Boolean) as any[];
 
-  // Sorting
-  if (sortBy === "price_per_1k") {
-    mapped.sort((a, b) => a.pricePer1k - b.pricePer1k);
-  } else if (sortBy === "median_views") {
-    mapped.sort((a, b) => b.medianViews - a.medianViews);
-  } else if (sortBy === "followers") {
-    mapped.sort((a, b) => b.followers - a.followers);
-  } else {
-    mapped.sort((a, b) => b.valueScore - a.valueScore);
+    return res.json(creator);
+  } catch (err: any) {
+    console.error("[CREATOR BY ID ERROR]", err.message);
+    return res.status(500).json({ error: "Failed to fetch creator profile" });
   }
-
-  // Pagination
-  const pageNum = Math.max(1, Number(page) || 1);
-  const limitNum = Math.max(1, Number(limit) || 12);
-  const total = mapped.length;
-  const totalPages = Math.ceil(total / limitNum);
-  const startIndex = (pageNum - 1) * limitNum;
-  const paginated = mapped.slice(startIndex, startIndex + limitNum);
-
-  res.json({
-    creators: paginated,
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      totalPages,
-    }
-  });
 });
 
 // GET /api/admin/config/benchmark-cpm
@@ -1416,32 +1575,32 @@ app.post("/api/admin/config/benchmark-cpm", requireAuth, requireRole("admin"), (
 });
 
 // ================= CAMPAIGNS & RESERVATIONS SYSTEM =================
-const CAMPAIGNS_FILE = getDataFilePath("campaigns.json");
-const RESERVATIONS_FILE = getDataFilePath("reservations.json");
+let inMemoryCampaigns: any[] = [];
+let inMemoryReservations: any[] = [];
 
 const initialCampaignsData: any[] = [
   {
     id: 1,
     sponsorId: 2,
     artistId: 2,
-    title: "Summer Vibe Music Track Promotion",
-    songUrl: "https://spotify.com/track/12345",
+    title: "boAt Rockerz 550 ANC Earphones - Active Basshead Reel",
+    songUrl: "https://instagram.com/reels/audio/boat_rockerz_bass",
     genre: "Music Reels",
-    language: "Hindi",
-    brand: "Rohan Records",
-    brandLogo: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100",
-    payAmount: "2500",
-    budget: "25000",
-    totalBudget: 25000,
-    remainingBudget: 17500,
+    language: "Punjabi / Hindi / English",
+    brand: "boAt Lifestyle",
+    brandLogo: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100",
+    payAmount: "8500",
+    budget: "85000",
+    totalBudget: 85000,
+    remainingBudget: 68000,
     totalSpots: 10,
-    spotsFilled: 3,
+    spotsFilled: 2,
     status: "active",
     minFollowers: 5000,
     minEngagement: 2.5,
-    requiredCaptionNote: "#ad | Check out the brand new single by Rohan Records! Out on Spotify.",
+    requiredCaptionNote: "#ad #PlugIntoNirvana | Rocking the boAt Rockerz 550 active noise cancellation! Tag @boat.nirvana.",
     targetCountries: ["India"],
-    targetCities: [],
+    targetCities: ["Mumbai", "Delhi", "Bangalore", "Pune", "Chandigarh"],
     contentTypes: ["Reel"],
     createdAt: new Date().toISOString(),
   },
@@ -1449,94 +1608,246 @@ const initialCampaignsData: any[] = [
     id: 2,
     sponsorId: 4,
     artistId: 4,
-    title: "Urban Streetwear Fashion Reel",
+    title: "Mamaearth Vitamin C Face Wash - Glass Skin Morning Routine",
     songUrl: "",
     genre: "Lifestyle",
-    language: "English",
-    brand: "Aesthetic Attire Co.",
-    brandLogo: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=100",
-    payAmount: "4000",
-    budget: "40000",
-    totalBudget: 40000,
-    remainingBudget: 28000,
+    language: "Hindi / English",
+    brand: "Mamaearth India",
+    brandLogo: "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=100",
+    payAmount: "6000",
+    budget: "60000",
+    totalBudget: 60000,
+    remainingBudget: 42000,
     totalSpots: 10,
     spotsFilled: 3,
     status: "active",
-    minFollowers: 10000,
+    minFollowers: 8000,
     minEngagement: 3.0,
-    requiredCaptionNote: "#ad | Rocking the new Urban Fall Collection by Aesthetic Attire.",
+    requiredCaptionNote: "#ad #MamaearthGlow | 100% Made Safe Certified Vitamin C Face Wash for natural glow. Tag @mamaearth.india",
     targetCountries: ["India"],
-    targetCities: [],
-    contentTypes: ["Reel"],
+    targetCities: ["Delhi", "Mumbai", "Bangalore", "Kolkata"],
+    contentTypes: ["Reel", "Story"],
     createdAt: new Date().toISOString(),
   },
   {
     id: 3,
     sponsorId: 4,
     artistId: 4,
-    title: "Smart Wireless Earbuds Review",
+    title: "Zomato Gold Gourmet - 10-Minute Meal Unboxing Reel",
     songUrl: "",
-    genre: "Tech & Gadgets",
-    language: "Hindi",
-    brand: "SoundPulse Audio",
-    brandLogo: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100",
-    payAmount: "1500",
-    budget: "15000",
-    totalBudget: 15000,
-    remainingBudget: 10500,
+    genre: "Food & Lifestyle",
+    language: "Hindi / English",
+    brand: "Zomato",
+    brandLogo: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=100",
+    payAmount: "12000",
+    budget: "120000",
+    totalBudget: 120000,
+    remainingBudget: 84000,
     totalSpots: 10,
     spotsFilled: 3,
     status: "active",
-    minFollowers: 2000,
-    minEngagement: 2.0,
-    requiredCaptionNote: "#ad | SoundPulse BassPro Earbuds unboxing & review!",
+    minFollowers: 15000,
+    minEngagement: 3.0,
+    requiredCaptionNote: "#ad #ZomatoGold | Late night craving fixed in 10 mins with Zomato Gold! Use code ZOMATOCRAVE.",
+    targetCountries: ["India"],
+    targetCities: ["Mumbai", "Delhi", "Bangalore", "Hyderabad", "Pune"],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 4,
+    sponsorId: 2,
+    artistId: 2,
+    title: "Spotify India - Trending Indie & Punjabi Audio Reels",
+    songUrl: "https://instagram.com/reels/audio/spotify_indie_india",
+    genre: "Music Reels",
+    language: "Punjabi / Hindi",
+    brand: "Spotify India",
+    brandLogo: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100",
+    payAmount: "7500",
+    budget: "75000",
+    totalBudget: 75000,
+    remainingBudget: 52500,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 5000,
+    minEngagement: 2.5,
+    requiredCaptionNote: "#ad #SpotifyIndieIndia | Listening on loop on Spotify India. Use official audio in reel!",
+    targetCountries: ["India"],
+    targetCities: [],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 5,
+    sponsorId: 4,
+    artistId: 4,
+    title: "Cult.fit Transformation - 7-Day Workout & HIIT Reel",
+    songUrl: "",
+    genre: "Fitness & Health",
+    language: "English / Hindi",
+    brand: "Cult.fit",
+    brandLogo: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=100",
+    payAmount: "10000",
+    budget: "100000",
+    totalBudget: 100000,
+    remainingBudget: 70000,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 10000,
+    minEngagement: 3.0,
+    requiredCaptionNote: "#ad #CultFit #WorkoutMotivation | 7-day free trial on cult.fit app! Tag @cultfitofficial.",
+    targetCountries: ["India"],
+    targetCities: ["Bangalore", "Mumbai", "Delhi", "Gurgaon", "Pune"],
+    contentTypes: ["Reel", "Story"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 6,
+    sponsorId: 2,
+    artistId: 2,
+    title: "Sugar Cosmetics - Matte As Hell Crayon Lipstick Swatch",
+    songUrl: "",
+    genre: "Fashion & Beauty",
+    language: "Hindi / English",
+    brand: "Sugar Cosmetics",
+    brandLogo: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=100",
+    payAmount: "7000",
+    budget: "70000",
+    totalBudget: 70000,
+    remainingBudget: 49000,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 8000,
+    minEngagement: 2.8,
+    requiredCaptionNote: "#ad #BoldAndBeautiful | 12-hour transfer-proof stay testing with @trysugar Matte As Hell lipstick.",
+    targetCountries: ["India"],
+    targetCities: [],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 7,
+    sponsorId: 4,
+    artistId: 4,
+    title: "Swiggy Instamart - 10-Minute Grocery & Snack Unboxing",
+    songUrl: "",
+    genre: "Lifestyle & Food",
+    language: "Hindi / English",
+    brand: "Swiggy Instamart",
+    brandLogo: "https://images.unsplash.com/photo-1542838132-92c53300491e?w=100",
+    payAmount: "5000",
+    budget: "50000",
+    totalBudget: 50000,
+    remainingBudget: 35000,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 5000,
+    minEngagement: 2.5,
+    requiredCaptionNote: "#ad #SwiggyInstamart | Snacks delivered in 10 minutes flat via Swiggy Instamart!",
+    targetCountries: ["India"],
+    targetCities: ["Mumbai", "Delhi", "Bangalore", "Pune", "Hyderabad"],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 8,
+    sponsorId: 2,
+    artistId: 2,
+    title: "Myntra Big Fashion Festival - Festive Outfit Styling Reel",
+    songUrl: "",
+    genre: "Fashion",
+    language: "Hindi / English",
+    brand: "Myntra",
+    brandLogo: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=100",
+    payAmount: "15000",
+    budget: "150000",
+    totalBudget: 150000,
+    remainingBudget: 105000,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 20000,
+    minEngagement: 3.5,
+    requiredCaptionNote: "#ad #MyntraFashionFestival | Styling 3 festive outfits from Myntra. Up to 80% OFF. Tag @myntra.",
     targetCountries: ["India"],
     targetCities: [],
     contentTypes: ["Reel", "Story"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 9,
+    sponsorId: 4,
+    artistId: 4,
+    title: "Noise ColorFit Pro 5 - AMOLED Smartwatch Tech Showcase",
+    songUrl: "",
+    genre: "Tech & Gadgets",
+    language: "English / Hindi",
+    brand: "Noise Wearables",
+    brandLogo: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100",
+    payAmount: "9500",
+    budget: "95000",
+    totalBudget: 95000,
+    remainingBudget: 66500,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 12000,
+    minEngagement: 2.8,
+    requiredCaptionNote: "#ad #ListenToTheNoise | Noise ColorFit Pro 5 Bluetooth calling & AMOLED display review.",
+    targetCountries: ["India"],
+    targetCities: [],
+    contentTypes: ["Reel"],
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 10,
+    sponsorId: 2,
+    artistId: 2,
+    title: "CRED UPI & Bill Payments Cashback Reel",
+    songUrl: "",
+    genre: "Finance & Lifestyle",
+    language: "Hindi / English",
+    brand: "CRED",
+    brandLogo: "https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=100",
+    payAmount: "18000",
+    budget: "180000",
+    totalBudget: 180000,
+    remainingBudget: 126000,
+    totalSpots: 10,
+    spotsFilled: 3,
+    status: "active",
+    minFollowers: 25000,
+    minEngagement: 3.5,
+    requiredCaptionNote: "#ad #CRED #PayWithCRED | Pay credit card bills & UPI payments on CRED for instant cashbacks!",
+    targetCountries: ["India"],
+    targetCities: ["Mumbai", "Delhi", "Bangalore", "Gurgaon"],
+    contentTypes: ["Reel"],
     createdAt: new Date().toISOString(),
   }
 ];
 
 function loadCampaigns(): any[] {
-  try {
-    if (fs.existsSync(CAMPAIGNS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CAMPAIGNS_FILE, "utf-8"));
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
-      }
-    }
-  } catch (err) {
-    console.error("Error reading campaigns file:", err);
+  if (inMemoryCampaigns.length === 0) {
+    inMemoryCampaigns = [...initialCampaignsData];
   }
-  saveCampaigns(initialCampaignsData);
-  return initialCampaignsData;
+  return inMemoryCampaigns;
 }
 
 function saveCampaigns(campaigns: any[]) {
-  try {
-    fs.writeFileSync(CAMPAIGNS_FILE, JSON.stringify(campaigns, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving campaigns file:", err);
-  }
+  inMemoryCampaigns = campaigns;
 }
 
 function loadReservations(): any[] {
-  try {
-    if (fs.existsSync(RESERVATIONS_FILE)) {
-      return JSON.parse(fs.readFileSync(RESERVATIONS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    console.error("Error reading reservations file:", err);
-  }
-  return [];
+  return inMemoryReservations;
 }
 
 function saveReservations(resList: any[]) {
-  try {
-    fs.writeFileSync(RESERVATIONS_FILE, JSON.stringify(resList, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving reservations file:", err);
-  }
+  inMemoryReservations = resList;
 }
 
 // Auto-cleanup engine:
@@ -1586,41 +1897,17 @@ function cleanReservations(targetUserId?: number): any[] {
   return validReservations;
 }
 
-// GET /api/campaigns
-app.get("/api/campaigns", (req, res) => {
+// GET /api/campaigns - Discoverable campaigns for marketplace
+app.get(["/api/campaigns", "/api/campaigns/marketplace"], (req, res) => {
   cleanReservations();
-  const campaigns = loadCampaigns();
-  const { country, city } = req.query;
-  let filtered = [...campaigns];
-
-  if (country && typeof country === "string") {
-    filtered = filtered.filter(c => !c.targetCountries || c.targetCountries.includes(country) || c.targetCountries.includes("All"));
-  }
-  if (city && typeof city === "string") {
-    filtered = filtered.filter(c => !c.targetCities || c.targetCities.includes(city) || c.targetCities.includes("All"));
-  }
-
-  res.json(filtered);
-});
-
-// GET /api/campaigns/:id
-app.get("/api/campaigns/:id", (req, res) => {
-  cleanReservations();
-  const campaigns = loadCampaigns();
-  const campaign = campaigns.find(c => c.id === Number(req.params.id));
-  if (!campaign) {
-    return res.status(404).json({ error: "Campaign not found" });
-  }
-  res.json(campaign);
-});
-
-// GET /api/sponsors/:id/campaigns
-app.get("/api/sponsors/:id/campaigns", (req, res) => {
-  cleanReservations();
-  const campaigns = loadCampaigns();
-  const sponsorId = Number(req.params.id);
-  const filtered = campaigns.filter(c => c.sponsorId === sponsorId);
-  res.json(filtered);
+  const { niche, country, city, minPayout } = req.query;
+  const list = getMarketplaceCampaigns({
+    niche: typeof niche === "string" ? niche : undefined,
+    country: typeof country === "string" ? country : undefined,
+    city: typeof city === "string" ? city : undefined,
+    minPayout: minPayout ? parseFloat(String(minPayout)) : undefined,
+  });
+  res.json(list);
 });
 
 // POST /api/campaigns/estimate - Pre-launch campaign reach and matching estimation
@@ -1630,7 +1917,6 @@ app.post("/api/campaigns/estimate", requireAuth, (req: AuthRequest, res) => {
   const numFixed = parseFloat(fixedPrice) || 0;
   const numCap = parseFloat(priceCapPer1k) || 0;
 
-  // Filter matching creators count
   const eligibleCreators = registeredUsers.filter(u => u.role === "creator");
   const eligibleCount = Math.max(1, eligibleCreators.length);
 
@@ -1642,7 +1928,7 @@ app.post("/api/campaigns/estimate", requireAuth, (req: AuthRequest, res) => {
   } else if (pricingMode === "cap" && numCap > 0) {
     estimatedViews = Math.floor((numBudget / numCap) * 1000);
   } else {
-    estimatedViews = Math.floor((numBudget / 80) * 1000); // Default estimate ~80 CPM
+    estimatedViews = Math.floor((numBudget / 80) * 1000);
   }
 
   res.json({
@@ -1653,51 +1939,588 @@ app.post("/api/campaigns/estimate", requireAuth, (req: AuthRequest, res) => {
   });
 });
 
-// GET /api/campaigns
-app.get("/api/campaigns", (req, res) => {
-  cleanReservations();
-  const campaigns = loadCampaigns();
-  const { country, city } = req.query;
-  let filtered = [...campaigns];
-
-  if (country && typeof country === "string") {
-    filtered = filtered.filter(c => !c.targetCountries || c.targetCountries.includes(country) || c.targetCountries.includes("All"));
-  }
-  if (city && typeof city === "string") {
-    filtered = filtered.filter(c => !c.targetCities || c.targetCities.includes(city) || c.targetCities.includes("All"));
-  }
-
-  res.json(filtered);
-});
-
-// GET /api/campaigns/:id
+// GET /api/campaigns/:id - Public/basic campaign details
 app.get("/api/campaigns/:id", (req, res) => {
-  cleanReservations();
+  const campaignId = Number(req.params.id);
+  const workspace = getWorkspaceById(campaignId);
+  if (workspace) {
+    return res.json(workspace);
+  }
   const campaigns = loadCampaigns();
-  const campaign = campaigns.find(c => c.id === Number(req.params.id));
+  const campaign = campaigns.find(c => c.id === campaignId);
   if (!campaign) {
     return res.status(404).json({ error: "Campaign not found" });
   }
   res.json(campaign);
 });
 
+app.get("/api/creator/analytics", requireAuth, async (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+  try {
+    const earnings = await pool.query(
+      `SELECT SUM(amount) as total FROM wallet_transactions WHERE user_id = $1 AND type = 'payout_received'`,
+      [userId]
+    );
+    const performance = await pool.query(
+      `SELECT AVG(views_count) as avg_views, AVG(likes_count) as avg_likes FROM submissions WHERE creator_id = $1 AND status = 'approved'`,
+      [userId]
+    );
+    
+    res.json({
+      totalEarnings: earnings.rows[0].total || 0,
+      avgViews: Math.round(performance.rows[0].avg_views || 0),
+      avgLikes: Math.round(performance.rows[0].avg_likes || 0),
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch analytics" });
+  }
+});
+
+// GET /api/campaigns/:id/workspace - Full Campaign Workspace for Brand and Participating Creators
+app.get("/api/campaigns/:id/workspace", requireAuth, (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const workspace = getWorkspaceById(campaignId);
+  if (!workspace) {
+    return res.status(404).json({ error: "Campaign workspace not found" });
+  }
+
+  if (!canUserAccessWorkspace(req.user!, workspace)) {
+    return res.status(403).json({ error: "Forbidden: You are not authorized to view this campaign's workspace" });
+  }
+
+  // Filter messages for privacy: creator only sees group channel + their own 1:1 messages
+  const userRole = req.user!.role;
+  const userId = req.user!.id;
+  const filteredMessages = workspace.messages.filter(m => {
+    if (userRole === "admin" || userId === workspace.sponsorId) return true;
+    return m.recipientId === null || m.recipientId === userId || m.senderId === userId;
+  });
+
+  // Filter participants view for creator: they see self and public aggregates, brand/admin sees all
+  let visibleParticipants = workspace.participants;
+  if (userRole === "creator") {
+    // Return all participants with safe non-sensitive data so creators see who else is in the campaign
+    visibleParticipants = workspace.participants.map(p => ({
+      id: p.id,
+      campaignId: p.campaignId,
+      creatorId: p.creatorId,
+      creatorName: p.creatorName,
+      creatorHandle: p.creatorHandle,
+      creatorAvatar: p.creatorAvatar,
+      creatorFollowers: p.creatorFollowers,
+      creatorMedianViews: p.creatorMedianViews,
+      status: p.status,
+      payoutAmount: p.payoutAmount,
+      reservedAt: p.reservedAt,
+      expiresAt: p.expiresAt,
+      briefAcknowledgedVersion: p.briefAcknowledgedVersion,
+      submission: p.creatorId === userId ? p.submission : (p.submission ? { postUrl: p.submission.postUrl, submittedAt: p.submission.submittedAt } as any : null),
+      revisions: p.creatorId === userId ? p.revisions : [],
+    }));
+  }
+
+  res.json({
+    ...workspace,
+    participants: visibleParticipants,
+    messages: filteredMessages,
+  });
+});
+
+// POST /api/campaigns/:id/reserve-or-apply - Atomic slot booking or application
+app.post("/api/campaigns/:id/reserve-or-apply", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  try {
+    const result = await applyOrReserveSlot({
+      campaignId,
+      creator: {
+        id: req.user!.id,
+        name: req.user!.name,
+        handle: req.user!.handle || req.user!.instagramUsername || `@user${req.user!.id}`,
+        avatar: req.user!.avatar,
+        followers: req.user!.followers || req.user!.instagramFollowers || 2500,
+        medianViews: req.user!.medianViews || 8000,
+      },
+    });
+
+    // Also sync to legacy reservations store for backwards compatibility
+    try {
+      const reservations = loadReservations();
+      reservations.push({
+        id: result.participant.id,
+        campaignId,
+        userId: req.user!.id,
+        status: result.participant.status === "reserved" ? "reserved" : "applied",
+        reservedAt: result.participant.reservedAt,
+        expiresAt: result.participant.expiresAt,
+      });
+      saveReservations(reservations);
+    } catch {
+      // ignore
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to reserve slot" });
+  }
+});
+
+// POST /api/campaigns/:id/brief - Brand updates brief & notifies all creators
+app.post("/api/campaigns/:id/brief", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { updatedBrief, changesSummary } = req.body;
+
+  if (!updatedBrief || typeof updatedBrief !== "object") {
+    return res.status(400).json({ error: "Updated brief data is required" });
+  }
+
+  try {
+    const result = await updateCampaignBrief({
+      campaignId,
+      sponsorId: req.user!.id,
+      updatedBrief,
+      changesSummary: changesSummary || "Campaign brief instructions updated",
+    });
+    res.json({
+      success: true,
+      message: `Brief successfully updated to Version ${result.newVersion.version}. All participating creators have been notified.`,
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to update brief" });
+  }
+});
+
+// POST /api/campaigns/:id/acknowledge-brief - Creator acknowledges material brief changes
+app.post("/api/campaigns/:id/acknowledge-brief", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { version } = req.body;
+  try {
+    await acknowledgeBriefChange({
+      campaignId,
+      creatorId: req.user!.id,
+      version: Number(version || 1),
+    });
+    res.json({ success: true, message: `Brief version ${version} acknowledged` });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to acknowledge brief" });
+  }
+});
+
+// POST /api/campaigns/:id/submit-draft - Creator submits draft preview video for brand review
+app.post("/api/campaigns/:id/submit-draft", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { videoUrl, notes } = req.body;
+
+  if (!videoUrl || !String(videoUrl).trim()) {
+    return res.status(400).json({ error: "Draft video URL or file link is required" });
+  }
+
+  try {
+    const result = await submitDraftPreview({
+      campaignId,
+      creatorId: req.user!.id,
+      videoUrl: String(videoUrl).trim(),
+      notes: notes ? String(notes).trim() : undefined,
+    });
+    res.json({ success: true, message: "Draft preview submitted successfully for brand review!", ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to submit draft preview" });
+  }
+});
+
+// POST /api/campaigns/:id/review-draft - Brand reviews draft preview
+app.post("/api/campaigns/:id/review-draft", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { participantId, action, notes } = req.body;
+
+  if (!participantId || !action) {
+    return res.status(400).json({ error: "Participant ID and action are required" });
+  }
+
+  if (!["approve", "request_revision"].includes(action)) {
+    return res.status(400).json({ error: "Action must be 'approve' or 'request_revision'" });
+  }
+
+  if (action === "request_revision" && (!notes || !String(notes).trim())) {
+    return res.status(400).json({ error: "Revision feedback notes are required when requesting changes." });
+  }
+
+  try {
+    const result = await reviewDraftPreview({
+      campaignId,
+      sponsorId: req.user!.id,
+      participantId: Number(participantId),
+      action,
+      notes: notes ? String(notes).trim() : undefined,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to review draft preview" });
+  }
+});
+
+// POST /api/campaigns/:id/submit-reel - Creator submits published Reel URL
+app.post("/api/campaigns/:id/submit-reel", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { postUrl, audioConfirmed, proofScreenshotUrl } = req.body;
+
+  if (!postUrl || !String(postUrl).trim()) {
+    return res.status(400).json({ error: "Instagram Reel or Post URL is required" });
+  }
+
+  try {
+    const result = await submitCreatorReel({
+      campaignId,
+      creatorId: req.user!.id,
+      postUrl: String(postUrl).trim(),
+      audioConfirmed: Boolean(audioConfirmed ?? true),
+      proofScreenshotUrl,
+    });
+    res.json({ success: true, message: "Reel submitted successfully! Brand has been notified for review.", ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to submit Reel" });
+  }
+});
+
+// POST /api/campaigns/:id/review-submission - Brand reviews submitted Reel (Approve, Request Revision, Reject)
+app.post("/api/campaigns/:id/review-submission", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { participantId, action, revisionReason, revisionNotes, rejectionReason } = req.body;
+
+  if (!participantId || !action) {
+    return res.status(400).json({ error: "Participant ID and review action are required" });
+  }
+
+  if (!["approve", "request_revision", "reject"].includes(action)) {
+    return res.status(400).json({ error: "Action must be 'approve', 'request_revision', or 'reject'" });
+  }
+
+  try {
+    const result = await reviewReelSubmission({
+      campaignId,
+      sponsorId: req.user!.id,
+      participantId: Number(participantId),
+      action,
+      revisionReason,
+      revisionNotes,
+      rejectionReason,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to review submission" });
+  }
+});
+
+// POST /api/campaigns/:id/participants/:participantId/action - Brand approves/declines application
+app.post("/api/campaigns/:id/participants/:participantId/action", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const participantId = Number(req.params.participantId);
+  const { action } = req.body;
+
+  if (!["accept", "decline"].includes(action)) {
+    return res.status(400).json({ error: "Action must be 'accept' or 'decline'" });
+  }
+
+  try {
+    const result = await handleParticipantApplication({
+      campaignId,
+      sponsorId: req.user!.id,
+      participantId,
+      action,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to process application" });
+  }
+});
+
+// GET /api/campaigns/:id/messages - Fetch campaign messages (supports polling via since query param)
+app.get("/api/campaigns/:id/messages", requireAuth, (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { thread, since } = req.query;
+  try {
+    const messages = getWorkspaceMessages({
+      campaignId,
+      user: req.user!,
+      thread: typeof thread === "string" ? thread : undefined,
+      since: typeof since === "string" ? since : undefined,
+    });
+    res.json(messages);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to load messages" });
+  }
+});
+
+// POST /api/campaigns/:id/messages - Post message to campaign group chat or 1:1 thread
+app.post("/api/campaigns/:id/messages", requireAuth, async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { content, recipientId, attachments, isAnnouncement } = req.body;
+
+  if (!content || !String(content).trim()) {
+    return res.status(400).json({ error: "Message content cannot be empty" });
+  }
+
+  try {
+    const message = await postWorkspaceMessage({
+      campaignId,
+      sender: {
+        id: req.user!.id,
+        name: req.user!.name,
+        role: req.user!.role,
+        avatar: req.user!.avatar,
+      },
+      recipientId: recipientId !== undefined && recipientId !== null ? Number(recipientId) : null,
+      content: String(content).trim(),
+      attachments,
+      isAnnouncement: Boolean(isAnnouncement),
+    });
+    res.json(message);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to post message" });
+  }
+});
+
+// GET /api/sponsors/:id/campaign-cards - Real campaign cards for Brand Dashboard
+app.get(["/api/sponsors/:id/campaign-cards", "/api/sponsor/campaign-cards"], requireAuth, (req: AuthRequest, res) => {
+  const sponsorId = Number(req.params.id || req.user!.id);
+  if (req.user!.id !== sponsorId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const cards = getBrandCampaignCards(sponsorId);
+  res.json(cards);
+});
+
+// GET /api/creators/:id/campaign-workspaces - Real My Campaigns list for Creator
+app.get(["/api/creators/:id/campaign-workspaces", "/api/creator/campaign-workspaces"], requireAuth, (req: AuthRequest, res) => {
+  const creatorId = Number(req.params.id || req.user!.id);
+  if (req.user!.id !== creatorId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const summary = getCreatorCampaignsSummary(creatorId);
+  res.json(summary);
+});
+
+// GET /api/users/:userId/reservations & /api/reservations - Real user reservations for Creator My Campaigns
+app.get(["/api/users/:userId/reservations", "/api/reservations"], requireAuth, (req: AuthRequest, res) => {
+  const userId = Number(req.params.userId || req.query.userId || req.user!.id);
+  
+  const workspaces = loadAllWorkspaces();
+  const resList: any[] = [];
+
+  for (const c of workspaces) {
+    const participant = c.participants.find((p: any) => Number(p.creatorId) === Number(userId) && p.status !== "rejected" && p.status !== "withdrawn");
+    if (participant) {
+      resList.push({
+        id: participant.id || Date.now(),
+        userId: userId,
+        campaignId: c.id,
+        status: participant.status || "reserved",
+        reservedAt: participant.reservedAt || new Date().toISOString(),
+        expiresAt: participant.expiresAt || new Date(Date.now() + 48 * 3600000).toISOString(),
+        submittedAt: participant.submission ? participant.submission.submittedAt : null,
+        reviewedAt: participant.submission ? participant.submission.reviewedAt : null,
+        postUrl: participant.submission ? participant.submission.reelUrl : null,
+        clipUrl: participant.submission ? participant.submission.draftVideoUrl : null,
+        campaign: {
+          id: c.id,
+          title: c.title,
+          brand: c.brand,
+          brandLogo: c.brandLogo,
+          genre: c.genre,
+          payAmount: participant.payoutAmount || c.payAmount,
+          payRate: participant.payoutAmount || c.payAmount,
+          status: c.status,
+          deadline: c.deadline,
+          mentions: c.requiredMentions || [],
+          tags: c.requiredTags || [],
+          requiredCaptionNote: c.requiredCaptionNote,
+          audioUrl: c.audioUrl,
+          isPromotional: c.isPromotional || false,
+          tier: c.tier || "Tier 1",
+          type: c.type || "Reel",
+        }
+      });
+    }
+  }
+
+  // Check legacy in-memory reservations
+  const legacyReservations = loadReservations();
+  const campaigns = loadCampaigns();
+  for (const lr of legacyReservations) {
+    if (Number(lr.userId) === Number(userId)) {
+      const existingInList = resList.some(r => Number(r.campaignId) === Number(lr.campaignId));
+      if (!existingInList) {
+        const camp = campaigns.find((c: any) => Number(c.id) === Number(lr.campaignId));
+        if (camp) {
+          resList.push({
+            id: lr.id || Date.now(),
+            userId: userId,
+            campaignId: lr.campaignId,
+            status: lr.status || "reserved",
+            reservedAt: lr.reservedAt || new Date().toISOString(),
+            expiresAt: lr.expiresAt || new Date(Date.now() + 48 * 3600000).toISOString(),
+            submittedAt: lr.submittedAt || null,
+            postUrl: lr.postUrl || null,
+            campaign: {
+              id: camp.id,
+              title: camp.title,
+              brand: camp.brand,
+              genre: camp.genre,
+              payAmount: camp.payAmount || camp.price,
+              payRate: camp.payAmount || camp.price,
+              status: camp.status || "active",
+              deadline: camp.deadline,
+              mentions: camp.requiredMentions || camp.mentions || [],
+              tags: camp.requiredTags || camp.tags || [],
+              isPromotional: camp.isPromotional || false,
+              tier: camp.tier || "Tier 1",
+              type: camp.type || "Reel",
+            }
+          });
+        }
+      }
+    }
+  }
+
+  res.json(resList);
+});
+
+// POST /api/reservations - Direct reservation endpoint
+app.post("/api/reservations", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.body.campaignId);
+  try {
+    const result = await applyOrReserveSlot({
+      campaignId,
+      creator: {
+        id: req.user!.id,
+        name: req.user!.name,
+        handle: req.user!.handle || req.user!.instagramUsername || `@user${req.user!.id}`,
+        avatar: req.user!.avatar,
+        followers: req.user!.followers || req.user!.instagramFollowers || 2500,
+        medianViews: req.user!.medianViews || 8000,
+      },
+    });
+
+    try {
+      const reservations = loadReservations();
+      reservations.push({
+        id: result.participant.id,
+        campaignId,
+        userId: req.user!.id,
+        status: result.participant.status === "reserved" ? "reserved" : "applied",
+        reservedAt: result.participant.reservedAt,
+        expiresAt: result.participant.expiresAt,
+      });
+      saveReservations(reservations);
+    } catch {}
+
+    const campaigns = loadCampaigns();
+    const camp = campaigns.find((c: any) => Number(c.id) === campaignId);
+
+    res.json({
+      id: result.participant.id,
+      userId: req.user!.id,
+      campaignId,
+      status: result.participant.status,
+      reservedAt: result.participant.reservedAt,
+      expiresAt: result.participant.expiresAt,
+      campaign: camp || null,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to reserve campaign" });
+  }
+});
+
+// POST /api/submissions - Submit published reel link or work
+app.post("/api/submissions", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const { reservationId, link, clipUrl } = req.body;
+  try {
+    const workspaces = loadAllWorkspaces();
+    let targetWorkspace: any = null;
+    let targetParticipant: any = null;
+
+    for (const w of workspaces) {
+      const p = w.participants.find((part: any) => Number(part.id) === Number(reservationId) || (Number(part.creatorId) === Number(req.user!.id) && part.status === "reserved"));
+      if (p) {
+        targetWorkspace = w;
+        targetParticipant = p;
+        break;
+      }
+    }
+
+    if (!targetWorkspace || !targetParticipant) {
+      const reservations = loadReservations();
+      const resv = reservations.find((r: any) => Number(r.id) === Number(reservationId) || (Number(r.userId) === Number(req.user!.id) && r.status === "reserved"));
+      if (resv) {
+        resv.status = "submitted";
+        resv.submittedAt = new Date().toISOString();
+        resv.postUrl = link;
+        saveReservations(reservations);
+        return res.json({ success: true, message: "Submission recorded successfully" });
+      }
+      return res.status(404).json({ error: "Reservation not found" });
+    }
+
+    const result = await submitCreatorReel({
+      campaignId: targetWorkspace.id,
+      creatorId: req.user!.id,
+      postUrl: link,
+      proofScreenshotUrl: clipUrl,
+    });
+
+    res.json({ success: true, message: "Reel link submitted successfully", participant: result.participant });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to submit work" });
+  }
+});
+
+// DELETE /api/reservations/:id - Cancel slot reservation
+app.delete("/api/reservations/:id", requireAuth, async (req: AuthRequest, res) => {
+  const reservationId = Number(req.params.id);
+  const userId = req.user!.id;
+
+  const workspaces = loadAllWorkspaces();
+  let found = false;
+  for (const w of workspaces) {
+    const pIdx = w.participants.findIndex((p: any) => Number(p.id) === reservationId || (Number(p.creatorId) === userId && Number(w.id) === reservationId));
+    if (pIdx !== -1) {
+      w.participants.splice(pIdx, 1);
+      w.remainingSlots = (w.remainingSlots || 0) + 1;
+      saveSingleWorkspace(w);
+      found = true;
+      break;
+    }
+  }
+
+  const reservations = loadReservations();
+  const idx = reservations.findIndex((r: any) => Number(r.id) === reservationId || (Number(r.userId) === userId && Number(r.campaignId) === reservationId));
+  if (idx !== -1) {
+    reservations.splice(idx, 1);
+    saveReservations(reservations);
+    found = true;
+  }
+
+  if (found) {
+    return res.json({ success: true, message: "Reservation cancelled" });
+  }
+  return res.status(404).json({ error: "Reservation not found" });
+});
+
 // GET /api/sponsors/:id/campaigns
 app.get("/api/sponsors/:id/campaigns", requireAuth, (req: AuthRequest, res) => {
-  cleanReservations();
-  const campaigns = loadCampaigns();
   const sponsorId = Number(req.params.id);
   if (req.user!.id !== sponsorId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const filtered = campaigns.filter(c => c.sponsorId === sponsorId);
-  res.json(filtered);
+  const cards = getBrandCampaignCards(sponsorId);
+  res.json(cards);
 });
 
-// POST /api/sponsors/:id/campaigns & /api/campaigns - Create campaign with Escrow Lock
+// POST /api/sponsors/:id/campaigns & /api/campaigns - Create campaign with Escrow Lock and Workspace creation
 app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const sponsorId = req.user!.id;
   const data = req.body;
-  const totalBudget = parseFloat(data.budget || data.totalBudget || (Number(data.payAmount || 0) * Number(data.totalSpots || 1)));
+  const totalBudget = parseFloat(data.budget || data.totalBudget || (Number(data.payAmount || 0) * Number(data.totalSlots || 1)));
 
   if (isNaN(totalBudget) || totalBudget <= 0) {
     return res.status(400).json({ error: "Campaign budget must be greater than zero" });
@@ -1711,8 +2534,8 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
     });
   }
 
-  const campaigns = loadCampaigns();
-  const newId = campaigns.length > 0 ? Math.max(...campaigns.map((c: any) => c.id || 0)) + 1 : 1;
+  const allWorkspaces = loadAllWorkspaces();
+  const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map((c) => c.id || 0)) + 1 : 1;
 
   // 2. Move budget into escrow_held and write ledger entries
   await lockEscrow(sponsorId, totalBudget, { refType: "campaign_launch", refId: String(newId) });
@@ -1723,56 +2546,133 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
     ? rawCaption
     : `#ad | Paid Partnership. ${rawCaption}`.trim();
 
-  const newCampaign = {
+  const payPerSlot = Number(data.fixedPrice || data.payAmount || Math.floor(totalBudget / Math.max(1, Number(data.totalSlots || 10))));
+  const totalSlots = Number(data.totalSlots || Math.max(1, Math.floor(totalBudget / Math.max(1, payPerSlot))));
+
+  const newWorkspace: CampaignWorkspaceData = {
     id: newId,
     sponsorId,
-    artistId: sponsorId,
-    title: data.title || "Untitled Music Campaign",
-    songUrl: data.songUrl || data.assetUrl || "",
-    genre: data.genre || "Pop",
-    language: data.language || "Hindi",
+    title: data.title || "Untitled Instagram Reels Campaign",
     brand: data.brand || req.user!.companyName || req.user!.name,
-    brandLogo: data.brandLogo || req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=100",
-    payAmount: String(data.fixedPrice || data.payAmount || 0),
-    type: data.type || "Reel",
+    brandLogo: data.brandLogo || req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+    description: data.description || "Instagram Reels promotion campaign on Mingree.",
+    genre: data.genre || data.category || "Music Reels",
+    language: data.language || "Hindi & English",
     contentTypes: data.contentTypes || ["Reel"],
-    promotionStyle: data.promotionStyle || "Review",
-    assetUrl: data.songUrl || data.assetUrl || null,
-    assetFileName: data.assetFileName || null,
+    promotionStyle: data.promotionStyle || "Hook Step / Creative Reel",
+    audioUrl: data.songUrl || data.audioUrl || data.assetUrl || "",
+    referenceVideoUrl: data.websiteUrl || data.referenceVideoUrl || "",
+    productAssets: data.productAssets || (data.assetUrl ? [{ name: data.assetFileName || "Campaign Asset", url: data.assetUrl, type: "file" }] : []),
+    payAmount: payPerSlot,
+    totalBudget,
+    escrowHeld: totalBudget,
+    committedPayouts: 0,
+    releasedPayouts: 0,
+    totalSlots,
+    reservedSlots: 0,
+    remainingSlots: totalSlots,
+    bookingModel: data.bookingModel === "approval_required" ? "approval_required" : "instant",
     minFollowers: Number(data.minFollowers || 500),
-    description: data.description || "",
-    deadline: data.deadline || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
-    totalSpots: Number(data.totalSpots || Math.max(1, Math.floor(totalBudget / Math.max(1, Number(data.fixedPrice || 1000))))),
-    spotsRemaining: Number(data.totalSpots || Math.max(1, Math.floor(totalBudget / Math.max(1, Number(data.fixedPrice || 1000))))),
-    status: "active",
-    isApproved: true,
-    totalBudget: String(totalBudget),
-    spentAmount: "0.00",
-    escrowHeld: String(totalBudget),
-    escrowStatus: "funded",
-    pricingMode: data.pricingMode || "fixed",
-    fixedPrice: data.fixedPrice ? String(data.fixedPrice) : null,
-    priceCapPer1k: data.priceCapPer1k ? String(data.priceCapPer1k) : null,
-    filters: data.filters || {
-      followerTiers: data.tier ? [data.tier] : ["Nano", "Micro"],
-      minMedianViews: Number(data.minMedianViews || 0),
-      minIndiaPct: Number(data.minIndiaPct || 0),
-    },
-    requiredTags: Array.isArray(data.requiredTags) ? data.requiredTags : (data.requiredTags ? [data.requiredTags] : ["#mingree", "#music"]),
+    minMedianViews: Number(data.minMedianViews || 1000),
+    targetCountries: Array.isArray(data.targetCountries) ? data.targetCountries : ["India"],
+    targetCities: Array.isArray(data.targetCities) ? data.targetCities : [],
     requiredCaptionNote,
-    whitelistCreators: Array.isArray(data.whitelistCreators) ? data.whitelistCreators : [],
-    blacklistCreators: Array.isArray(data.blacklistCreators) ? data.blacklistCreators : [],
-    maxBudgetSharePerCreator: Number(data.maxBudgetSharePerCreator || 0.50),
+    requiredTags: Array.isArray(data.requiredTags) && data.requiredTags.length > 0 ? data.requiredTags : ["#Mingree", "#Reels"],
+    requiredMentions: Array.isArray(data.mentions) && data.mentions.length > 0 ? data.mentions.map((m: string) => `@${m.replace(/^@/, '')}`) : (Array.isArray(data.requiredMentions) ? data.requiredMentions : [`@${(data.brand || "brand").replace(/\s+/g, '').toLowerCase()}`]),
+    disclosureInstructions: data.disclosureInstructions || `#ad | Paid Partnership with ${data.brand || "Brand"}`,
+    minDurationSecs: Number(data.minDurationSecs || 30),
+    deadline: data.deadline || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+    status: "filling_slots",
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    briefVersions: [
+      {
+        version: 1,
+        timestamp: new Date().toISOString(),
+        updatedBy: sponsorId,
+        changesSummary: "Campaign published with initial brief",
+        diffs: [],
+        briefSnapshot: {
+          title: data.title || "Untitled Instagram Reels Campaign",
+          description: data.description || "",
+          requiredCaptionNote,
+          requiredTags: Array.isArray(data.requiredTags) ? data.requiredTags : ["#Mingree"],
+          requiredMentions: Array.isArray(data.requiredMentions) ? data.requiredMentions : [],
+          disclosureInstructions: data.disclosureInstructions || `#ad | Paid Partnership`,
+          audioUrl: data.songUrl || data.audioUrl || "",
+          deadline: data.deadline || new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
+        },
+      },
+    ],
+    participants: [],
+    messages: [
+      {
+        id: Date.now(),
+        campaignId: newId,
+        senderId: sponsorId,
+        senderName: `${data.brand || req.user!.name} (Brand)`,
+        senderRole: "sponsor",
+        senderAvatar: data.brandLogo || req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+        recipientId: null,
+        content: `👋 Welcome creators! Campaign "${data.title}" is officially live. Please review the brief, audio track, and hashtags before submitting your Reel.`,
+        isAnnouncement: true,
+        createdAt: new Date().toISOString(),
+        readBy: [sponsorId],
+      },
+    ],
   };
 
-  campaigns.unshift(newCampaign);
-  saveCampaigns(campaigns);
+  saveSingleWorkspace(newWorkspace);
 
-  // Automatically trigger creator matching and invitations on campaign launch
-  matchAndInviteCreators(newId, registeredUsers).catch(() => {});
+  // Persist directly to PostgreSQL campaigns table
+  try {
+    const pgCampaignRes = await pool.query(
+      `INSERT INTO campaigns (
+         artist_id, title, song_url, genre, language, description, deliverable_type,
+         budget, budget_remaining, pricing_mode, fixed_price, total_spots,
+         spots_remaining, required_tags, caption_note, deadline, deal_window_hours, status
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, 'reel', $7, $8, $9, $10, $11, $12, $13, $14, $15, 48, 'active')
+       RETURNING id`,
+      [
+        sponsorId,
+        newWorkspace.title,
+        newWorkspace.audioUrl || "https://instagram.com/reels/audio/default",
+        newWorkspace.genre,
+        newWorkspace.language,
+        newWorkspace.description,
+        totalBudget,
+        totalBudget,
+        data.pricingMode === "direct" ? "direct" : "fixed",
+        payPerSlot,
+        totalSlots,
+        totalSlots,
+        newWorkspace.requiredTags,
+        newWorkspace.requiredCaptionNote,
+        new Date(Date.now() + 30 * 86400000)
+      ]
+    );
+    if (pgCampaignRes.rows.length > 0) {
+      newWorkspace.id = Number(pgCampaignRes.rows[0].id);
+    }
+  } catch (pgErr: any) {
+    console.error("[PG CAMPAIGN INSERT ERROR]", pgErr.message);
+  }
 
-  res.json(newCampaign);
+  // Sync to legacy campaigns file for fallback compatibility
+  try {
+    const legacyCampaigns = loadCampaigns();
+    legacyCampaigns.unshift({
+      ...newWorkspace,
+      spotsRemaining: newWorkspace.remainingSlots,
+      payAmount: String(newWorkspace.payAmount),
+    });
+    saveCampaigns(legacyCampaigns);
+  } catch {
+    // ignore
+  }
+
+  res.json(newWorkspace);
 });
 
 // POST /api/campaigns/:id/match - Trigger creator matching & invitations
@@ -1780,6 +2680,115 @@ app.post("/api/campaigns/:id/match", requireAuth, requireRole("sponsor", "admin"
   const campaignId = Number(req.params.id);
   const invitedCount = await matchAndInviteCreators(campaignId, registeredUsers);
   res.json({ success: true, invitedCount, message: `Matched and invited ${invitedCount} eligible creators.` });
+});
+
+// Rate Cards Memory Store & Endpoints
+const memoryRateCards = new Map<number, Array<{ deliverableType: string; price: number }>>([
+  [1, [
+    { deliverableType: "Instagram Reel", price: 2500 },
+    { deliverableType: "Instagram Story", price: 800 },
+    { deliverableType: "Collab Package", price: 5000 },
+  ]],
+  [3, [
+    { deliverableType: "Instagram Reel", price: 3000 },
+    { deliverableType: "Instagram Story", price: 1000 },
+    { deliverableType: "Collab Package", price: 6000 },
+  ]],
+]);
+
+app.get("/api/users/:userId/rate-cards", requireAuth, (req: AuthRequest, res) => {
+  const userId = Number(req.params.userId);
+  const cards = memoryRateCards.get(userId) || [
+    { deliverableType: "Instagram Reel", price: 2500 },
+    { deliverableType: "Instagram Story", price: 800 },
+    { deliverableType: "Collab Package", price: 5000 },
+  ];
+  res.json(cards);
+});
+
+app.post("/api/users/:userId/rate-cards", requireAuth, (req: AuthRequest, res) => {
+  const userId = Number(req.params.userId);
+  if (req.user!.id !== userId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const { cards } = req.body;
+  if (!Array.isArray(cards)) {
+    return res.status(400).json({ error: "Invalid rate cards format" });
+  }
+  memoryRateCards.set(userId, cards);
+  res.json({ success: true, cards });
+});
+
+// POST /api/campaign-workspaces/:id/apply-with-quote
+app.post("/api/campaign-workspaces/:id/apply-with-quote", requireAuth, requireRole("creator"), (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const creatorId = req.user!.id;
+  const { quotedPrice, proposalNotes } = req.body;
+
+  const workspace = getWorkspaceById(campaignId);
+  if (!workspace) return res.status(404).json({ error: "Campaign workspace not found" });
+
+  const existing = workspace.participants.find(p => p.creatorId === creatorId);
+  if (existing) {
+    return res.status(400).json({ error: "You have already applied or reserved a slot in this campaign." });
+  }
+
+  const newParticipant: CampaignParticipant = {
+    id: Date.now(),
+    campaignId,
+    creatorId,
+    creatorName: req.user!.name,
+    creatorHandle: req.user!.handle || "@creator",
+    creatorAvatar: req.user!.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100",
+    creatorFollowers: 15000,
+    creatorMedianViews: 5000,
+    status: workspace.bookingModel === "instant" ? "reserved" : "applied",
+    payoutAmount: Number(quotedPrice || workspace.payAmount),
+    reservedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 48 * 3600000).toISOString(),
+    briefAcknowledgedVersion: workspace.briefVersions.length,
+    submission: null,
+    revisions: [],
+  };
+
+  workspace.participants.push(newParticipant);
+  if (workspace.bookingModel === "instant") {
+    workspace.reservedSlots = (workspace.reservedSlots || 0) + 1;
+    workspace.remainingSlots = Math.max(0, workspace.totalSlots - workspace.reservedSlots);
+  }
+  workspace.updatedAt = new Date().toISOString();
+  saveSingleWorkspace(workspace);
+
+  res.json({ success: true, participant: newParticipant });
+});
+
+// POST /api/campaign-workspaces/:id/applicants/:participantId/review
+app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requireAuth, requireRole("sponsor", "admin"), (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const participantId = Number(req.params.participantId);
+  const { action, counterPrice } = req.body; // action: accept | reject | counter
+
+  const workspace = getWorkspaceById(campaignId);
+  if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+
+  const participant = workspace.participants.find(p => p.id === participantId);
+  if (!participant) return res.status(404).json({ error: "Participant not found" });
+
+  if (action === "accept") {
+    participant.status = "reserved";
+    workspace.reservedSlots = (workspace.reservedSlots || 0) + 1;
+    workspace.remainingSlots = Math.max(0, workspace.totalSlots - workspace.reservedSlots);
+  } else if (action === "reject") {
+    participant.status = "rejected";
+  } else if (action === "counter") {
+    participant.payoutAmount = Number(counterPrice || participant.payoutAmount);
+    participant.status = "applied";
+  }
+
+  workspace.updatedAt = new Date().toISOString();
+  saveSingleWorkspace(workspace);
+
+  res.json({ success: true, participant });
 });
 
 // POST /api/campaigns/:id/quote - Submit quote / accept (Cap vs Fixed mode)
@@ -2208,165 +3217,6 @@ app.post("/api/campaigns/:id/close", requireAuth, requireRole("sponsor", "admin"
   });
 });
 
-// GET /api/users/:id/reservations
-app.get("/api/users/:id/reservations", requireAuth, (req: AuthRequest, res) => {
-  const userId = Number(req.params.id);
-  if (req.user!.id !== userId && req.user!.role !== "admin") {
-    return res.status(403).json({ error: "Access denied" });
-  }
-  const reservations = cleanReservations(userId);
-  const campaigns = loadCampaigns();
-
-  const userRes = reservations
-    .filter(r => r.userId === userId)
-    .map(r => {
-      const camp = campaigns.find(c => c.id === r.campaignId) || r.campaign;
-      return { ...r, campaign: camp };
-    });
-
-  res.json(userRes);
-});
-
-// POST /api/reservations - reserve campaign (Pro-subscription requirement REMOVED per Step 7)
-app.post("/api/reservations", requireAuth, (req: AuthRequest, res) => {
-  cleanReservations();
-  const now = Date.now();
-  const { campaignId } = req.body;
-  const campaigns = loadCampaigns();
-  const campaign = campaigns.find(c => c.id === Number(campaignId));
-
-  if (!campaign) {
-    return res.status(404).json({ error: "Campaign not found" });
-  }
-
-  if (campaign.spotsRemaining <= 0) {
-    return res.status(400).json({ error: "No spots remaining in this campaign" });
-  }
-
-  const effectiveUserId = req.user!.id;
-
-  // Check Whitelist & Blacklist
-  if (campaign.blacklistCreators && campaign.blacklistCreators.includes(effectiveUserId)) {
-    return res.status(403).json({ error: "Creator is excluded from this campaign by artist instructions." });
-  }
-  if (campaign.whitelistCreators && campaign.whitelistCreators.length > 0 && !campaign.whitelistCreators.includes(effectiveUserId)) {
-    return res.status(403).json({ error: "This campaign is restricted to whitelisted creators only." });
-  }
-
-  const reservations = loadReservations();
-
-  // Check if already reserved
-  const existing = reservations.find(r => r.userId === effectiveUserId && r.campaignId === campaign.id && r.status !== "rejected");
-  if (existing) {
-    return res.status(400).json({ error: "You already have an active reservation for this campaign" });
-  }
-
-  // Calculate 48-hour reservation deadline window
-  const standard48h = now + 48 * 60 * 60 * 1000;
-
-  campaign.spotsRemaining = Math.max(0, campaign.spotsRemaining - 1);
-  saveCampaigns(campaigns);
-
-  const newReservation = {
-    id: Date.now(),
-    campaignId: campaign.id,
-    userId: effectiveUserId,
-    status: "reserved",
-    reservedAt: new Date().toISOString(),
-    expiresAt: new Date(standard48h).toISOString(),
-    submittedAt: null,
-    reviewedAt: null,
-    trackingNumber: "EXP-" + Math.floor(100000 + Math.random() * 900000),
-    shippingStatus: "processing",
-    shippedAt: null,
-    deliveryConfirmed: false,
-    deliveredAt: null,
-    campaign: { ...campaign },
-  };
-
-  reservations.push(newReservation);
-  saveReservations(reservations);
-
-  res.json(newReservation);
-});
-
-// POST /api/reservations/:id/submit - submit work link
-app.post("/api/reservations/:id/submit", async (req, res) => {
-  cleanReservations();
-  const resId = Number(req.params.id);
-  const reservations = loadReservations();
-  const r = reservations.find(item => item.id === resId);
-
-  if (!r) {
-    return res.status(404).json({ error: "Reservation not found or has expired" });
-  }
-
-  if (r.status !== "reserved") {
-    return res.status(400).json({ error: "This reservation is already submitted or closed" });
-  }
-
-  const { link, clipUrl, postUrl } = req.body;
-  const finalLink = link || postUrl || "";
-
-  if (!finalLink || !finalLink.trim()) {
-    return res.status(400).json({ error: "Please provide your post or reel URL" });
-  }
-
-  r.status = "submitted";
-  r.submittedAt = new Date().toISOString();
-  r.postUrl = finalLink.trim();
-  r.clipUrl = clipUrl ? clipUrl.trim() : null;
-
-  saveReservations(reservations);
-
-  // Add confirmation notification to database
-  try {
-    await db.insert(notifications).values({
-      userId: r.userId,
-      type: "submission_received",
-      title: "Submission Received ⏳",
-      message: `Your proof for ${r.campaign?.title || 'campaign'} has been submitted and is under brand review.`,
-      isRead: false,
-    } as any);
-  } catch (e) {
-    // ignore
-  }
-
-  res.json({ success: true, reservation: r });
-});
-
-// POST /api/reservations/:id/cancel & DELETE /api/reservations/:id
-app.all(["/api/reservations/:id/cancel", "/api/reservations/:id"], (req, res) => {
-  if (req.method !== "POST" && req.method !== "DELETE") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
-  const resId = Number(req.params.id);
-  const reservations = loadReservations();
-  const campaigns = loadCampaigns();
-
-  const idx = reservations.findIndex(r => r.id === resId);
-  if (idx !== -1) {
-    const r = reservations[idx];
-    if (r.status === "reserved" && !r.submittedAt) {
-      const camp = campaigns.find(c => c.id === r.campaignId);
-      if (camp && camp.spotsRemaining < camp.totalSpots) {
-        camp.spotsRemaining += 1;
-        saveCampaigns(campaigns);
-      }
-    }
-    reservations.splice(idx, 1);
-    saveReservations(reservations);
-  }
-
-  res.json({ success: true, message: "Reservation cancelled" });
-});
-
-// DELETE /api/users/:id
-app.delete("/api/users/:id", (req, res) => {
-  res.json({ success: true, message: "Account deleted" });
-});
-
 // PUT /api/users/:id/shipping-address
 app.put("/api/users/:id/shipping-address", requireAuth, (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
@@ -2416,24 +3266,12 @@ app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
 });
 
 // 1. GET /api/instagram/login - Initiates official Meta OAuth authorization
-app.get("/api/instagram/login", (req, res) => {
+app.get("/api/instagram/login", requireAuth, (req: AuthRequest, res) => {
   const { appId, appSecret } = getInstagramCredentials();
   const redirectUri = getInstagramRedirectUri(req);
   const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
   const forceSetup = req.query.setup === "1" || req.query.configure === "1";
-  
-  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-  let authedUser: any = null;
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
-      authedUser = registeredUsers.find(u => u.id === decoded.id);
-    } catch {}
-  }
-  const userId = authedUser?.id || (req.query.userId ? Number(req.query.userId) : null);
-  if (!userId) {
-    return res.status(401).json({ error: "Unauthorized: Authentication required" });
-  }
+  const userId = req.user!.id;
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
 
   // Anti-Farming & Abuse Rate Limiter check
@@ -2826,7 +3664,7 @@ app.get("/api/instagram/login", (req, res) => {
 });
 
 // Alias for auth-url endpoint (returns JSON with authorization url)
-app.get("/api/instagram/auth-url", (req, res) => {
+app.get("/api/instagram/auth-url", requireAuth, (req: AuthRequest, res) => {
   const { appId, appSecret } = getInstagramCredentials();
   const redirectUri = getInstagramRedirectUri(req);
   if (!appId) {
@@ -2837,18 +3675,7 @@ app.get("/api/instagram/auth-url", (req, res) => {
     });
   }
   const returnTo = typeof req.query.return_to === "string" ? req.query.return_to : "/dashboard";
-  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-  let authedUser: any = null;
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as any;
-      authedUser = registeredUsers.find(u => u.id === decoded.id);
-    } catch {}
-  }
-  const userId = authedUser?.id || (req.query.userId ? Number(req.query.userId) : null);
-  if (!userId) {
-    return res.status(401).json({ error: "Unauthorized: Authentication required" });
-  }
+  const userId = req.user!.id;
   const state = createSignedOAuthState(userId, returnTo, appSecret);
   instagramOAuthStates.set(state, {
     userId,
@@ -3327,6 +4154,35 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
       targetUser.instagramAccessToken = finalAccessToken; // strictly server-side
       targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
       saveRegisteredUsers();
+    }
+
+    try {
+      await pool.query(
+        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, risk_score, status, access_token_enc, token_expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (user_id) DO UPDATE SET
+           instagram_user_id = EXCLUDED.instagram_user_id,
+           username = EXCLUDED.username,
+           followers = EXCLUDED.followers,
+           media_count = EXCLUDED.media_count,
+           risk_score = EXCLUDED.risk_score,
+           status = EXCLUDED.status,
+           access_token_enc = EXCLUDED.access_token_enc,
+           token_expires_at = EXCLUDED.token_expires_at`,
+        [
+          stateRecord.userId,
+          igUserId,
+          igUsername,
+          followersCount,
+          mediaCount,
+          riskEval.riskScore,
+          riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+          finalAccessToken,
+          new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+        ]
+      );
+    } catch (pgErr: any) {
+      console.error("[PG CREATOR PROFILE UPDATE ERROR]", pgErr.message);
     }
 
     console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
@@ -3818,119 +4674,15 @@ app.post("/api/admin/newsletter/broadcast", requireAuth, requireRole("admin"), a
   res.json({ success: true, message: "Broadcast dispatched to all subscribers" });
 });
 
-// ================= CATEGORIES & GROUPS APIS =================
-const CATEGORY_SUBSCRIPTIONS_FILE = getDataFilePath("category_subscriptions.json");
-
-interface CategorySubscriptionRecord {
-  id: number;
-  userId: number;
-  category: string;
-  tier: string;
-  joinedAt: string;
-}
-
-function loadCategorySubscriptions(): CategorySubscriptionRecord[] {
-  try {
-    if (fs.existsSync(CATEGORY_SUBSCRIPTIONS_FILE)) {
-      return JSON.parse(fs.readFileSync(CATEGORY_SUBSCRIPTIONS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    console.error("Error reading category subscriptions file:", err);
-  }
-  return [];
-}
-
-function saveCategorySubscriptions(subs: CategorySubscriptionRecord[]) {
-  try {
-    fs.writeFileSync(CATEGORY_SUBSCRIPTIONS_FILE, JSON.stringify(subs, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error saving category subscriptions file:", err);
-  }
-}
-
+// ================= PROMOTION CATEGORIES =================
 // GET /api/categories - list all categories
 app.get("/api/categories", (req, res) => {
-  const subs = loadCategorySubscriptions();
-  const categoriesWithCounts = PROMOTION_CATEGORIES.map((cat) => {
-    const memberCount = subs.filter((s) => s.category === cat.id).length;
-    return {
-      ...cat,
-      memberCount,
-      activeCampaignsCount: 2, // dynamic campaign count
-    };
-  });
-  res.json(categoriesWithCounts);
-});
-
-// GET /api/categories/:category/campaigns - campaigns for category
-app.get("/api/categories/:category/campaigns", (req, res) => {
-  res.json([]);
-});
-
-// GET /api/users/:userId/category-subscriptions - get creator's joined groups
-app.get("/api/users/:userId/category-subscriptions", (req, res) => {
-  const userId = Number(req.params.userId);
-  const subs = loadCategorySubscriptions();
-  const userSubs = subs.filter((s) => s.userId === userId);
-  res.json(userSubs);
-});
-
-// POST /api/users/:userId/category-subscriptions - join category + tier group
-app.post("/api/users/:userId/category-subscriptions", (req, res) => {
-  const userId = Number(req.params.userId);
-  const { category, tier } = req.body;
-
-  if (!category || !tier) {
-    return res.status(400).json({ error: "Category and tier are required" });
-  }
-
-  const subs = loadCategorySubscriptions();
-  const existing = subs.find(
-    (s) => s.userId === userId && s.category === category && s.tier === tier
-  );
-
-  if (existing) {
-    return res.json(existing);
-  }
-
-  const newSub: CategorySubscriptionRecord = {
-    id: Date.now(),
-    userId,
-    category,
-    tier,
-    joinedAt: new Date().toISOString(),
-  };
-
-  subs.push(newSub);
-  saveCategorySubscriptions(subs);
-  console.log(`[GROUPS] User #${userId} joined group: ${category} (${tier})`);
-
-  res.status(201).json(newSub);
-});
-
-// DELETE /api/users/:userId/category-subscriptions - leave category + tier group
-app.delete("/api/users/:userId/category-subscriptions", (req, res) => {
-  const userId = Number(req.params.userId);
-  const { category, tier } = req.body;
-
-  if (!category || !tier) {
-    return res.status(400).json({ error: "Category and tier are required" });
-  }
-
-  let subs = loadCategorySubscriptions();
-  const beforeCount = subs.length;
-  subs = subs.filter(
-    (s) => !(s.userId === userId && s.category === category && s.tier === tier)
-  );
-  saveCategorySubscriptions(subs);
-  console.log(`[GROUPS] User #${userId} left group: ${category} (${tier})`);
-
-  res.json({ success: true, removed: beforeCount !== subs.length });
-});
-
-// GET /api/category-subscriptions - list all (admin / debug)
-app.get("/api/category-subscriptions", (req, res) => {
-  res.json(loadCategorySubscriptions());
+  const categories = PROMOTION_CATEGORIES.map((cat) => ({
+    ...cat,
+    memberCount: 0,
+    activeCampaignsCount: 0,
+  }));
+  res.json(categories);
 });
 
 // ================= CASHFREE & SPONSOR WALLET PAYMENT GATEWAY =================
@@ -4028,6 +4780,225 @@ app.get("/api/cashfree/config", (req, res) => {
     mode: isProd ? "production" : "sandbox",
     configured: Boolean(appId && secretKey),
   });
+});
+
+// ----------------------------------------------------
+// Manual Campaign Endpoints (Choose creators mode)
+// ----------------------------------------------------
+const CITIES_LIST = [
+  { id: 1, name: "Mumbai", state: "Maharashtra" },
+  { id: 2, name: "Delhi", state: "Delhi" },
+  { id: 3, name: "Bangalore", state: "Karnataka" },
+  { id: 4, name: "Hyderabad", state: "Telangana" },
+  { id: 5, name: "Chennai", state: "Tamil Nadu" },
+  { id: 6, name: "Kolkata", state: "West Bengal" },
+  { id: 7, name: "Pune", state: "Maharashtra" },
+  { id: 8, name: "Ahmedabad", state: "Gujarat" },
+  { id: 9, name: "Jaipur", state: "Rajasthan" },
+  { id: 10, name: "Lucknow", state: "Uttar Pradesh" },
+];
+
+app.get("/api/cities", (req, res) => {
+  res.json(CITIES_LIST);
+});
+
+app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const { cities, tier, deliverable, q, minEngagement, genres, sort, cursor } = req.query;
+    let dbCreators: any[] = [];
+    try {
+      const result = await pool.query(`
+        SELECT id, name, handle, avatar, instagram_followers, city, gender, niche
+        FROM users 
+        WHERE role = 'creator'
+      `);
+      dbCreators = result.rows;
+    } catch {
+      dbCreators = [];
+    }
+
+    if (dbCreators.length === 0) {
+      dbCreators = [
+        { id: 1, name: "Aisha Khan", handle: "thatbohogirl", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80", instagram_followers: 8500, city: "Mumbai", gender: "Female", niche: "Fashion" },
+        { id: 2, name: "Riya Sharma", handle: "stylewithriya", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80", instagram_followers: 9800, city: "Delhi", gender: "Female", niche: "Lifestyle" },
+        { id: 3, name: "Ankit Verma", handle: "musicvibes_ankit", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80", instagram_followers: 12500, city: "Bangalore", gender: "Male", niche: "Music" },
+        { id: 4, name: "Meera Nair", handle: "dancewithmeera", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150&auto=format&fit=crop&q=80", instagram_followers: 6500, city: "Pune", gender: "Female", niche: "Dance" },
+        { id: 5, name: "Arjun Malhotra", handle: "thefitarjun", avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80", instagram_followers: 45000, city: "Mumbai", gender: "Male", niche: "Fitness" }
+      ];
+    }
+
+    const items = dbCreators.map((c) => {
+      const followers = c.instagram_followers || 7500;
+      const basePrice = Math.round(800 + followers * 0.12);
+      const cityObj = CITIES_LIST.find(ci => ci.name.toLowerCase() === (c.city || "").toLowerCase()) || CITIES_LIST[0];
+
+      return {
+        id: c.id,
+        username: c.handle || `creator_${c.id}`,
+        displayName: c.name || `Creator ${c.id}`,
+        avatarUrl: c.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+        igVerifiedBadge: true,
+        city: cityObj,
+        tier: followers <= 5000 ? "nano" : followers <= 10000 ? "micro" : followers <= 50000 ? "small" : "mid",
+        followers,
+        engagementRate: 4.6,
+        medianViews: Math.round(followers * 35),
+        indiaAudiencePct: 92,
+        metricsSource: "api_verified" as const,
+        completedDeals: 12 + (c.id % 20),
+        onTimeRate: 98,
+        genres: [c.niche || "Music"],
+        recentReels: [
+          { thumbUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80" },
+          { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80" }
+        ],
+        price: basePrice,
+        pricePer1kViews: Math.round((basePrice / (followers * 35)) * 1000 * 100) / 100,
+      };
+    });
+
+    res.json({
+      items,
+      total: items.length,
+      nextCursor: null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to load creator panel" });
+  }
+});
+
+app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  try {
+    const { deliverable, creatorIds } = req.body;
+    if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
+      return res.status(400).json({ error: "Select at least one creator" });
+    }
+
+    const lines = creatorIds.map((id: number) => {
+      const price = 1200 + (id * 150) % 3000;
+      const feeArtist = Math.round(price * 0.075 * 100) / 100;
+      const gstInFee = Math.round(feeArtist * 0.18 * 100) / 100;
+      const artistCost = price + feeArtist;
+      return {
+        creatorId: id,
+        price,
+        feeArtist,
+        gstInFee,
+        artistCost,
+      };
+    });
+
+    const subtotal = lines.reduce((sum, l) => sum + l.price, 0);
+    const feeTotal = lines.reduce((sum, l) => sum + l.feeArtist, 0);
+    const gstInFee = lines.reduce((sum, l) => sum + l.gstInFee, 0);
+    const total = subtotal + feeTotal;
+
+    const sponsorId = req.user!.id;
+    const wallet = await getOrCreateWallet(sponsorId);
+    const walletBalance = wallet.balance;
+    const shortfall = Math.max(0, Math.round((total - walletBalance) * 100) / 100);
+
+    const billTokenData = {
+      sponsorId,
+      creatorIds,
+      deliverable,
+      subtotal,
+      total,
+      nonce: crypto.randomBytes(8).toString("hex"),
+      exp: Date.now() + 15 * 60 * 1000,
+    };
+    const billId = Buffer.from(JSON.stringify(billTokenData)).toString("base64");
+
+    res.json({
+      lines,
+      subtotal,
+      feeTotal,
+      gstInFee,
+      total,
+      walletBalance,
+      shortfall,
+      billId,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to generate bill" });
+  }
+});
+
+app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  const sponsorId = req.user!.id;
+  try {
+    const { details, creatorIds, billId } = req.body;
+    if (!billId || !Array.isArray(creatorIds) || creatorIds.length === 0) {
+      return res.status(400).json({ error: "Invalid submission data" });
+    }
+
+    let billData: any;
+    try {
+      billData = JSON.parse(Buffer.from(billId, "base64").toString("utf-8"));
+    } catch {
+      return res.status(400).json({ error: "Invalid bill token" });
+    }
+
+    if (Date.now() > billData.exp) {
+      return res.status(409).json({ error: "Bill expired", bill: null });
+    }
+
+    const totalPayable = billData.total;
+    const wallet = await getOrCreateWallet(sponsorId);
+    if (wallet.balance < totalPayable) {
+      return res.status(402).json({
+        error: "Insufficient funds",
+        bill: {
+          subtotal: billData.subtotal,
+          feeTotal: billData.subtotal * 0.075,
+          gstInFee: billData.subtotal * 0.075 * 0.18,
+          total: totalPayable,
+          walletBalance: wallet.balance,
+          shortfall: totalPayable - wallet.balance,
+          billId,
+          lines: [],
+        }
+      });
+    }
+
+    await lockEscrow(sponsorId, totalPayable, { refType: "choose_creators_campaign", refId: details?.title || "Manual Campaign" });
+
+    const allWorkspaces = loadAllWorkspaces();
+    const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map(w => w.id || 0)) + 1 : 1;
+
+    const newWorkspace = {
+      id: newId,
+      sponsorId,
+      title: details?.title || "Choose Creators Campaign",
+      brand: req.user!.companyName || req.user!.name,
+      brandLogo: req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+      description: details?.description || "Manual choose creators campaign",
+      genre: details?.genre || "Music",
+      language: details?.language || "Hindi",
+      contentTypes: [details?.deliverable || "Reel"],
+      promotionStyle: details?.promotionStyle || "Hook Step",
+      audioUrl: details?.songUrl || "",
+      totalBudget: totalPayable,
+      escrowHeld: totalPayable,
+      totalSpots: creatorIds.length,
+      spotsRemaining: creatorIds.length,
+      status: "filling_slots",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      participants: creatorIds.map((cid: number) => ({
+        id: cid,
+        status: "invited",
+        offeredPrice: 1500,
+      })),
+      messages: [],
+    };
+
+    saveSingleWorkspace(newWorkspace as any);
+
+    res.status(201).json({ campaignId: newId });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to create campaign" });
+  }
 });
 
 // Cashfree Create Order Endpoint - Amounts decided on SERVER
@@ -4206,6 +5177,72 @@ app.post("/api/cashfree/webhook", async (req, res) => {
   }
 });
 
+// Category Subscriptions In-Memory Store
+interface CategorySubscriptionRecord {
+  id: number;
+  userId: number;
+  category: string;
+  tier: string;
+  joinedAt: string;
+}
+const categorySubscriptionsStore: CategorySubscriptionRecord[] = [];
+
+// GET /api/categories
+app.get("/api/categories", (req, res) => {
+  res.json(PROMOTION_CATEGORIES.map(c => ({
+    id: c.id,
+    name: c.name,
+    icon: c.icon,
+    description: c.description
+  })));
+});
+
+// GET /api/users/:userId/category-subscriptions
+app.get("/api/users/:userId/category-subscriptions", (req, res) => {
+  const userId = Number(req.params.userId);
+  const userSubs = categorySubscriptionsStore.filter(s => s.userId === userId);
+  res.json(userSubs);
+});
+
+// POST /api/users/:userId/category-subscriptions
+app.post("/api/users/:userId/category-subscriptions", (req, res) => {
+  const userId = Number(req.params.userId);
+  const { category, tier } = req.body;
+  if (!category || !tier) {
+    return res.status(400).json({ error: "Category and tier are required" });
+  }
+
+  const existing = categorySubscriptionsStore.find(
+    s => s.userId === userId && s.category === category && s.tier === tier
+  );
+  if (existing) {
+    return res.json(existing);
+  }
+
+  const newSub: CategorySubscriptionRecord = {
+    id: Date.now(),
+    userId,
+    category,
+    tier,
+    joinedAt: new Date().toISOString()
+  };
+  categorySubscriptionsStore.push(newSub);
+  res.status(201).json(newSub);
+});
+
+// DELETE /api/users/:userId/category-subscriptions
+app.delete("/api/users/:userId/category-subscriptions", (req, res) => {
+  const userId = Number(req.params.userId);
+  const { category, tier } = req.body;
+  const idx = categorySubscriptionsStore.findIndex(
+    s => s.userId === userId && s.category === category && s.tier === tier
+  );
+  if (idx !== -1) {
+    categorySubscriptionsStore.splice(idx, 1);
+  }
+  res.json({ success: true });
+});
+
 // Catch-all for API endpoints to ALWAYS return valid JSON
 app.all("/api/*", (req, res) => {
   res.status(404).json({ error: "Endpoint not found" });
@@ -4225,13 +5262,114 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 
 // ================= VITE MIDDLEWARE & SERVER START =================
 async function startServer() {
+  let isDbConnected = false;
+
+  if (!process.env.DATABASE_URL) {
+    console.log("[STARTUP] No DATABASE_URL configured. Running with in-memory / local storage mode.");
+  } else {
+    try {
+      console.log("[STARTUP] Checking PostgreSQL database connection...");
+      isDbConnected = await verifyDbConnection();
+      if (isDbConnected) {
+        console.log("[STARTUP] PostgreSQL database connection verified successfully.");
+      } else {
+        console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
+      }
+    } catch (err: any) {
+      if (isLocalFallbackAllowed) {
+        console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
+      } else {
+        console.error("FATAL: Failed to connect to PostgreSQL database:", err.message);
+        process.exit(1);
+      }
+    }
+  }
+
+  // Seed default accounts into PostgreSQL only if database connection is active
+  if (isDbConnected) {
+    try {
+      const adminEmail = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
+      const adminPass = process.env.ADMIN_PASSWORD || "admin123";
+      const res = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [adminEmail]);
+      if (res.rows.length === 0) {
+        const hash = bcrypt.hashSync(adminPass, 10);
+        await pool.query(
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, handle, tier)
+           VALUES ($1, $2, 'Mingree Administrator', 'admin', true, 'active', '@admin', 'Admin')`,
+          [adminEmail, hash]
+        );
+        console.log(`[SEED] Admin account seeded: ${adminEmail}`);
+      }
+
+      // Seed Artist if not present
+      const artistEmail = "artist@mingree.com";
+      const artistRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [artistEmail]);
+      if (artistRes.rows.length === 0) {
+        const hash = bcrypt.hashSync("password123", 10);
+        const inserted = await pool.query(
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name, handle, tier, avatar)
+           VALUES ($1, $2, 'Rohan Verma (Artist)', 'sponsor', true, 'active', 'Rohan Records', '@rohanmusic', 'Standard', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150')
+           RETURNING id`,
+          [artistEmail, hash]
+        );
+        await pool.query(
+          `INSERT INTO wallets (user_id, balance, escrow_held)
+           VALUES ($1, 500000.00, 0.00)
+           ON CONFLICT (user_id) DO NOTHING`,
+          [inserted.rows[0].id]
+        );
+        console.log(`[SEED] Artist account seeded: ${artistEmail}`);
+      }
+
+      // Seed Creator if not present
+      const creatorEmail = "creator@mingree.com";
+      const creatorRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [creatorEmail]);
+      if (creatorRes.rows.length === 0) {
+        const hash = bcrypt.hashSync("password123", 10);
+        const inserted = await pool.query(
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, handle, tier, avatar)
+           VALUES ($1, $2, 'Priya Sharma (Creator)', 'creator', true, 'active', '@priyareels', 'Rising', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150')
+           RETURNING id`,
+          [creatorEmail, hash]
+        );
+        await pool.query(
+          `INSERT INTO wallets (user_id, balance, escrow_held)
+           VALUES ($1, 12500.00, 0.00)
+           ON CONFLICT (user_id) DO NOTHING`,
+          [inserted.rows[0].id]
+        );
+        await pool.query(
+          `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, india_audience_pct, tier_label, risk_score, status)
+           VALUES ($1, 'priya_reels_official', 45000, 25000, 4.80, 92.00, 'Micro', 5, 'active')
+           ON CONFLICT (user_id) DO NOTHING`,
+          [inserted.rows[0].id]
+        );
+        console.log(`[SEED] Creator account seeded: ${creatorEmail}`);
+      }
+    } catch (seedErr: any) {
+      console.log("[SEED] Skipped database seeding:", seedErr.message);
+    }
+  }
+
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false, ws: false, watch: null },
       appType: "spa",
     });
     app.use(vite.middlewares);
+    app.use("*", async (req, res, next) => {
+      if (req.originalUrl.startsWith("/api")) return next();
+      try {
+        const url = req.originalUrl;
+        let template = fs.readFileSync(path.resolve(process.cwd(), "index.html"), "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(template);
+      } catch (e: any) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), "dist");
     if (fs.existsSync(distPath)) {

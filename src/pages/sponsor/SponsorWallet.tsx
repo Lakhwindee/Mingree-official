@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { api, formatINR, ApiTransaction } from "@/lib/api";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Wallet, Plus, ArrowDownCircle, ArrowUpCircle, Clock, CheckCircle, CreditCard, Banknote, Building2, Trash2, AlertCircle, Globe, Ticket, Gift, X } from "lucide-react";
+
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { calculateDepositWithGST, calculateInternationalDeposit, TAX_RATES } from "@shared/tiers";
@@ -34,6 +34,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+const Save = __DummyIcon;
+const User = __DummyIcon;
 
 declare global {
   interface Window {
@@ -232,76 +238,27 @@ export default function SponsorWallet() {
     },
   });
 
-  // Check if user is from India (use Cashfree) or international (use Stripe)
-  const isIndianUser = sponsor?.country === "IN";
+  // Strictly India focused
+  const isIndianUser = true;
 
   useEffect(() => {
-    if (!isIndianUser) return;
     if (typeof window.Razorpay !== 'undefined') return;
     const existing = document.querySelector('script[src*="razorpay"]');
     if (existing) return;
     const script = document.createElement("script");
     script.src = "https://checkout.razorpay.com/v1/checkout.js";
     script.async = true;
-    script.onerror = () => {
-      setTimeout(() => {
-        const retry = document.createElement("script");
-        retry.src = "https://checkout.razorpay.com/v1/checkout.js";
-        retry.async = true;
-        document.body.appendChild(retry);
-      }, 2000);
-    };
     document.body.appendChild(script);
-  }, [isIndianUser]);
+  }, []);
   
-  // Clean up any old Cashfree URL params (legacy)
+  // Handle PayU and Cashfree success/failure callback
   useEffect(() => {
     if (!sponsor) return;
     const params = new URLSearchParams(searchString);
     if (params.get("order_id")) {
       setLocation("/sponsor/wallet");
     }
-  }, [sponsor, searchString, setLocation]);
-
-  // Handle Stripe success callback
-  useEffect(() => {
-    if (!sponsor || stripeSessionProcessed) return;
     
-    const params = new URLSearchParams(searchString);
-    const stripeSuccess = params.get("stripe_success");
-    const sessionId = params.get("session_id");
-    
-    if (stripeSuccess === "true" && sessionId) {
-      setStripeSessionProcessed(true);
-      
-      // Verify the Stripe session and credit wallet
-      fetch(`/api/sponsors/${sponsor.id}/stripe/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success) {
-            toast.success(`Payment successful! ${data.currency?.toUpperCase()} ${data.walletCredit} added to wallet.`);
-            queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
-            queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
-          } else {
-            toast.error(data.error || "Payment verification failed");
-          }
-          // Clean URL
-          setLocation("/sponsor/wallet");
-        })
-        .catch(() => {
-          toast.error("Failed to verify payment");
-          setLocation("/sponsor/wallet");
-        });
-    } else if (params.get("stripe_cancelled") === "true") {
-      toast.info("Payment was cancelled");
-      setLocation("/sponsor/wallet");
-    }
-    
-    // Handle PayU success/failure
     if (params.get("payu_success") === "true") {
       toast.success("Payment successful! Amount added to wallet.");
       queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
@@ -312,7 +269,7 @@ export default function SponsorWallet() {
       toast.error(message);
       setLocation("/sponsor/wallet");
     }
-  }, [sponsor, searchString, stripeSessionProcessed, setLocation]);
+  }, [sponsor, searchString, setLocation]);
 
   const handleRazorpayPayment = async () => {
     const baseAmount = parseFloat(depositAmount);
@@ -506,54 +463,7 @@ export default function SponsorWallet() {
     }
   };
 
-  // Handle Stripe payment for international users
-  const handleStripePayment = async () => {
-    const baseAmount = parseFloat(depositAmount);
-    if (isNaN(baseAmount) || baseAmount <= 0) {
-      toast.error("Please enter a valid amount");
-      return;
-    }
 
-    if (!sponsor) {
-      toast.error("Sponsor not found");
-      return;
-    }
-
-    setIsProcessing(true);
-    
-    // Calculate total with processing fee
-    const breakdown = calculateInternationalDeposit(baseAmount);
-
-    try {
-      const res = await fetch(`/api/sponsors/${sponsor.id}/stripe/create-checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          amount: breakdown.totalPayable,  // Total amount with fee
-          baseAmount: baseAmount,           // Amount to credit to wallet
-          processingFee: breakdown.processingFee,
-          countryCode: sponsor.country 
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to create checkout session");
-      }
-
-      const data = await res.json();
-      
-      // Redirect to Stripe Checkout
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        throw new Error("No checkout URL received");
-      }
-    } catch (error: any) {
-      toast.error(error.message || "Failed to initiate payment");
-      setIsProcessing(false);
-    }
-  };
 
   // Handle PayU payment for Indian users (alternative to Razorpay)
   const handlePayUPayment = async () => {
@@ -659,16 +569,7 @@ export default function SponsorWallet() {
   };
 
   const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case "deposit":
-        return <ArrowDownCircle className="h-4 w-4 text-green-500" />;
-      case "campaign_payment":
-        return <ArrowUpCircle className="h-4 w-4 text-red-500" />;
-      case "withdrawal":
-        return <Banknote className="h-4 w-4 text-orange-500" />;
-      default:
-        return <Wallet className="h-4 w-4 text-muted-foreground" />;
-    }
+    return null;
   };
 
   const getCategoryLabel = (category: string) => {
@@ -687,11 +588,11 @@ export default function SponsorWallet() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
-        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
+        return <Badge variant="secondary">Pending</Badge>;
       case "completed":
-        return <Badge variant="default" className="bg-green-600"><CheckCircle className="h-3 w-3 mr-1" />Completed</Badge>;
+        return <Badge variant="default" className="bg-green-600">Completed</Badge>;
       case "rejected":
-        return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Rejected</Badge>;
+        return <Badge variant="destructive">Rejected</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -724,7 +625,7 @@ export default function SponsorWallet() {
             <Card className="bg-gradient-to-br from-green-500/10 to-emerald-500/10">
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                 <CardTitle className="text-sm font-medium">Available Balance</CardTitle>
-                <Wallet className="h-5 w-5 text-green-500" />
+                
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold text-green-600 dark:text-green-400" data-testid="text-balance">
@@ -739,13 +640,13 @@ export default function SponsorWallet() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                 <CardTitle className="text-sm font-medium">Add Funds</CardTitle>
-                <CreditCard className="h-5 w-5 text-primary" />
+                
               </CardHeader>
               <CardContent>
                 <Dialog open={isDepositOpen} onOpenChange={setIsDepositOpen}>
                   <DialogTrigger asChild>
                     <Button className="w-full" data-testid="button-add-funds">
-                      <Plus className="h-4 w-4 mr-2" />
+                      
                       Add Money
                     </Button>
                   </DialogTrigger>
@@ -753,16 +654,16 @@ export default function SponsorWallet() {
                     <DialogHeader>
                       <DialogTitle>Add Funds to Wallet</DialogTitle>
                       <DialogDescription>
-                        Enter the amount you want to add. {isIndianUser ? "GST will be applied." : "International payments via Stripe."}
+                        Enter the amount you want to add in INR. 18% GST will be applied.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 mt-4">
                       <div className="space-y-2">
-                        <Label htmlFor="amount">Amount to Add {isIndianUser ? "(INR)" : "(USD)"}</Label>
+                        <Label htmlFor="amount">Amount to Add (INR)</Label>
                         <Input
                           id="amount"
                           type="number"
-                          placeholder="Enter amount"
+                          placeholder="Enter amount in ₹"
                           value={depositAmount}
                           onChange={(e) => setDepositAmount(e.target.value)}
                           min="1"
@@ -770,7 +671,7 @@ export default function SponsorWallet() {
                         />
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {(isIndianUser ? [1000, 5000, 10000, 25000] : [50, 100, 250, 500]).map((amt) => (
+                        {[1000, 5000, 10000, 25000].map((amt) => (
                           <Button
                             key={amt}
                             variant="outline"
@@ -778,177 +679,142 @@ export default function SponsorWallet() {
                             onClick={() => setDepositAmount(amt.toString())}
                             data-testid={`button-quick-amount-${amt}`}
                           >
-                            {isIndianUser ? formatINR(amt) : `$${amt}`}
+                            {formatINR(amt)}
                           </Button>
                         ))}
                       </div>
 
-                      {isIndianUser && (
-                        <div className="space-y-2">
-                          <Label className="text-sm">Have a promo code? (Optional)</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              placeholder="Enter promo code"
-                              value={promoCode}
-                              onChange={(e) => {
-                                setPromoCode(e.target.value.toUpperCase());
-                                setPromoCodeStatus(null);
-                                setIsTaxExempt(false);
-                              }}
-                              className="font-mono"
-                              data-testid="input-promo-code"
-                            />
-                            <Button
-                              variant="outline"
-                              onClick={validatePromoCode}
-                              disabled={!promoCode.trim() || isValidatingPromo}
-                              data-testid="button-validate-promo"
-                            >
-                              {isValidatingPromo ? "..." : "Apply"}
-                            </Button>
-                          </div>
-                          {promoCodeStatus && (
-                            <div className={`text-xs p-2 rounded ${promoCodeStatus.valid ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
-                              {promoCodeStatus.valid ? (
-                                promoCodeStatus.type === "tax_exempt" ? "GST waived on this deposit!" : 
-                                promoCodeStatus.type === "credit" ? `You'll get ₹${parseFloat(promoCodeStatus.creditAmount || "0").toFixed(0)} free credits!` :
-                                "Code applied!"
-                              ) : promoCodeStatus.message}
-                            </div>
-                          )}
+                      <div className="space-y-2">
+                        <Label className="text-sm">Have a promo code? (Optional)</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Enter promo code"
+                            value={promoCode}
+                            onChange={(e) => {
+                              setPromoCode(e.target.value.toUpperCase());
+                              setPromoCodeStatus(null);
+                              setIsTaxExempt(false);
+                            }}
+                            className="font-mono"
+                            data-testid="input-promo-code"
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={validatePromoCode}
+                            disabled={!promoCode.trim() || isValidatingPromo}
+                            data-testid="button-validate-promo"
+                          >
+                            {isValidatingPromo ? "..." : "Apply"}
+                          </Button>
                         </div>
-                      )}
+                        {promoCodeStatus && (
+                          <div className={`text-xs p-2 rounded ${promoCodeStatus.valid ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
+                            {promoCodeStatus.valid ? (
+                              promoCodeStatus.type === "tax_exempt" ? "GST waived on this deposit!" : 
+                              promoCodeStatus.type === "credit" ? `You'll get ₹${parseFloat(promoCodeStatus.creditAmount || "0").toFixed(0)} free credits!` :
+                              "Code applied!"
+                            ) : promoCodeStatus.message}
+                          </div>
+                        )}
+                      </div>
                       
                       {depositAmount && parseFloat(depositAmount) > 0 && (
                         <div className="p-4 rounded-lg bg-muted/50 space-y-2">
                           <div className="flex justify-between text-sm">
                             <span className="text-muted-foreground">Amount to Wallet</span>
-                            <span className="font-medium">{isIndianUser ? formatINR(parseFloat(depositAmount)) : `$${parseFloat(depositAmount).toFixed(2)}`}</span>
+                            <span className="font-medium">{formatINR(parseFloat(depositAmount))}</span>
                           </div>
-                          {isIndianUser && (
-                            <>
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">GST ({TAX_RATES.GST_PERCENT}%)</span>
-                                {isTaxExempt ? (
-                                  <span className="font-medium text-green-500 line-through">
-                                    {formatINR(calculateDepositWithGST(parseFloat(depositAmount)).gstAmount)}
-                                    <span className="ml-2 no-underline">WAIVED</span>
-                                  </span>
-                                ) : (
-                                  <span className="font-medium">{formatINR(calculateDepositWithGST(parseFloat(depositAmount)).gstAmount)}</span>
-                                )}
-                              </div>
-                              <div className="flex justify-between pt-2 border-t">
-                                <span className="font-medium">Total Payable</span>
-                                <span className="font-bold text-lg">
-                                  {isTaxExempt 
-                                    ? formatINR(parseFloat(depositAmount)) 
-                                    : formatINR(calculateDepositWithGST(parseFloat(depositAmount)).totalPayable)}
-                                </span>
-                              </div>
-                              {isTaxExempt && (
-                                <div className="text-xs text-green-500 flex items-center gap-1">
-                                  <Gift className="h-3 w-3" />
-                                  GST waived with promo code!
-                                </div>
-                              )}
-                            </>
-                          )}
-                          {!isIndianUser && (
-                            <>
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Processing Fee ({TAX_RATES.INTERNATIONAL_FEE_PERCENT}%)</span>
-                                <span className="font-medium">${calculateInternationalDeposit(parseFloat(depositAmount)).processingFee.toFixed(2)}</span>
-                              </div>
-                              <div className="flex justify-between pt-2 border-t">
-                                <span className="font-medium">Total Payable</span>
-                                <span className="font-bold text-lg">${calculateInternationalDeposit(parseFloat(depositAmount)).totalPayable.toFixed(2)}</span>
-                              </div>
-                            </>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">GST ({TAX_RATES.GST_PERCENT}%)</span>
+                            {isTaxExempt ? (
+                              <span className="font-medium text-green-500 line-through">
+                                {formatINR(calculateDepositWithGST(parseFloat(depositAmount)).gstAmount)}
+                                <span className="ml-2 no-underline">WAIVED</span>
+                              </span>
+                            ) : (
+                              <span className="font-medium">{formatINR(calculateDepositWithGST(parseFloat(depositAmount)).gstAmount)}</span>
+                            )}
+                          </div>
+                          <div className="flex justify-between pt-2 border-t">
+                            <span className="font-medium">Total Payable</span>
+                            <span className="font-bold text-lg">
+                              {isTaxExempt 
+                                ? formatINR(parseFloat(depositAmount)) 
+                                : formatINR(calculateDepositWithGST(parseFloat(depositAmount)).totalPayable)}
+                            </span>
+                          </div>
+                          {isTaxExempt && (
+                            <div className="text-xs text-green-500 flex items-center gap-1">
+                              
+                              GST waived with promo code!
+                            </div>
                           )}
                         </div>
                       )}
                       
-                      {isIndianUser ? (
-                        <div className="space-y-4">
-                          <div className="flex flex-wrap justify-center gap-3 py-2">
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-blue-600">GPay</div>
-                              <span className="text-[10px] text-muted-foreground">Google Pay</span>
-                            </div>
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-purple-600">PhPe</div>
-                              <span className="text-[10px] text-muted-foreground">PhonePe</span>
-                            </div>
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-blue-500">Pytm</div>
-                              <span className="text-[10px] text-muted-foreground">Paytm</span>
-                            </div>
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-green-600">BHIM</div>
-                              <span className="text-[10px] text-muted-foreground">BHIM UPI</span>
-                            </div>
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-[10px] font-bold text-gray-600">Cards</div>
-                              <span className="text-[10px] text-muted-foreground">Debit/Credit</span>
-                            </div>
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap justify-center gap-3 py-2">
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-blue-600">GPay</div>
+                            <span className="text-[10px] text-muted-foreground">Google Pay</span>
                           </div>
-                          
-                          <Button
-                            className="w-full bg-blue-600 mb-2"
-                            onClick={handleRazorpayPayment}
-                            disabled={isProcessing || !depositAmount}
-                            data-testid="button-confirm-deposit"
-                          >
-                            <CreditCard className="h-4 w-4 mr-2" />
-                            {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)} (Razorpay)` : "Pay with Razorpay"}
-                          </Button>
-
-                          <Button
-                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
-                            onClick={handleCashfreePayment}
-                            disabled={isProcessing || !depositAmount}
-                            data-testid="button-confirm-cashfree-deposit"
-                          >
-                            <CreditCard className="h-4 w-4 mr-2" />
-                            {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)} (Cashfree)` : "Pay with Cashfree"}
-                          </Button>
-
-                          <p className="text-xs text-center text-muted-foreground mt-2">
-                            UPI, Cards, Net Banking - Powered by Razorpay & Cashfree
-                          </p>
-                          
-                          <div className="flex items-center gap-2 justify-center text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <CheckCircle className="h-3 w-3 text-green-500" />
-                              Secure
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <CheckCircle className="h-3 w-3 text-green-500" />
-                              Instant
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <CheckCircle className="h-3 w-3 text-green-500" />
-                              100% Safe
-                            </span>
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-purple-600">PhPe</div>
+                            <span className="text-[10px] text-muted-foreground">PhonePe</span>
+                          </div>
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-blue-500">Pytm</div>
+                            <span className="text-[10px] text-muted-foreground">Paytm</span>
+                          </div>
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-xs font-bold text-green-600">BHIM</div>
+                            <span className="text-[10px] text-muted-foreground">BHIM UPI</span>
+                          </div>
+                          <div className="flex flex-col items-center gap-1">
+                            <div className="w-10 h-10 rounded-lg bg-white dark:bg-gray-800 border flex items-center justify-center text-[10px] font-bold text-gray-600">Cards</div>
+                            <span className="text-[10px] text-muted-foreground">Debit/Credit</span>
                           </div>
                         </div>
-                      ) : (
-                        <>
-                          <Button
-                            className="w-full"
-                            onClick={handleStripePayment}
-                            disabled={isProcessing || !depositAmount}
-                            data-testid="button-confirm-deposit-stripe"
-                          >
-                            <Globe className="h-4 w-4 mr-2" />
-                            {isProcessing ? "Processing..." : depositAmount ? `Pay $${calculateInternationalDeposit(parseFloat(depositAmount) || 0).totalPayable.toFixed(2)} with Stripe` : "Pay with Stripe"}
-                          </Button>
-                          <p className="text-xs text-center text-muted-foreground">
-                            Secure international payment powered by Stripe (5% processing fee)
-                          </p>
-                        </>
-                      )}
+                        
+                        <Button
+                          className="w-full bg-blue-600 mb-2"
+                          onClick={handleRazorpayPayment}
+                          disabled={isProcessing || !depositAmount}
+                          data-testid="button-confirm-deposit"
+                        >
+                          
+                          {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)} (Razorpay)` : "Pay with Razorpay"}
+                        </Button>
+
+                        <Button
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                          onClick={handleCashfreePayment}
+                          disabled={isProcessing || !depositAmount}
+                          data-testid="button-confirm-cashfree-deposit"
+                        >
+                          
+                          {isProcessing ? "Processing..." : depositAmount ? `Pay ${formatINR(isTaxExempt ? parseFloat(depositAmount) : calculateDepositWithGST(parseFloat(depositAmount) || 0).totalPayable)} (Cashfree)` : "Pay with Cashfree"}
+                        </Button>
+
+                        <p className="text-xs text-center text-muted-foreground mt-2">
+                          UPI, Cards, Net Banking - Powered by Razorpay & Cashfree
+                        </p>
+                        
+                        <div className="flex items-center gap-2 justify-center text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            
+                            Secure
+                          </span>
+                          <span className="flex items-center gap-1">
+                            
+                            Instant
+                          </span>
+                          <span className="flex items-center gap-1">
+                            
+                            100% Safe
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </DialogContent>
                 </Dialog>
@@ -958,7 +824,7 @@ export default function SponsorWallet() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                 <CardTitle className="text-sm font-medium">Withdraw</CardTitle>
-                <Banknote className="h-5 w-5 text-orange-500" />
+                
               </CardHeader>
               <CardContent>
                 <Dialog open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>
@@ -969,7 +835,7 @@ export default function SponsorWallet() {
                       disabled={!!pendingWithdrawal}
                       data-testid="button-withdraw"
                     >
-                      <Banknote className="h-4 w-4 mr-2" />
+                      
                       {pendingWithdrawal ? "Request Pending" : "Withdraw"}
                     </Button>
                   </DialogTrigger>
@@ -983,10 +849,10 @@ export default function SponsorWallet() {
                     <div className="space-y-4 mt-4">
                       {bankAccounts.length === 0 ? (
                         <div className="text-center py-4">
-                          <Building2 className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+                          
                           <p className="text-muted-foreground mb-4">No bank account added</p>
                           <Button onClick={() => { setIsWithdrawOpen(false); setIsAddBankOpen(true); }}>
-                            <Plus className="h-4 w-4 mr-2" />
+                            
                             Add Bank Account
                           </Button>
                         </div>
@@ -1061,7 +927,7 @@ export default function SponsorWallet() {
           <Card className="mb-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Gift className="h-5 w-5 text-primary" />
+                
                 Apply Promo Code
               </CardTitle>
               <CardDescription>
@@ -1107,7 +973,7 @@ export default function SponsorWallet() {
                     </div>
                   ) : !wallet?.transactions?.length ? (
                     <div className="text-center py-8 text-muted-foreground">
-                      <Wallet className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      
                       <p>No transactions yet</p>
                       <p className="text-sm">Add funds to get started</p>
                     </div>
@@ -1120,7 +986,7 @@ export default function SponsorWallet() {
                           data-testid={`transaction-row-${tx.id}`}
                         >
                           <div className="flex items-center gap-3">
-                            {getCategoryIcon(tx.category)}
+
                             <div>
                               <p className="font-medium">{tx.description}</p>
                               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -1139,11 +1005,7 @@ export default function SponsorWallet() {
                               variant={tx.status === "completed" ? "default" : "secondary"}
                               className="text-xs"
                             >
-                              {tx.status === "completed" ? (
-                                <CheckCircle className="h-3 w-3 mr-1" />
-                              ) : (
-                                <Clock className="h-3 w-3 mr-1" />
-                              )}
+                              
                               {tx.status}
                             </Badge>
                           </div>
@@ -1164,7 +1026,7 @@ export default function SponsorWallet() {
                 <CardContent>
                   {withdrawalRequests.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
-                      <Banknote className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      
                       <p>No withdrawal requests yet</p>
                     </div>
                   ) : (
@@ -1204,14 +1066,14 @@ export default function SponsorWallet() {
                     <CardDescription>Manage your bank accounts for withdrawals</CardDescription>
                   </div>
                   <Button size="sm" onClick={() => setIsAddBankOpen(true)} data-testid="button-add-bank">
-                    <Plus className="h-4 w-4 mr-2" />
+                    
                     Add Bank
                   </Button>
                 </CardHeader>
                 <CardContent>
                   {bankAccounts.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
-                      <Building2 className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      
                       <p>No bank accounts added</p>
                       <p className="text-sm">Add a bank account to withdraw funds</p>
                     </div>
@@ -1224,7 +1086,7 @@ export default function SponsorWallet() {
                           data-testid={`bank-row-${bank.id}`}
                         >
                           <div className="flex items-center gap-3">
-                            <Building2 className="h-8 w-8 text-muted-foreground" />
+                            
                             <div>
                               <p className="font-medium">{bank.bankName}</p>
                               <p className="text-sm text-muted-foreground">{bank.accountHolderName}</p>
@@ -1240,7 +1102,7 @@ export default function SponsorWallet() {
                               disabled={deleteBankMutation.isPending}
                               data-testid={`button-delete-bank-${bank.id}`}
                             >
-                              <Trash2 className="h-4 w-4 text-destructive" />
+                              
                             </Button>
                           </div>
                         </div>

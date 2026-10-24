@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { pool } from "./db";
 
 export interface InstagramIdentityRecord {
   instagramUserId: string;
@@ -400,6 +401,25 @@ export function bindIdentityToUser(params: {
   };
 
   saveIdentities(identities);
+
+  // Persist to PostgreSQL instagram_identities
+  try {
+    pool.query(
+      `INSERT INTO instagram_identities (instagram_user_id, current_user_id, historical_user_ids, username, connect_count, linked_at)
+       VALUES ($1, $2, ARRAY[$2::bigint], $3, 1, now())
+       ON CONFLICT (instagram_user_id) DO UPDATE SET
+         current_user_id = EXCLUDED.current_user_id,
+         historical_user_ids = array_append(instagram_identities.historical_user_ids, EXCLUDED.current_user_id),
+         username = EXCLUDED.username,
+         connect_count = instagram_identities.connect_count + 1,
+         linked_at = now(),
+         unlinked_at = NULL`,
+      [params.instagramUserId, params.mingreeUserId, params.instagramUsername]
+    ).catch((err: any) => console.error("[PG BIND ERROR]", err.message));
+  } catch (err: any) {
+    console.error("[PG BIND ERROR]", err.message);
+  }
+
   console.log(`[SECURITY] Successfully bound Instagram @${params.instagramUsername} (${params.instagramUserId}) to Mingree User #${params.mingreeUserId}`);
 }
 
@@ -412,6 +432,19 @@ export function unbindIdentityFromUser(instagramUserId: string, mingreeUserId: n
     identity.disconnectCount += 1;
     identity.lastDisconnectedAt = new Date().toISOString();
     saveIdentities(identities);
+
+    // Persist unbind to PostgreSQL
+    try {
+      pool.query(
+        `UPDATE instagram_identities
+         SET current_user_id = NULL, unlinked_at = now()
+         WHERE instagram_user_id = $1`,
+        [instagramUserId]
+      ).catch((err: any) => console.error("[PG UNBIND ERROR]", err.message));
+    } catch (err: any) {
+      console.error("[PG UNBIND ERROR]", err.message);
+    }
+
     console.log(`[SECURITY] Preserved unbind history for Instagram @${identity.instagramUsername} (${instagramUserId}) from Mingree User #${mingreeUserId}`);
   }
 }
@@ -436,6 +469,15 @@ export function unlockOrTransferIdentity(
     if (!identity.historicalMingreeUserIds.includes(newMingreeUserId)) {
       identity.historicalMingreeUserIds.push(newMingreeUserId);
     }
+
+    try {
+      pool.query(
+        `UPDATE instagram_identities
+         SET current_user_id = $2, unlinked_at = NULL
+         WHERE instagram_user_id = $1`,
+        [instagramUserId, newMingreeUserId]
+      ).catch((err: any) => console.error("[PG TRANSFER ERROR]", err.message));
+    } catch {}
   }
 
   saveIdentities(identities);
@@ -457,6 +499,26 @@ export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "time
 
   logs.unshift(entry);
   saveAuditLogs(logs);
+
+  // Persist to PostgreSQL security_audit_logs
+  try {
+    pool.query(
+      `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        entry.event,
+        entry.mingreeUserId,
+        entry.instagramUsername,
+        entry.riskScore,
+        JSON.stringify(entry.riskFactors),
+        entry.decision,
+        entry.ipAddress,
+        entry.details,
+      ]
+    ).catch((err: any) => console.error("[PG AUDIT LOG ERROR]", err.message));
+  } catch (err: any) {
+    console.error("[PG AUDIT LOG ERROR]", err.message);
+  }
 
   console.log(
     `[SECURITY AUDIT] [${entry.decision}] [${entry.event}] User #${entry.mingreeUserId} | @${entry.instagramUsername} | Score: ${entry.riskScore}/100 (${entry.riskLevel}) | ${entry.details}`

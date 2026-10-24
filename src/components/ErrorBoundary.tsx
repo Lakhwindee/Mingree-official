@@ -1,7 +1,12 @@
 import React, { Component, ReactNode, ErrorInfo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { AlertTriangle, RefreshCw, Home } from "lucide-react";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Home = __DummyIcon;
+
+
 
 interface Props {
   children: ReactNode;
@@ -43,27 +48,22 @@ export class ErrorBoundary extends Component<Props, State> {
 
       return (
         <div className="min-h-screen flex items-center justify-center bg-background p-4">
-          <Card className="max-w-md w-full">
+          <Card className="max-w-md w-full border-border">
             <CardContent className="pt-6 text-center space-y-4">
-              <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center">
-                <AlertTriangle className="h-8 w-8 text-destructive" />
-              </div>
-              <h2 className="text-xl font-semibold">Something went wrong</h2>
-              <p className="text-muted-foreground text-sm">
+              <h2 className="text-xl font-bold text-foreground">Something went wrong</h2>
+              <p className="text-muted-foreground text-xs sm:text-sm">
                 We encountered an unexpected error. Please try again or go back to the home page.
               </p>
               {process.env.NODE_ENV === "development" && this.state.error && (
-                <pre className="text-left text-xs bg-muted p-3 rounded overflow-auto max-h-32">
+                <pre className="text-left text-xs bg-muted p-3 rounded overflow-auto max-h-32 text-foreground font-mono">
                   {this.state.error.message}
                 </pre>
               )}
-              <div className="flex gap-3 justify-center pt-2">
-                <Button variant="outline" onClick={this.handleRetry} data-testid="button-retry">
-                  <RefreshCw className="h-4 w-4 mr-2" />
+              <div className="flex gap-2.5 justify-center pt-2">
+                <Button variant="outline" size="sm" onClick={this.handleRetry} data-testid="button-retry">
                   Try Again
                 </Button>
-                <Button onClick={this.handleGoHome} data-testid="button-go-home">
-                  <Home className="h-4 w-4 mr-2" />
+                <Button size="sm" onClick={this.handleGoHome} data-testid="button-go-home">
                   Go Home
                 </Button>
               </div>

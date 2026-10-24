@@ -4,18 +4,30 @@ export interface Tier {
   label: string;
   minFollowers: number;
   maxFollowers: number;
-  basePayment?: number; // optional, tiers are used only as filters never as prices
+  basePayment?: number;
 }
 
-// Exactly six creator tiers used ONLY as filters, never as fixed prices.
-// Half-open ranges: [minFollowers, maxFollowers)
+// Manual (Advanced) mode tiers with original names and full range
 export const TIERS: Tier[] = [
-  { id: 1, name: "Starter", label: "Starter", minFollowers: 500, maxFollowers: 2000, basePayment: 0 },
-  { id: 2, name: "Nano", label: "Nano", minFollowers: 2000, maxFollowers: 10000, basePayment: 0 },
-  { id: 3, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
-  { id: 4, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 250000, basePayment: 0 },
-  { id: 5, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 1000000, basePayment: 0 },
-  { id: 6, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: Infinity, basePayment: 0 },
+  { id: 1, name: "Nano", label: "Nano", minFollowers: 500, maxFollowers: 5000, basePayment: 0 },
+  { id: 2, name: "Micro", label: "Micro", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
+  { id: 3, name: "Small", label: "Small", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
+  { id: 4, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
+  { id: 5, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
+  { id: 6, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
+  { id: 7, name: "Large", label: "Large", minFollowers: 500000, maxFollowers: 1000000, basePayment: 0 },
+  { id: 8, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: 2500000, basePayment: 0 },
+  { id: 9, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 0 },
+];
+
+// Fixed Price mode tiers up to 500k followers named Tier 1 to Tier 6
+export const FIXED_TIERS: Tier[] = [
+  { id: 1, name: "Tier 1", label: "Tier 1", minFollowers: 500, maxFollowers: 5000, basePayment: 0 },
+  { id: 2, name: "Tier 2", label: "Tier 2", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
+  { id: 3, name: "Tier 3", label: "Tier 3", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
+  { id: 4, name: "Tier 4", label: "Tier 4", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
+  { id: 5, name: "Tier 5", label: "Tier 5", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
+  { id: 6, name: "Tier 6", label: "Tier 6", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
 ];
 
 export const MIN_FOLLOWERS = 500;
@@ -30,13 +42,12 @@ export function getTierById(id: number): Tier | undefined {
 }
 
 export function formatFollowers(count: number): string {
-  if (count === Infinity || count >= 100000000) return "1M+";
+  if (count === Infinity || count >= 100000000) return "2.5M+";
   if (count >= 1000000) {
     const millions = count / 1000000;
     return millions % 1 === 0 ? `${millions}M` : `${millions.toFixed(1)}M`;
   }
   if (count >= 1000) return `${(count / 1000).toFixed(0)}K`;
-  if (count >= 500) return `500`;
   return count.toString();
 }
 
@@ -60,9 +71,8 @@ export function getPaymentByStyle(basePayment: number, promotionStyle: string): 
 
 // Tax and Fee Constants
 export const TAX_RATES = {
-  PLATFORM_FEE_PERCENT: 10,
+  PLATFORM_FEE_PERCENT: 7.5,
   GST_PERCENT: 18,
-  INTERNATIONAL_FEE_PERCENT: 5,
 };
 
 export interface SponsorPaymentBreakdown {
@@ -104,7 +114,7 @@ export interface InternationalDepositBreakdown {
 }
 
 export function calculateInternationalDeposit(baseAmount: number): InternationalDepositBreakdown {
-  const processingFee = Math.round(baseAmount * TAX_RATES.INTERNATIONAL_FEE_PERCENT) / 100;
+  const processingFee = Math.round(baseAmount * 5) / 100;
   const totalPayable = baseAmount + processingFee;
   return {
     baseAmount,

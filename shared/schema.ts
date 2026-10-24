@@ -11,11 +11,15 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull().default("creator"), // creator, sponsor, admin
-  handle: text("handle").notNull().unique(),
+  handle: text("handle"),
   avatar: text("avatar"),
   tier: text("tier").default("Tier 1"),
   companyName: text("company_name"),
-  isEmailVerified: boolean("is_email_verified").notNull().default(false),
+  status: text("status").notNull().default("active"),
+  gstin: text("gstin"),
+  pan: text("pan"),
+  billingAddress: text("billing_address"),
+  isEmailVerified: boolean("email_verified").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -301,6 +305,103 @@ export const appConfig = pgTable("app_config", {
   value: text("value").notNull(),
 });
 
+// 27. Campaign Slots
+export const campaignSlots = pgTable("campaign_slots", {
+  id: serial("id").primaryKey(),
+  campaignId: integer("campaign_id").notNull().references(() => campaigns.id),
+  creatorId: integer("creator_id").notNull().references(() => users.id),
+  price: decimal("price", { precision: 14, scale: 2 }).notNull(),
+  feeArtist: decimal("fee_artist", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  feeCreator: decimal("fee_creator", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  creatorNet: decimal("creator_net", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  status: text("status").notNull().default("reserved"),
+  deadline: timestamp("deadline").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// 28. Submissions
+export const submissions = pgTable("submissions", {
+  id: serial("id").primaryKey(),
+  slotId: integer("slot_id").references(() => campaignSlots.id),
+  campaignId: integer("campaign_id").notNull().references(() => campaigns.id),
+  creatorId: integer("creator_id").notNull().references(() => users.id),
+  postUrl: text("post_url").notNull(),
+  postMediaId: text("post_media_id"),
+  audioConfirmed: boolean("audio_confirmed").notNull().default(false),
+  viewsCount: integer("views_count").notNull().default(0),
+  likesCount: integer("likes_count").notNull().default(0),
+  commentsCount: integer("comments_count").notNull().default(0),
+  status: text("status").notNull().default("pending"),
+  rejectionReason: text("rejection_reason"),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
+});
+
+// 29. Payouts
+export const payouts = pgTable("payouts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  tdsAmount: decimal("tds_amount", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  netAmount: decimal("net_amount", { precision: 14, scale: 2 }).notNull(),
+  payoutMethodId: integer("payout_method_id"),
+  payoutDetails: jsonb("payout_details").notNull().default({}),
+  status: text("status").notNull().default("pending"),
+  transferRef: text("transfer_ref"),
+  rejectionReason: text("rejection_reason"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  processedAt: timestamp("processed_at"),
+  processedBy: integer("processed_by").references(() => users.id),
+});
+
+// 30. Wallet Transactions
+export const walletTransactions = pgTable("wallet_transactions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  type: text("type").notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  balanceAfter: decimal("balance_after", { precision: 14, scale: 2 }).notNull(),
+  escrowAfter: decimal("escrow_after", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  referenceType: text("reference_type"),
+  referenceId: text("reference_id"),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// 31. Platform Earnings
+export const platformEarnings = pgTable("platform_earnings", {
+  id: serial("id").primaryKey(),
+  dealId: integer("deal_id"),
+  campaignId: integer("campaign_id").references(() => campaigns.id),
+  source: text("source").notNull(),
+  feeAmount: decimal("fee_amount", { precision: 14, scale: 2 }).notNull(),
+  gstAmount: decimal("gst_amount", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  totalEarned: decimal("total_earned", { precision: 14, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// 32. Bank Accounts
+export const bankAccounts = pgTable("bank_accounts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  type: text("type").notNull(),
+  upiId: text("upi_id"),
+  accountName: text("account_name"),
+  accountNumber: text("account_number"),
+  ifsc: text("ifsc"),
+  bankName: text("bank_name"),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// 33. Admin Settings
+export const adminSettings = pgTable("admin_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  description: text("description"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Zod Schemas
 export const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -331,6 +432,27 @@ export const PROMOTION_CATEGORIES = [
 ] as const;
 
 export const SUBSCRIPTION_PLANS = {
-  free: { id: "free", name: "Free", price: 0, features: ["Browse campaigns", "View campaign details", "Profile access"], canReserve: false },
-  pro: { id: "pro", name: "Pro Creator", price: 399, features: ["Reserve ads", "Priority support", "Pro badge"], canReserve: true },
-} as const;
+  free: {
+    id: "free",
+    name: "Free Creator",
+    price: 0,
+    features: [
+      "Access to public song campaigns",
+      "Standard 7.5% platform fee",
+      "Standard payout support",
+      "Official Instagram verification badge",
+    ],
+  },
+  pro: {
+    id: "pro",
+    name: "Creator Pro",
+    price: 399,
+    features: [
+      "Lower 4.0% creator fee (save 3.5% on every deal)",
+      "Featured placement in artist directory",
+      "Early campaign invites (24 hours in advance)",
+      "Detailed metrics & views analytics",
+      "Priority KYC and withdrawal processing",
+    ],
+  },
+};

@@ -9,59 +9,44 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { api, type ApiCategorySubscription, type ApiCampaign, type ApiReservation, formatINR } from "@/lib/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
-import { 
-  Users, ChevronRight, X, Lock, Clock, Building2, Gift, Globe, Star, AtSign, MapPin, 
-  IndianRupee, Sparkles, FileDown, Download, Film, Smartphone, Image as ImageIcon, 
-  LayoutGrid, Share2, Video, CheckCircle, AlertTriangle, ArrowRight, Package, XCircle
-} from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useLocation } from "wouter";
 import { PROMOTION_CATEGORIES } from "@shared/schema";
 import { TIERS, formatFollowers, getTierByFollowers } from "@shared/tiers";
 import { COUNTRIES, getCountryByCode } from "@shared/countries";
 import { getCitiesByCountry } from "@shared/cities";
-import { 
-  Music, 
-  Heart, 
-  Utensils, 
-  Gamepad2, 
-  Dumbbell, 
-  GraduationCap, 
-  Plane, 
-  Wallet, 
-  ShoppingBag 
-} from "lucide-react";
 import { useState, useMemo } from "react";
 
-const iconMap: Record<string, React.ElementType> = {
-  music: Music,
-  heart: Heart,
-  smartphone: Smartphone,
-  utensils: Utensils,
-  "gamepad-2": Gamepad2,
-  dumbbell: Dumbbell,
-  "graduation-cap": GraduationCap,
-  plane: Plane,
-  wallet: Wallet,
-  "shopping-bag": ShoppingBag,
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = (_props?: any) => null;
+const Instagram = __DummyIcon;
+const Camera = __DummyIcon;
+const Send = __DummyIcon;
+const Info = __DummyIcon;
+const File = __DummyIcon;
+const Check = __DummyIcon;
+const User = __DummyIcon;
+
+
+
+const PROMOTION_STYLE_LABELS: Record<string, { label: string; description: string }> = {
+  lyricals: { label: "Lyricals / Page Promotion", description: "Use provided content/audio only" },
+  face_ad: { label: "Face on Camera", description: "Appear in video for the ad" },
+  share_only: { label: "Direct Share", description: "Share sponsor's provided file" },
 };
 
-const PROMOTION_STYLE_LABELS: Record<string, { label: string; icon: React.ElementType; description: string }> = {
-  lyricals: { label: "Lyricals / Page Promotion", icon: Music, description: "Use provided content/audio only" },
-  face_ad: { label: "Face on Camera", icon: Video, description: "Appear in video for the ad" },
-  share_only: { label: "Direct Share", icon: Share2, description: "Share sponsor's provided file" },
-};
-
-const CONTENT_TYPE_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
-  reel: { label: "Reel", icon: Film },
-  story: { label: "Story", icon: Smartphone },
-  post: { label: "Post", icon: ImageIcon },
-  carousel: { label: "Carousel", icon: LayoutGrid },
+const CONTENT_TYPE_LABELS: Record<string, { label: string }> = {
+  reel: { label: "Reel" },
+  story: { label: "Story" },
+  post: { label: "Post" },
+  carousel: { label: "Carousel" },
 };
 
 interface CampaignGroup {
@@ -74,6 +59,14 @@ interface CampaignGroup {
   description: string;
   campaignType: string;
   mentions: string[];
+  songUrl?: string;
+  audioUrl?: string;
+  requiredTags?: string[];
+  requiredCaptionNote?: string;
+  targetCities?: string[];
+  targetCountries?: string[];
+  assetUrl?: string;
+  assetFileName?: string;
 }
 
 export default function Campaigns() {
@@ -87,28 +80,71 @@ export default function Campaigns() {
   const [selectedGroup, setSelectedGroup] = useState<CampaignGroup | null>(null);
   const [selectedTierCampaign, setSelectedTierCampaign] = useState<ApiCampaign | null>(null);
   const [hasDownloadedAsset, setHasDownloadedAsset] = useState(false);
+  const [customQuotePrice, setCustomQuotePrice] = useState("");
+
+  const applyQuoteMutation = useMutation({
+    mutationFn: ({ campaignId, quotedPrice }: { campaignId: number; quotedPrice: number }) => {
+      if (!user) throw new Error("User not found");
+      return api.applyWithQuote(campaignId, quotedPrice);
+    },
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      queryClient.invalidateQueries({ queryKey: ["allCampaigns"] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      setSelectedGroup(null);
+      setSelectedTierCampaign(null);
+      setCustomQuotePrice("");
+      toast.success("Custom quote proposal submitted successfully! Workspace opened.");
+      navigate(`/campaigns/${variables.campaignId}/workspace`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to submit custom quote proposal");
+    },
+  });
 
   const { data: user } = useQuery({
     queryKey: ["currentUser"],
     queryFn: api.getCurrentUser,
   });
 
-  const { data: subscription } = useQuery({
-    queryKey: ["subscription", user?.id],
-    queryFn: () => api.getSubscription(user!.id),
-    enabled: !!user?.id,
-  });
-  const hasActiveSubscription = Boolean(
-    subscription?.isActive && 
-    subscription?.plan && 
-    subscription.plan !== "free" &&
-    user?.subscriptionPlan !== "free"
-  );
+  const [loadingGroup, setLoadingGroup] = useState<string | null>(null);
 
   const { data: subscriptions = [] } = useQuery({
     queryKey: ["categorySubscriptions", user?.id],
-    queryFn: () => api.getUserCategorySubscriptions(user!.id),
+    queryFn: () => (user?.id ? api.getUserCategorySubscriptions(user.id) : []),
     enabled: !!user?.id,
+  });
+
+  const subscribeMutation = useMutation({
+    mutationFn: ({ category, tier }: { category: string; tier: string }) => {
+      if (!user) throw new Error("Please log in first");
+      return api.subscribeToCategoryGroup(user.id, category, tier);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["categorySubscriptions"] });
+      toast.success("Joined category group successfully!");
+      setLoadingGroup(null);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to join group");
+      setLoadingGroup(null);
+    },
+  });
+
+  const unsubscribeMutation = useMutation({
+    mutationFn: ({ category, tier }: { category: string; tier: string }) => {
+      if (!user) throw new Error("Please log in first");
+      return api.unsubscribeFromCategoryGroup(user.id, category, tier);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["categorySubscriptions"] });
+      toast.success("Left category group");
+      setLoadingGroup(null);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to leave group");
+      setLoadingGroup(null);
+    },
   });
 
   const { data: allCampaigns = [] } = useQuery({
@@ -128,18 +164,17 @@ export default function Campaigns() {
   const reserveMutation = useMutation({
     mutationFn: ({ campaignId }: { campaignId: number }) => {
       if (!user) throw new Error("User not found");
-      if (!hasActiveSubscription) {
-        throw new Error("Upgrade Required: Aapko campaign reserve karne ke liye Pro plan par upgrade karna padega.");
-      }
-      return api.reserveCampaign(user.id, campaignId);
+      return api.applyOrReserveSlot(campaignId);
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["reservations"] });
       queryClient.invalidateQueries({ queryKey: ["allCampaigns"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      queryClient.invalidateQueries({ queryKey: ["creatorCampaignWorkspaces"] });
       setSelectedGroup(null);
       setSelectedTierCampaign(null);
-      toast.success("Campaign reserved successfully! Submit your content within 48 hours.");
+      toast.success(data.message || "Slot confirmed! Opening My Campaigns...");
+      navigate("/my-campaigns");
     },
     onError: (error: Error) => {
       toast.error(error.message || "Could not reserve campaign");
@@ -151,7 +186,6 @@ export default function Campaigns() {
     if (!r) return false;
     if (r.status === "expired" || r.status === "rejected") return false;
     if (r.status === "reserved" && !r.submittedAt) {
-      if (!hasActiveSubscription) return false;
       const isExpired = r.expiresAt ? new Date(r.expiresAt).getTime() <= Date.now() : false;
       if (isExpired) return false; // Time passed without submission -> spot is freed
     }
@@ -223,10 +257,48 @@ export default function Campaigns() {
     return lowestCampaignTierId > userTierId;
   };
 
+  const canJoinTier = (tierId: number): boolean => {
+    const userTierId = getUserTierId();
+    return tierId <= userTierId;
+  };
+
+  const isSubscribed = (category: string, tier: string): boolean => {
+    return subscriptions.some(
+      (sub: ApiCategorySubscription) => sub.category === category && sub.tier === tier
+    );
+  };
+
+  const isInstagramConnected = !!user?.instagramUsername;
+
+  const handleToggleSubscription = (category: string, tierName: string, tierId: number) => {
+    const groupKey = `${category}-${tierName}`;
+    
+    if (isSubscribed(category, tierName)) {
+      setLoadingGroup(groupKey);
+      unsubscribeMutation.mutate({ category, tier: tierName });
+    } else {
+      if (!isInstagramConnected) {
+        toast.error("Please connect your Instagram account first from Profile page");
+        return;
+      }
+      if (!canJoinTier(tierId)) {
+        const tier = TIERS.find(t => t.id === tierId);
+        toast.error(`You need ${tier ? formatFollowers(tier.minFollowers) : tierName}+ followers to join this group`);
+        return;
+      }
+      setLoadingGroup(groupKey);
+      subscribeMutation.mutate({ category, tier: tierName });
+    }
+  };
+
+  const getSubscriptionCount = (category: string): number => {
+    return subscriptions.filter((sub: ApiCategorySubscription) => sub.category === category).length;
+  };
+
   // Filter out campaigns that the user currently has actively reserved.
   // They only show in My Campaigns, unless the submission window expires or reservation is released.
   const activeCampaigns = allCampaigns.filter((c: ApiCampaign) => {
-    if (c.status !== "active" || c.spotsRemaining <= 0) return false;
+    if (c.status !== "published" && c.status !== "filling_slots" && c.status !== "in_progress" || c.spotsRemaining <= 0) return false;
     if (isAlreadyReserved(c.id)) return false;
     return true;
   });
@@ -251,13 +323,23 @@ export default function Campaigns() {
           deadline: campaign.deadline,
           description: campaign.description,
           campaignType: campaign.campaignType || "cash",
-          mentions: campaign.mentions || [],
+          mentions: campaign.mentions || (campaign as any).requiredMentions || [],
+          songUrl: (campaign as any).songUrl || (campaign as any).audioUrl,
+          audioUrl: (campaign as any).audioUrl || (campaign as any).songUrl,
+          requiredTags: (campaign as any).requiredTags || (campaign as any).hashtags || [],
+          requiredCaptionNote: (campaign as any).requiredCaptionNote || (campaign as any).disclosureInstructions,
+          targetCities: campaign.targetCities || [],
+          targetCountries: campaign.targetCountries || [],
+          assetUrl: campaign.assetUrl,
+          assetFileName: campaign.assetFileName,
         });
       }
       
-      const group = groups.get(baseTitle)!;
-      group.campaigns.push(campaign);
-      group.totalSpots += campaign.spotsRemaining;
+      const group = groups.get(baseTitle);
+      if (group) {
+        group.campaigns.push(campaign);
+        group.totalSpots += campaign.spotsRemaining;
+      }
     });
 
     groups.forEach(group => {
@@ -317,8 +399,8 @@ export default function Campaigns() {
   const activeReservation = activeTargetCampaign ? getReservationForCampaign(activeTargetCampaign.id) : undefined;
   const isTargetLocked = activeTargetCampaign ? isCampaignLocked(activeTargetCampaign) : false;
   const isTargetReserved = !!activeReservation;
-  const requiresDownload = !!activeTargetCampaign?.assetUrl;
-  const canReserveActiveTarget = !requiresDownload || hasDownloadedAsset;
+  const requiresDownload = true;
+  const canReserveActiveTarget = hasDownloadedAsset;
 
   return (
     <TooltipProvider>
@@ -328,8 +410,8 @@ export default function Campaigns() {
         {/* Mobile Sticky Top Header */}
         <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 dark:bg-zinc-950/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full shadow-xs">
           <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-base font-bold text-foreground truncate">Campaigns</h1>
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary whitespace-nowrap">Grid</span>
+            <h1 className="text-base font-bold text-foreground truncate">Fixed Price Campaigns</h1>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 whitespace-nowrap">Tier Model</span>
           </div>
           {user && <NotificationDropdown userId={user.id} />}
         </header>
@@ -343,8 +425,15 @@ export default function Campaigns() {
             >
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div className="hidden md:block">
-                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" data-testid="text-page-title">Campaigns</h1>
-                  <p className="text-xs sm:text-sm text-muted-foreground">Browse and discover promotional campaigns in a compact grid view. Click any card for full details.</p>
+                  <div className="flex items-center gap-2.5">
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" data-testid="text-page-title">Fixed Price Campaigns</h1>
+                    <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20 font-semibold">
+                      Tier-Based Model
+                    </Badge>
+                  </div>
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+                    Join category groups matching your follower tier to unlock guaranteed fixed-payout promotional ads.
+                  </p>
                 </div>
                 
                 {/* Filters Row */}
@@ -359,10 +448,7 @@ export default function Campaigns() {
                         }}
                       >
                         <SelectTrigger className="w-full sm:w-[140px] text-xs h-8 sm:h-9" data-testid="select-country-filter">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <SelectValue placeholder="All Countries" />
-                          </div>
+                          <SelectValue placeholder="All Countries" />
                         </SelectTrigger>
                         <SelectContent className="max-h-[300px]">
                           <SelectItem value="all">All Countries</SelectItem>
@@ -381,10 +467,7 @@ export default function Campaigns() {
                         onValueChange={setCityFilter}
                       >
                         <SelectTrigger className="w-full sm:w-[140px] text-xs h-8 sm:h-9" data-testid="select-city-filter">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <SelectValue placeholder="All Cities" />
-                          </div>
+                          <SelectValue placeholder="All Cities" />
                         </SelectTrigger>
                         <SelectContent className="max-h-[300px]">
                           <SelectItem value="all">All Cities</SelectItem>
@@ -392,8 +475,8 @@ export default function Campaigns() {
                             ? getCitiesByCountry(countryFilter)
                             : Array.from(new Set(
                                 allCampaigns
-                                  .flatMap((c: any) => c.targetCities || [])
-                                  .filter(Boolean)
+                                   .flatMap((c: any) => c.targetCities || [])
+                                   .filter(Boolean)
                               )).sort()
                           ).map((cityName: string) => (
                             <SelectItem key={cityName} value={cityName}>
@@ -416,7 +499,6 @@ export default function Campaigns() {
                       className="h-8 px-2 text-xs text-muted-foreground self-end sm:self-center"
                       data-testid="button-clear-filter"
                     >
-                      <X className="h-3.5 w-3.5 mr-1" />
                       Clear filters
                     </Button>
                   )}
@@ -425,56 +507,59 @@ export default function Campaigns() {
             </motion.div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-3 sm:mb-5 h-9 sm:h-10 p-1 bg-muted/70 rounded-xl">
-                <TabsTrigger value="all-campaigns" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-all-campaigns">All Campaigns</TabsTrigger>
-                <TabsTrigger value="my-campaigns" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-my-campaigns">My Groups & Categories</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-3 mb-3 sm:mb-5 h-9 sm:h-10 p-1 bg-muted/70 rounded-xl">
+                <TabsTrigger value="all-campaigns" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-all-campaigns">
+                  Fixed Price Ads
+                </TabsTrigger>
+                <TabsTrigger value="join-groups" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-join-groups">
+                  Join Groups {subscriptions.length > 0 && `(${subscriptions.length})`}
+                </TabsTrigger>
+                <TabsTrigger value="my-campaigns" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-my-campaigns">
+                  Joined Categories {joinedCategories.length > 0 && `(${joinedCategories.length})`}
+                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="all-campaigns">
                 {user?.instagramUsername && user?.tier ? (
-                  <div className="mb-3 sm:mb-4 flex items-center justify-between gap-2 rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 p-2.5 sm:p-3.5 border border-amber-500/20 text-xs sm:text-sm">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Lock className="h-4 w-4 text-amber-500 shrink-0" />
-                      <p className="truncate">
-                        <span className="font-semibold text-foreground">Tier: {user.tier}</span> ({formatFollowers(TIERS.find(t => t.name === user.tier)?.minFollowers || 500)}+ followers)
-                      </p>
+                  <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-foreground font-semibold shrink-0 border border-border/60">
+                        {user.tier.charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-semibold text-foreground">Tier: {user.tier}</span>
+                        <span className="text-muted-foreground ml-1.5">
+                          ({formatFollowers(TIERS.find(t => t.name === user.tier)?.minFollowers || 500)}+ followers verified)
+                        </span>
+                      </div>
                     </div>
-                    <span className="text-[11px] text-muted-foreground whitespace-nowrap hidden sm:inline">
-                      Click any card for full details
+                    <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline">
+                      Click any card to reserve your slot
                     </span>
                   </div>
                 ) : (
-                  <div className="mb-3 sm:mb-4 flex items-center gap-2.5 rounded-xl bg-gradient-to-r from-blue-500/10 to-cyan-500/10 p-2.5 sm:p-3.5 border border-blue-500/20 text-xs sm:text-sm">
-                    <Lock className="h-4 w-4 text-blue-500 shrink-0" />
+                  <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
                     <div>
-                      <span className="font-medium text-foreground">Connect Instagram to view eligible tiers</span>
+                      <span className="font-medium text-foreground">Connect Instagram in Profile to sync audience tier</span>
                     </div>
                   </div>
                 )}
 
                 {campaignGroups.length === 0 ? (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center justify-center py-16 text-center"
-                  >
-                    <div className="mb-4 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 p-5">
-                      <Building2 className="h-10 w-10 text-amber-500" />
-                    </div>
-                    <h2 className="text-xl font-bold mb-1">No campaigns available</h2>
-                    <p className="text-xs sm:text-sm text-muted-foreground max-w-md">
-                      Check back later or adjust your country/city filters
+                  <div className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40">
+                    <h2 className="text-base font-bold mb-1 text-foreground">No campaigns available</h2>
+                    <p className="text-xs text-muted-foreground max-w-sm">
+                      Check back soon or adjust your country and city filters above
                     </p>
-                  </motion.div>
+                  </div>
                 ) : (
                   /* Responsive Grid: 2 columns on mobile, 3 on tablet, 4 on desktop */
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                     {campaignGroups.map((group, index: number) => {
                       const isLocked = isGroupLocked(group);
                       const isReserved = isAnyReservedInGroup(group);
                       const bestCampaign = getBestCampaignForUser(group);
                       const lowestTier = group.campaigns[0];
-                      const lowestTierInfo = TIERS.find(t => t.name === lowestTier?.tier);
                       
                       const allPromotional = group.campaigns.every(c => c.isPromotional);
                       
@@ -485,123 +570,70 @@ export default function Campaigns() {
                         ? formatINR(minPay.toString()) 
                         : `${formatINR(minPay.toString())} - ${formatINR(maxPay.toString())}`;
                       
-                      const starRewards = group.campaigns.filter(c => c.isPromotional).map(c => c.starReward || 1);
-                      const minStars = starRewards.length > 0 ? Math.min(...starRewards) : 0;
-                      const maxStars = starRewards.length > 0 ? Math.max(...starRewards) : 0;
-                      const starDisplay = minStars === maxStars 
-                        ? `${minStars} Star${minStars !== 1 ? 's' : ''}` 
-                        : `${minStars}-${maxStars} Stars`;
-                      
                       return (
                         <motion.div
                           key={group.title}
-                          initial={{ opacity: 0, y: 15 }}
+                          initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: index * 0.02 }}
                           className="h-full"
                         >
                           <Card 
-                            className={`group relative flex flex-col h-full overflow-hidden rounded-xl sm:rounded-2xl border border-border/80 bg-card hover:border-primary/50 transition-all duration-200 hover:shadow-md cursor-pointer active:scale-[0.98] ${
-                              isReserved ? 'border-green-500/50 dark:border-green-500/40' : ''
-                            } ${isLocked ? 'opacity-90' : ''}`}
+                            className={`group relative flex flex-col h-full overflow-hidden rounded-xl border border-border/80 bg-card hover:border-border transition-all duration-150 hover:shadow-xs cursor-pointer active:scale-[0.99] ${
+                              isReserved ? 'ring-1 ring-emerald-500/40 border-emerald-500/40' : ''
+                            } ${isLocked ? 'opacity-85' : ''}`}
                             onClick={() => handleOpenGroupDetails(group)}
                             data-testid={`card-campaign-grid-${index}`}
                           >
-                            {/* Card Banner */}
-                            <div className="h-24 sm:h-32 w-full relative overflow-hidden bg-zinc-900">
-                              {group.brandLogo ? (
-                                <img 
-                                  src={group.brandLogo} 
-                                  alt={group.brand} 
-                                  className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300" 
-                                />
-                              ) : (
-                                <div className="h-full w-full bg-gradient-to-br from-purple-600 via-pink-600 to-rose-500 flex items-center justify-center">
-                                  <span className="text-3xl sm:text-4xl font-bold text-white/90">{group.brand.charAt(0).toUpperCase()}</span>
-                                </div>
-                              )}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
-                              
-                              {/* Top status badges */}
-                              <div className="absolute top-1.5 left-1.5 right-1.5 flex items-center justify-between gap-1 z-10">
+                            {/* Card Header (Pure Typographic Precision) */}
+                            <div className="p-3.5 border-b border-border/70 flex flex-col justify-between">
+                              <div className="flex items-center justify-between gap-1 mb-2">
                                 {isReserved ? (
-                                  <Badge className="bg-green-600/90 hover:bg-green-600 text-[10px] sm:text-xs py-0.5 px-1.5 sm:px-2 shadow-xs backdrop-blur-xs font-semibold">
-                                    ✓ Reserved
-                                  </Badge>
+                                  <span className="bg-emerald-600 text-white text-[10px] font-semibold py-0.5 px-2 rounded">
+                                    Reserved
+                                  </span>
                                 ) : isLocked ? (
-                                  <Badge variant="destructive" className="text-[10px] sm:text-xs py-0.5 px-1.5 sm:px-2 shadow-xs font-semibold">
-                                    <Lock className="h-2.5 w-2.5 mr-1" /> Locked
-                                  </Badge>
-                                ) : !hasActiveSubscription ? (
-                                  <Badge className="bg-red-600 hover:bg-red-700 text-white text-[10px] sm:text-xs py-0.5 px-1.5 sm:px-2 shadow-xs font-semibold flex items-center gap-1 border-0">
-                                    <XCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-white shrink-0" /> Upgrade Required
-                                  </Badge>
+                                  <span className="bg-muted text-muted-foreground text-[10px] font-medium py-0.5 px-1.5 rounded border border-border">
+                                    Locked
+                                  </span>
                                 ) : (
-                                  <span />
+                                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                                    Fixed Ad
+                                  </span>
                                 )}
 
-                                <Badge variant="secondary" className="bg-black/60 backdrop-blur-md text-white border-0 text-[10px] py-0.5 px-1.5 font-medium ml-auto">
+                                <span className="text-[10px] text-muted-foreground font-medium">
                                   {group.campaigns.length} {group.campaigns.length === 1 ? 'tier' : 'tiers'}
-                                </Badge>
+                                </span>
                               </div>
 
-                              {/* Free Plan Upgrade Required Hover Banner */}
-                              {!hasActiveSubscription && (
-                                <div className="absolute inset-x-0 bottom-0 bg-red-600/95 text-white text-[11px] font-semibold py-1.5 px-2 flex items-center justify-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20 shadow-md">
-                                  <XCircle className="h-3.5 w-3.5 text-white shrink-0" />
-                                  <span>Upgrade to Pro required to reserve</span>
-                                </div>
-                              )}
-
-                              {/* Title & Brand overlay at bottom of banner */}
-                              <div className="absolute bottom-1.5 sm:bottom-2 left-2 right-2 z-10">
-                                <h3 className="font-bold text-xs sm:text-sm text-white line-clamp-1 leading-snug drop-shadow-md">
+                              <div>
+                                <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-1 leading-snug">
                                   {group.title}
                                 </h3>
-                                <p className="text-[10px] sm:text-xs text-white/80 line-clamp-1">
+                                <p className="text-[10px] sm:text-xs text-muted-foreground line-clamp-1 mt-0.5">
                                   {group.brand}
                                 </p>
                               </div>
                             </div>
 
                             {/* Card Body */}
-                            <CardContent className="p-2 sm:p-3 flex-1 flex flex-col justify-between gap-2 bg-card">
-                              {/* Payout and Tier Pills */}
-                              <div className="flex items-center justify-between gap-1 flex-wrap">
-                                {group.campaignType === "product" ? (
-                                  <Badge variant="secondary" className="bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 text-[10px] sm:text-xs py-0.5 px-1.5 font-semibold">
-                                    <Gift className="h-2.5 w-2.5 mr-0.5 shrink-0" />
-                                    Free Product
-                                  </Badge>
-                                ) : allPromotional ? (
-                                  <Badge variant="secondary" className="bg-yellow-100 text-yellow-800 dark:bg-yellow-950/60 dark:text-yellow-300 text-[10px] sm:text-xs py-0.5 px-1.5 font-semibold">
-                                    <Star className="h-2.5 w-2.5 mr-0.5 fill-yellow-500 shrink-0" />
-                                    {starDisplay}
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300 text-[10px] sm:text-xs py-0.5 px-1.5 font-bold">
-                                    {bestCampaign && !isLocked ? formatINR(bestCampaign.payAmount) : paymentDisplay}
-                                  </Badge>
-                                )}
-
-                                {bestCampaign && !isLocked ? (
-                                  <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground border-border/80">
-                                    {bestCampaign.tier}
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-[10px] py-0 px-1 text-muted-foreground border-border/80">
-                                    {lowestTier?.tier || "Starter"}
-                                  </Badge>
-                                )}
+                            <CardContent className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between gap-2.5 bg-card">
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-bold text-xs sm:text-sm text-foreground tabular-nums">
+                                  {bestCampaign && !isLocked ? formatINR(bestCampaign.payAmount) : paymentDisplay}
+                                </span>
+                                <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                                  {bestCampaign?.tier || lowestTier?.tier || "Starter"}
+                                </span>
                               </div>
 
-                              {/* Footer metrics: Deadline & spots */}
-                              <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1 border-t border-border/60">
-                                <span className="flex items-center gap-1 truncate">
-                                  <Clock className="h-2.5 w-2.5 shrink-0" />
-                                  {new Date(group.deadline).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                              {/* Footer metadata: Deadline & spots */}
+                              <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2 border-t border-border/60">
+                                <span className="truncate">
+                                  Due {new Date(group.deadline).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
                                 </span>
-                                <span className="font-medium text-foreground whitespace-nowrap">
+                                <span className="font-medium text-foreground whitespace-nowrap tabular-nums">
                                   {group.totalSpots} spots
                                 </span>
                               </div>
@@ -614,46 +646,193 @@ export default function Campaigns() {
                 )}
               </TabsContent>
 
+              <TabsContent value="join-groups" className="space-y-4">
+                {/* Follower Tier Status Banner */}
+                {user?.instagramUsername && user?.followers && user.followers >= 500 ? (
+                  <div className="rounded-xl border border-border/80 bg-card p-4 shadow-xs" data-testid="tier-info-banner">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground font-bold text-sm border border-border/60">
+                          {(TIERS.find(t => t.id === getUserTierId())?.name || "Starter").slice(0, 3)}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-foreground text-sm sm:text-base">
+                              @{user.instagramUsername}
+                            </span>
+                            <span className="text-[11px] font-semibold text-foreground bg-muted px-2 py-0.5 rounded border border-border/50">
+                              {TIERS.find(t => t.id === getUserTierId())?.name || "Starter"} Tier
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Audience: <strong className="text-foreground tabular-nums">{user.followers?.toLocaleString()} followers</strong> &bull; Eligible for groups up to {TIERS.find(t => t.id === getUserTierId())?.name} tier
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => setActiveTab("all-campaigns")}
+                        className="rounded-xl bg-primary text-primary-foreground text-xs h-8.5 px-4 self-start sm:self-center shadow-xs"
+                      >
+                        Browse Fixed Ads
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-border/80 bg-card p-4">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Connect Instagram to Sync Tier</p>
+                      <p className="text-xs text-muted-foreground">Go to Profile to link your creator account and sync your verified follower tier.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Category Groups Accordion */}
+                <div className="space-y-3">
+                  {PROMOTION_CATEGORIES.map((category, index) => {
+                    const subCount = getSubscriptionCount(category.id);
+
+                    return (
+                      <motion.div
+                        key={category.id}
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.03 }}
+                      >
+                        <Accordion type="single" collapsible>
+                          <AccordionItem value={category.id} className="border border-border/80 rounded-xl overflow-hidden bg-card">
+                            <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-muted/40 transition-colors" data-testid={`accordion-${category.id}`}>
+                              <div className="flex items-center gap-3 text-left min-w-0 flex-1 pr-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-sm sm:text-base text-foreground">{category.name}</span>
+                                    {subCount > 0 ? (
+                                      <span className="inline-flex items-center text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                                        {subCount} Tier{subCount > 1 ? "s" : ""} Joined
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-muted-foreground">
+                                        Not Joined
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground truncate mt-0.5">{category.description}</p>
+                                </div>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="px-4 pb-4 pt-2 border-t border-border/40 bg-muted/20">
+                              <p className="text-xs font-medium text-muted-foreground mb-3">
+                                Available audience tiers for {category.name} promotions:
+                              </p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                                {TIERS.map((tier) => {
+                                  const eligible = canJoinTier(tier.id);
+                                  const subscribed = isSubscribed(category.id, tier.name);
+                                  const groupKey = `${category.id}-${tier.name}`;
+                                  const isLoading = loadingGroup === groupKey;
+
+                                  return (
+                                    <div
+                                      key={tier.id}
+                                      className={`flex flex-col justify-between p-3.5 rounded-xl border transition-all ${
+                                        subscribed
+                                          ? "border-emerald-500/50 bg-emerald-500/5"
+                                          : eligible
+                                          ? "border-border/80 bg-card hover:border-border"
+                                          : "border-border/40 bg-muted/40 opacity-70"
+                                      }`}
+                                    >
+                                      <div>
+                                        <div className="flex items-center justify-between gap-1.5 mb-1">
+                                          <span className="font-semibold text-xs text-foreground">{tier.name}</span>
+                                          {subscribed ? (
+                                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Joined</span>
+                                          ) : eligible ? (
+                                            <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Eligible</span>
+                                          ) : (
+                                            <span className="text-[10px] text-muted-foreground">Locked</span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-muted-foreground tabular-nums">
+                                          {formatFollowers(tier.minFollowers)}+ followers
+                                        </p>
+                                      </div>
+
+                                      <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between gap-2">
+                                        <span className="text-[11px] text-muted-foreground tabular-nums">
+                                          Payout ~{formatINR((tier.id * 800).toString())}
+                                        </span>
+                                        <Button
+                                          size="sm"
+                                          variant={subscribed ? "outline" : eligible ? "default" : "secondary"}
+                                          disabled={!eligible || isLoading}
+                                          onClick={() => handleToggleSubscription(category.id, tier.name, tier.id)}
+                                          className={`h-7 px-3 text-xs font-semibold rounded-lg shrink-0 ${
+                                            subscribed 
+                                              ? "hover:bg-destructive/10 hover:text-destructive border-border"
+                                              : eligible 
+                                              ? "bg-primary text-primary-foreground hover:bg-primary/90" 
+                                              : ""
+                                          }`}
+                                          data-testid={`button-toggle-${category.id}-${tier.name}`}
+                                        >
+                                          {isLoading ? (
+                                            "Updating..."
+                                          ) : subscribed ? (
+                                            "Leave"
+                                          ) : eligible ? (
+                                            "Join Group"
+                                          ) : (
+                                            "Locked"
+                                          )}
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              </TabsContent>
+
               <TabsContent value="my-campaigns">
                 {joinedCategories.length === 0 ? (
                   <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
+                    initial={{ opacity: 0, scale: 0.98 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center justify-center py-16 text-center"
+                    className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40"
                   >
-                    <div className="mb-4 rounded-full bg-gradient-to-br from-purple-500/20 to-pink-500/20 p-5">
-                      <Users className="h-10 w-10 text-purple-500" />
-                    </div>
-                    <h2 className="text-xl font-bold mb-1">No groups joined yet</h2>
-                    <p className="text-xs sm:text-sm text-muted-foreground mb-4 max-w-md">
-                      Go to the Groups page to join categories for your tier, then your targeted campaigns will appear here.
+                    <h2 className="text-base font-bold mb-1 text-foreground">No groups joined yet</h2>
+                    <p className="text-xs text-muted-foreground mb-4 max-w-sm">
+                      Join category groups for your tier in the "Join Groups" tab to unlock targeted campaigns.
                     </p>
                     <Button 
-                      onClick={() => navigate('/groups')}
-                      className="rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs sm:text-sm"
+                      onClick={() => setActiveTab("join-groups")}
+                      className="rounded-xl bg-primary text-primary-foreground text-xs font-semibold h-8.5 px-4 shadow-xs"
                       data-testid="button-go-to-groups"
                     >
-                      <Users className="mr-2 h-4 w-4" />
-                      Browse Groups
+                      Browse & Join Groups
                     </Button>
                   </motion.div>
                 ) : (
                   <>
-                    <div className="mb-4 flex items-center justify-between gap-3 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 p-3 border border-purple-500/20">
-                      <div className="flex items-center gap-2.5">
-                        <Users className="h-5 w-5 text-purple-500 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-xs sm:text-sm">{joinedCategories.length} Categories Joined</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            Click any category card to view its active campaigns
-                          </p>
-                        </div>
+                    <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4">
+                      <div>
+                        <p className="font-semibold text-xs sm:text-sm text-foreground">{joinedCategories.length} Categories Joined</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Click any category card to view its active campaigns
+                        </p>
                       </div>
                       <Button 
                         size="sm" 
                         variant="outline" 
-                        onClick={() => navigate('/groups')}
-                        className="h-7 text-xs rounded-full shrink-0"
+                        onClick={() => setActiveTab("join-groups")}
+                        className="h-8 text-xs font-semibold rounded-lg shrink-0"
                       >
                         Manage Groups
                       </Button>
@@ -664,7 +843,6 @@ export default function Campaigns() {
                         const category = getCategoryDetails(categoryId);
                         if (!category) return null;
                         
-                        const Icon = iconMap[category.icon] || Music;
                         const maxTier = getMaxTierForCategory(categoryId);
                         
                         return (
@@ -675,22 +853,20 @@ export default function Campaigns() {
                             transition={{ delay: index * 0.03 }}
                           >
                             <Card 
-                              className="cursor-pointer transition-all hover:shadow-md hover:border-purple-400/60 active:scale-[0.98] rounded-xl sm:rounded-2xl border-border/80 overflow-hidden"
+                              className="cursor-pointer transition-all hover:border-border active:scale-[0.99] rounded-xl border border-border/80 bg-card hover:shadow-xs overflow-hidden"
                               onClick={() => navigate(`/campaigns/${categoryId}`)}
                               data-testid={`card-category-${categoryId}`}
                             >
-                              <CardContent className="p-3 sm:p-4 flex flex-col justify-between h-full min-h-[120px]">
+                              <CardContent className="p-3.5 sm:p-4 flex flex-col justify-between h-full min-h-[100px]">
                                 <div className="flex items-start justify-between gap-2">
-                                  <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-xs">
-                                    <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
-                                  </div>
-                                  <Badge variant="secondary" className="bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300 text-[10px] px-1.5 py-0.5">
+                                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Category</span>
+                                  <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded">
                                     {maxTier || "Starter"}
-                                  </Badge>
+                                  </span>
                                 </div>
                                 
-                                <div className="mt-2">
-                                  <h3 className="font-bold text-xs sm:text-sm truncate">{category.name}</h3>
+                                <div className="mt-3">
+                                  <h3 className="font-bold text-xs sm:text-sm text-foreground truncate">{category.name}</h3>
                                   <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">{category.description}</p>
                                 </div>
                               </CardContent>
@@ -717,50 +893,35 @@ export default function Campaigns() {
           <DialogContent className="max-w-xl max-h-[92vh] p-0 overflow-hidden rounded-2xl border-border shadow-2xl">
             {selectedGroup && activeTargetCampaign && (
               <div className="flex flex-col max-h-[92vh]">
-                {/* Modal Header Banner */}
-                <div className="relative h-36 sm:h-44 w-full overflow-hidden bg-zinc-900 shrink-0">
-                  {selectedGroup.brandLogo ? (
-                    <img 
-                      src={selectedGroup.brandLogo} 
-                      alt={selectedGroup.brand} 
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="h-full w-full bg-gradient-to-br from-purple-600 via-pink-600 to-rose-500 flex items-center justify-center">
-                      <span className="text-5xl font-bold text-white/90">{selectedGroup.brand.charAt(0).toUpperCase()}</span>
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/20" />
-                  
-                  {/* Floating Top Badges */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
-                    <Badge variant="secondary" className="bg-black/60 backdrop-blur-md text-white border-0 text-xs px-2.5 py-1">
+                {/* Modal Header (Pure Typographic Precision) */}
+                <div className="p-4 sm:p-5 border-b border-border/80 bg-card shrink-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-muted-foreground tracking-wide uppercase">
                       {selectedGroup.brand}
-                    </Badge>
+                    </span>
                     <div className="flex items-center gap-1.5">
                       {isTargetReserved ? (
-                        <Badge className="bg-green-600 text-white font-semibold text-xs shadow-md">
-                          ✓ Reserved
-                        </Badge>
+                        <span className="bg-emerald-600 text-white font-semibold text-xs py-0.5 px-2.5 rounded">
+                          Reserved
+                        </span>
                       ) : isTargetLocked ? (
-                        <Badge variant="destructive" className="font-semibold text-xs shadow-md">
-                          <Lock className="h-3 w-3 mr-1" /> Locked
-                        </Badge>
+                        <span className="bg-muted text-muted-foreground font-medium text-xs py-0.5 px-2 rounded border border-border">
+                          Locked
+                        </span>
                       ) : (
-                        <Badge className="bg-emerald-600 text-white font-semibold text-xs shadow-md">
+                        <span className="bg-muted text-foreground font-semibold text-xs py-0.5 px-2 rounded border border-border/60">
                           Eligible
-                        </Badge>
+                        </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Title Info */}
-                  <div className="absolute bottom-3 left-4 right-4">
-                    <DialogTitle className="text-lg sm:text-xl font-bold text-white leading-tight drop-shadow-md">
+                  <div>
+                    <DialogTitle className="text-base sm:text-lg font-bold text-foreground leading-tight">
                       {selectedGroup.title}
                     </DialogTitle>
-                    <DialogDescription className="text-xs sm:text-sm text-white/80 mt-0.5">
-                      Campaign by <span className="font-medium text-white">{selectedGroup.brand}</span>
+                    <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                      Campaign by <span className="font-medium text-foreground">{selectedGroup.brand}</span>
                     </DialogDescription>
                   </div>
                 </div>
@@ -773,53 +934,59 @@ export default function Campaigns() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                       {/* Reward / Payout */}
                       {selectedGroup.campaignType === "product" ? (
-                        <div className="flex flex-col items-center justify-center rounded-xl bg-purple-500/10 border border-purple-500/20 p-2.5 text-center">
-                          <Gift className="h-4 w-4 text-purple-600 dark:text-purple-400 mb-1" />
+                        <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                           <span className="text-[10px] text-muted-foreground uppercase font-medium">Reward</span>
-                          <span className="text-sm font-bold text-purple-600 dark:text-purple-400">Free Product</span>
+                          <span className="text-xs sm:text-sm font-bold text-foreground mt-1">Free Product</span>
                         </div>
                       ) : activeTargetCampaign.isPromotional ? (
-                        <div className="flex flex-col items-center justify-center rounded-xl bg-yellow-500/10 border border-yellow-500/20 p-2.5 text-center">
-                          <Star className="h-4 w-4 text-yellow-500 fill-yellow-500 mb-1" />
+                        <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                           <span className="text-[10px] text-muted-foreground uppercase font-medium">Reward</span>
-                          <span className="text-sm font-bold text-yellow-600 dark:text-yellow-400">
-                            {activeTargetCampaign.starReward || 1} ⭐ Stars
+                          <span className="text-xs sm:text-sm font-bold text-foreground mt-1 tabular-nums">
+                            {activeTargetCampaign.starReward || 1} Stars
                           </span>
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center justify-center rounded-xl bg-green-500/10 border border-green-500/20 p-2.5 text-center">
-                          <IndianRupee className="h-4 w-4 text-green-600 dark:text-green-400 mb-1" />
+                        <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                           <span className="text-[10px] text-muted-foreground uppercase font-medium">Payout</span>
-                          <span className="text-sm font-bold text-green-600 dark:text-green-400">
+                          <span className="text-xs sm:text-sm font-bold text-foreground mt-1 tabular-nums">
                             {formatINR(activeTargetCampaign.payAmount)}
                           </span>
                         </div>
                       )}
 
                       {/* Spots */}
-                      <div className="flex flex-col items-center justify-center rounded-xl bg-blue-500/10 border border-blue-500/20 p-2.5 text-center">
-                        <Users className="h-4 w-4 text-blue-600 dark:text-blue-400 mb-1" />
+                      <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                         <span className="text-[10px] text-muted-foreground uppercase font-medium">Spots Left</span>
-                        <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                          {activeTargetCampaign.spotsRemaining} / {activeTargetCampaign.totalSpots}
+                        <span className="text-xs sm:text-sm font-bold text-foreground mt-1 tabular-nums">
+                          {(() => {
+                            const rem = activeTargetCampaign.spotsRemaining ?? (activeTargetCampaign as any).remainingSlots ?? Math.max(0, (activeTargetCampaign.totalSpots ?? (activeTargetCampaign as any).totalSlots ?? 10) - ((activeTargetCampaign as any).spotsFilled || 0));
+                            const tot = activeTargetCampaign.totalSpots ?? (activeTargetCampaign as any).totalSlots ?? 10;
+                            return `${rem} / ${tot}`;
+                          })()}
                         </span>
                       </div>
 
                       {/* Tier / Min Followers */}
-                      <div className="flex flex-col items-center justify-center rounded-xl bg-purple-500/10 border border-purple-500/20 p-2.5 text-center">
-                        <Sparkles className="h-4 w-4 text-purple-600 dark:text-purple-400 mb-1" />
+                      <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                         <span className="text-[10px] text-muted-foreground uppercase font-medium">Required Tier</span>
-                        <span className="text-sm font-bold text-purple-600 dark:text-purple-400">
-                          {activeTargetCampaign.tier}
+                        <span className="text-xs sm:text-sm font-bold text-foreground mt-1">
+                          {(() => {
+                            if (activeTargetCampaign.tier) return activeTargetCampaign.tier;
+                            if ((activeTargetCampaign as any).tierLabel) return (activeTargetCampaign as any).tierLabel;
+                            if (activeTargetCampaign.minFollowers) {
+                              const calculated = getTierByFollowers(activeTargetCampaign.minFollowers);
+                              if (calculated) return calculated.name;
+                            }
+                            return "All Tiers";
+                          })()}
                         </span>
                       </div>
 
                       {/* Deadline */}
-                      <div className="flex flex-col items-center justify-center rounded-xl bg-orange-500/10 border border-orange-500/20 p-2.5 text-center">
-                        <Clock className="h-4 w-4 text-orange-600 dark:text-orange-400 mb-1" />
+                      <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                         <span className="text-[10px] text-muted-foreground uppercase font-medium">Deadline</span>
-                        <span className="text-sm font-bold text-orange-600 dark:text-orange-400">
-                          {new Date(activeTargetCampaign.deadline).toLocaleDateString()}
+                        <span className="text-xs sm:text-sm font-bold text-foreground mt-1 tabular-nums">
+                          {activeTargetCampaign.deadline ? new Date(activeTargetCampaign.deadline).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : 'Flexible'}
                         </span>
                       </div>
                     </div>
@@ -829,9 +996,9 @@ export default function Campaigns() {
                       <div className="p-3 rounded-xl bg-muted/40 border border-border/80">
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                            <Sparkles className="h-3.5 w-3.5 text-primary" /> Available Tiers ({selectedGroup.campaigns.length})
+                            Available Tiers ({selectedGroup.campaigns.length})
                           </h4>
-                          <span className="text-[10px] text-muted-foreground">Select to view payout</span>
+                          <span className="text-[10px] text-muted-foreground">Select tier to preview payout</span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {selectedGroup.campaigns.map((c) => {
@@ -849,15 +1016,15 @@ export default function Campaigns() {
                                     ? "bg-primary text-primary-foreground shadow-xs"
                                     : isLockedTier
                                     ? "bg-muted text-muted-foreground/70 border border-transparent"
-                                    : "bg-background border border-border hover:border-primary/40"
+                                    : "bg-background border border-border hover:border-border"
                                 }`}
                               >
-                                <span>{c.tier}</span>
-                                <span className="text-[10px] opacity-80">
-                                  ({c.isPromotional ? `${c.starReward || 1}⭐` : formatINR(c.payAmount)})
+                                <span>{c.tier || (c as any).tierLabel || "Tier"}</span>
+                                <span className="text-[10px] opacity-80 tabular-nums">
+                                  ({c.isPromotional ? `${c.starReward || 1} Stars` : formatINR(c.payAmount)})
                                 </span>
-                                {tierReserved && <span className="text-[10px] text-green-400">✓</span>}
-                                {isLockedTier && <Lock className="h-2.5 w-2.5 opacity-60" />}
+                                {tierReserved && <span className="text-[10px] text-emerald-500 font-bold ml-1">Reserved</span>}
+                                {isLockedTier && <span className="text-[10px] opacity-60 ml-1">Locked</span>}
                               </button>
                             );
                           })}
@@ -871,82 +1038,163 @@ export default function Campaigns() {
                         Deliverables & Format
                       </h4>
                       <div className="flex flex-wrap gap-1.5">
-                        {(activeTargetCampaign.contentTypes || activeTargetCampaign.type.split(", ")).map((type: string) => {
+                        {(activeTargetCampaign.contentTypes || (activeTargetCampaign.type ? activeTargetCampaign.type.split(", ") : ["Reel"])).map((type: string) => {
                           const typeLower = type.toLowerCase().trim();
                           const contentType = CONTENT_TYPE_LABELS[typeLower];
-                          const IconComponent = contentType?.icon || Film;
                           return (
-                            <Badge key={type} variant="outline" className="text-xs py-1 px-2.5 bg-background gap-1.5">
-                              <IconComponent className="h-3.5 w-3.5 text-primary" />
+                            <span key={type} className="inline-flex items-center text-xs py-1 px-2.5 rounded-lg bg-muted text-foreground border border-border/60 font-medium">
                               {contentType?.label || type}
-                            </Badge>
+                            </span>
                           );
                         })}
 
                         {activeTargetCampaign.promotionStyle && PROMOTION_STYLE_LABELS[activeTargetCampaign.promotionStyle] && (
-                          <Badge variant="secondary" className="text-xs py-1 px-2.5 gap-1.5 bg-primary/10 text-primary">
-                            {(() => {
-                              const style = PROMOTION_STYLE_LABELS[activeTargetCampaign.promotionStyle!];
-                              const StyleIcon = style.icon;
-                              return (
-                                <>
-                                  <StyleIcon className="h-3.5 w-3.5" />
-                                  {style.label}
-                                </>
-                              );
-                            })()}
-                          </Badge>
+                          <span className="inline-flex items-center text-xs py-1 px-2.5 rounded-lg bg-muted text-foreground border border-border/60 font-medium">
+                            {PROMOTION_STYLE_LABELS[activeTargetCampaign.promotionStyle].label}
+                          </span>
                         )}
                       </div>
                     </div>
 
-                    {/* Required Mentions / Tags */}
-                    {selectedGroup.mentions && selectedGroup.mentions.length > 0 && (
-                      <div className="space-y-1.5">
-                        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-                          <AtSign className="h-3 w-3" /> Mandatory Mentions
-                        </h4>
-                        <div className="flex flex-wrap gap-1.5">
-                          {selectedGroup.mentions.map((mention, idx) => (
-                            <Badge 
-                              key={idx} 
-                              variant="outline" 
-                              className="text-xs py-1 px-2 bg-primary/5 text-primary border-primary/20 font-medium cursor-pointer hover:bg-primary/10"
+                    {/* Official Song Track / Audio Link if provided */}
+                    {(() => {
+                      const songTrack = (activeTargetCampaign as any).songUrl || (activeTargetCampaign as any).audioUrl || selectedGroup.songUrl || selectedGroup.audioUrl;
+                      if (!songTrack) return null;
+                      return (
+                        <div className="space-y-1.5 rounded-xl border border-border/80 bg-card p-3">
+                          <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                            Official Track / Audio Link
+                          </h4>
+                          <p className="text-xs text-muted-foreground">Sponsor requires using this official audio for the Reel/Video:</p>
+                          <div className="flex items-center gap-2 mt-1.5 bg-muted/50 p-2 rounded-lg border border-border/50">
+                            <span className="text-xs font-mono text-foreground truncate flex-1">{songTrack}</span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[11px] px-2.5 shrink-0 rounded-md cursor-pointer"
                               onClick={async () => {
-                                await copyToClipboard(`@${mention}`);
-                                toast.success(`Copied @${mention}`);
+                                await copyToClipboard(songTrack);
+                                toast.success("Audio link copied!");
                               }}
                             >
-                              @{mention}
-                            </Badge>
-                          ))}
+                              Copy
+                            </Button>
+                            <a
+                              href={songTrack}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center justify-center h-7 text-[11px] px-2.5 bg-primary text-primary-foreground font-semibold rounded-md shrink-0 hover:bg-primary/90"
+                            >
+                              Listen
+                            </a>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
+
+                    {/* Required Mentions & Hashtags */}
+                    {(() => {
+                      const mentionsList = Array.from(new Set([...(selectedGroup.mentions || []), ...((activeTargetCampaign.mentions as string[]) || []), ...((activeTargetCampaign as any).requiredMentions || [])])).filter(Boolean);
+                      const tagsList = Array.from(new Set([...(selectedGroup.requiredTags || []), ...((activeTargetCampaign as any).requiredTags || []), ...((activeTargetCampaign as any).hashtags || [])])).filter(Boolean);
+
+                      if (mentionsList.length === 0 && tagsList.length === 0) return null;
+
+                      return (
+                        <div className="space-y-2.5 rounded-xl border border-border/80 bg-card p-3">
+                          {mentionsList.length > 0 && (
+                            <div className="space-y-1.5">
+                              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                Mandatory Mentions
+                              </h4>
+                              <div className="flex flex-wrap gap-1.5">
+                                {mentionsList.map((mention, idx) => {
+                                  const cleanMention = mention.startsWith('@') ? mention : `@${mention}`;
+                                  return (
+                                    <span 
+                                      key={idx} 
+                                      className="inline-flex items-center text-xs py-1 px-2.5 rounded-lg bg-muted text-foreground border border-border/60 font-semibold cursor-pointer hover:bg-primary/10 hover:border-primary/30 transition-colors"
+                                      onClick={async () => {
+                                        await copyToClipboard(cleanMention);
+                                        toast.success(`Copied ${cleanMention}`);
+                                      }}
+                                    >
+                                      {cleanMention}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {tagsList.length > 0 && (
+                            <div className="space-y-1.5 pt-1">
+                              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                                Mandatory Hashtags
+                              </h4>
+                              <div className="flex flex-wrap gap-1.5">
+                                {tagsList.map((tag, idx) => {
+                                  const cleanTag = tag.startsWith('#') ? tag : `#${tag}`;
+                                  return (
+                                    <span 
+                                      key={idx} 
+                                      className="inline-flex items-center text-xs py-1 px-2.5 rounded-lg bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 font-semibold cursor-pointer hover:bg-purple-500/20 transition-colors"
+                                      onClick={async () => {
+                                        await copyToClipboard(cleanTag);
+                                        toast.success(`Copied ${cleanTag}`);
+                                      }}
+                                    >
+                                      {cleanTag}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Target Locations & Cities */}
+                    {(() => {
+                      const cities = selectedGroup.targetCities || activeTargetCampaign.targetCities || [];
+                      const countries = selectedGroup.targetCountries || activeTargetCampaign.targetCountries || [];
+                      if (cities.length === 0 && countries.length === 0) return null;
+
+                      return (
+                        <div className="space-y-1.5">
+                          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Target Location
+                          </h4>
+                          <div className="flex flex-wrap gap-1.5">
+                            {countries.map((c, i) => (
+                              <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-muted font-medium text-foreground border border-border/60">
+                                {getCountryByCode(c)?.name || c}
+                              </span>
+                            ))}
+                            {cities.map((city, i) => (
+                              <span key={i} className="text-xs px-2.5 py-1 rounded-lg bg-muted/80 font-medium text-foreground border border-border/60">
+                                {city}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Product Details (if Product Campaign) */}
                     {activeTargetCampaign.campaignType === "product" && activeTargetCampaign.productName && (
-                      <div className="space-y-2 rounded-xl border border-purple-200 dark:border-purple-900/40 bg-purple-50/50 dark:bg-purple-950/20 p-3">
-                        <h4 className="text-xs font-semibold text-purple-900 dark:text-purple-300 flex items-center gap-1.5">
-                          <Package className="h-4 w-4" /> Free Product Package
+                      <div className="space-y-2 rounded-xl border border-border/80 bg-card p-3">
+                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                          Free Product Package
                         </h4>
-                        <div className="flex items-start gap-3">
-                          {activeTargetCampaign.productImage && (
-                            <img 
-                              src={activeTargetCampaign.productImage} 
-                              alt={activeTargetCampaign.productName} 
-                              className="w-14 h-14 rounded-lg object-cover border" 
-                            />
+                        <div>
+                          <p className="font-semibold text-sm text-foreground">{activeTargetCampaign.productName}</p>
+                          {activeTargetCampaign.productValue && (
+                            <p className="text-xs text-muted-foreground tabular-nums mt-0.5">Worth: {formatINR(activeTargetCampaign.productValue)}</p>
                           )}
-                          <div>
-                            <p className="font-semibold text-sm">{activeTargetCampaign.productName}</p>
-                            {activeTargetCampaign.productValue && (
-                              <p className="text-xs text-muted-foreground">Worth: {formatINR(activeTargetCampaign.productValue)}</p>
-                            )}
-                            {activeTargetCampaign.productDescription && (
-                              <p className="text-xs text-muted-foreground mt-1">{activeTargetCampaign.productDescription}</p>
-                            )}
-                          </div>
+                          {activeTargetCampaign.productDescription && (
+                            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{activeTargetCampaign.productDescription}</p>
+                          )}
                         </div>
                       </div>
                     )}
@@ -956,76 +1204,111 @@ export default function Campaigns() {
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         Campaign Brief & Instructions
                       </h4>
-                      <p className="text-xs sm:text-sm text-foreground/90 leading-relaxed bg-muted/30 rounded-xl p-3 border border-border/60">
+                      <p className="text-xs sm:text-sm text-foreground leading-relaxed bg-muted/30 rounded-xl p-3 border border-border/60 whitespace-pre-line">
                         {activeTargetCampaign.description || selectedGroup.description}
                       </p>
                     </div>
 
-                    {/* Content Assets Download if provided */}
-                    {activeTargetCampaign.assetUrl && (
-                      <div className="rounded-xl border border-dashed border-primary/40 bg-primary/5 p-3 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 shrink-0">
-                            <Download className="h-4 w-4 text-primary" />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold truncate">{activeTargetCampaign.assetFileName || "Campaign Media Asset"}</p>
-                            <p className="text-[10px] text-muted-foreground">Provided by sponsor for direct use</p>
-                          </div>
+                    {/* Mandatory Disclosure / Caption Instructions */}
+                    {(() => {
+                      const captionNote = (activeTargetCampaign as any).requiredCaptionNote || selectedGroup.requiredCaptionNote || (activeTargetCampaign as any).disclosureInstructions;
+                      if (!captionNote) return null;
+
+                      return (
+                        <div className="space-y-1.5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+                          <h4 className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider">
+                            Caption & Disclosure Requirements
+                          </h4>
+                          <p className="text-xs text-foreground leading-relaxed">{captionNote}</p>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-[11px] px-2.5 mt-1 border-amber-500/30 text-amber-800 dark:text-amber-300 rounded-md cursor-pointer"
+                            onClick={async () => {
+                              await copyToClipboard(captionNote);
+                              toast.success("Caption requirements copied!");
+                            }}
+                          >
+                            Copy Instruction Text
+                          </Button>
                         </div>
-                        <Button 
-                          size="sm" 
-                          variant={hasDownloadedAsset ? "outline" : "default"}
-                          onClick={() => handleDownloadAsset(activeTargetCampaign.assetUrl!, activeTargetCampaign.assetFileName)}
-                          className="h-8 text-xs shrink-0 rounded-full"
-                        >
-                          <Download className="h-3 w-3 mr-1" />
-                          {hasDownloadedAsset ? "Downloaded ✓" : "Download File"}
-                        </Button>
-                      </div>
-                    )}
+                      );
+                    })()}
+
+                    {/* Mandatory Content Assets Download */}
+                    {(() => {
+                      const assetUrl = activeTargetCampaign.assetUrl || (activeTargetCampaign as any).fileUrl || selectedGroup.assetUrl || (selectedGroup as any).fileUrl || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800";
+                      const assetName = activeTargetCampaign.assetFileName || selectedGroup.assetFileName || `${selectedGroup.brand}_Brand_Assets.zip`;
+
+                      return (
+                        <div className={`rounded-xl border p-3.5 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                          hasDownloadedAsset 
+                            ? "border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10" 
+                            : "border-primary/40 bg-primary/5 ring-1 ring-primary/20"
+                        }`}>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="text-xs font-bold text-foreground">{assetName}</span>
+                              {hasDownloadedAsset ? (
+                                <span className="bg-emerald-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                                  Downloaded & Unlocked
+                                </span>
+                              ) : (
+                                <span className="bg-amber-500 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                                  Required Download
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground leading-snug">
+                              {hasDownloadedAsset 
+                                ? "Asset downloaded. You can now reserve this campaign." 
+                                : "You must download this sponsor asset file (Audio/Video/Guidelines) to enable the Reserve button."}
+                            </p>
+                          </div>
+                          <Button 
+                            size="sm" 
+                            variant={hasDownloadedAsset ? "outline" : "default"}
+                            onClick={() => handleDownloadAsset(assetUrl, assetName)}
+                            className={`h-9 text-xs font-semibold shrink-0 rounded-lg cursor-pointer shadow-xs ${
+                              hasDownloadedAsset 
+                                ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10" 
+                                : "bg-primary text-primary-foreground hover:bg-primary/90"
+                            }`}
+                          >
+                            {hasDownloadedAsset ? "Download Again" : "Download Required File"}
+                          </Button>
+                        </div>
+                      );
+                    })()}
 
                     {/* 48-Hour Reservation Info */}
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-xl">
-                      <Clock className="h-3.5 w-3.5 shrink-0 text-primary" />
-                      <span>Once reserved, you get <strong>48 hours</strong> to post and submit proof in My Campaigns.</span>
+                    <div className="text-xs text-muted-foreground bg-muted/40 p-3 rounded-xl border border-border/60">
+                      <span>Once reserved, you have <strong>48 hours</strong> to publish and submit link proof.</span>
                     </div>
-
-                    {!hasActiveSubscription && (
-                      <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs sm:text-sm">
-                        <XCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-500" />
-                        <div>
-                          <span className="font-semibold block">Upgrade Required</span>
-                          <span className="text-red-600/85 dark:text-red-300/85">
-                            Aapko campaign reserve karne ke liye Pro plan par upgrade karna padega.
-                          </span>
-                        </div>
-                      </div>
-                    )}
 
                   </div>
                 </ScrollArea>
 
+
+
                 {/* Modal Footer Actions */}
-                <div className="p-3.5 sm:p-4 border-t border-border bg-background/95 backdrop-blur-md flex flex-col gap-2 shrink-0">
-                  {requiresDownload && !hasDownloadedAsset && !isTargetReserved && !isTargetLocked && (
-                    <div className="flex items-center gap-1.5 p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs">
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      <span>Please download the campaign asset above before reserving.</span>
+                <div className="p-3.5 sm:p-4 border-t border-border/80 bg-card flex flex-col gap-2 shrink-0">
+                  {!hasDownloadedAsset && !isTargetReserved && !isTargetLocked && (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-medium border border-amber-500/20 text-center">
+                      <span>Mandatory Step: Click <strong>"Download Required File"</strong> above to unlock the Reserve button.</span>
                     </div>
                   )}
 
                   <div className="flex items-center gap-2.5">
                     {isTargetReserved ? (
                       <Button
-                        className="flex-1 rounded-xl bg-green-600 hover:bg-green-700 text-white text-xs sm:text-sm font-semibold h-10"
+                        className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold h-10 shadow-xs"
                         onClick={() => {
                           setSelectedGroup(null);
                           navigate("/my-campaigns");
                         }}
                       >
-                        <CheckCircle className="h-4 w-4 mr-1.5" />
-                        Already Reserved — View in My Campaigns
+                        Already Reserved — View in Workspace
                       </Button>
                     ) : isTargetLocked ? (
                       <Button
@@ -1033,23 +1316,11 @@ export default function Campaigns() {
                         variant="secondary"
                         className="flex-1 rounded-xl opacity-60 cursor-not-allowed text-xs sm:text-sm font-semibold h-10"
                       >
-                        <Lock className="h-3.5 w-3.5 mr-1.5" />
                         Requires {activeTargetCampaign.tier}+ Followers
-                      </Button>
-                    ) : !hasActiveSubscription ? (
-                      <Button
-                        className="flex-1 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm font-semibold h-10 shadow-md flex items-center justify-center gap-1.5"
-                        onClick={() => {
-                          setSelectedGroup(null);
-                          navigate("/subscription");
-                        }}
-                      >
-                        <XCircle className="h-4 w-4 shrink-0" />
-                        Upgrade to Pro to Reserve
                       </Button>
                     ) : (
                       <Button
-                        className="flex-1 rounded-xl bg-insta-gradient hover:opacity-90 text-white text-xs sm:text-sm font-semibold h-10 shadow-md"
+                        className="flex-1 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs sm:text-sm font-semibold h-10 shadow-xs cursor-pointer"
                         disabled={reserveMutation.isPending || activeTargetCampaign.spotsRemaining <= 0 || !canReserveActiveTarget}
                         onClick={() => reserveMutation.mutate({ campaignId: activeTargetCampaign.id })}
                         data-testid="button-modal-reserve-action"
@@ -1061,10 +1332,7 @@ export default function Campaigns() {
                         ) : !canReserveActiveTarget ? (
                           "Download File First"
                         ) : (
-                          <>
-                            Reserve This Campaign ({activeTargetCampaign.isPromotional ? `${activeTargetCampaign.starReward || 1} ⭐` : formatINR(activeTargetCampaign.payAmount)})
-                            <ArrowRight className="h-4 w-4 ml-1.5" />
-                          </>
+                          `Reserve This Campaign (${activeTargetCampaign.isPromotional ? `${activeTargetCampaign.starReward || 1} Stars` : formatINR(activeTargetCampaign.payAmount)})`
                         )}
                       </Button>
                     )}

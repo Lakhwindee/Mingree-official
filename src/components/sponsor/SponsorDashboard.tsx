@@ -1,16 +1,13 @@
 import React from 'react';
-import {
-  Briefcase,
-  Users,
-  TrendingUp,
-  PlusCircle,
-  Clock,
-  CheckCircle2,
-  ChevronRight,
-  ShieldCheck,
-  Building,
-} from 'lucide-react';
+
 import { Campaign, CampaignSubmission, SponsorProfile } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+const Instagram = __DummyIcon;
+
+
 
 interface SponsorDashboardProps {
   sponsor: SponsorProfile;
@@ -52,7 +49,7 @@ export const SponsorDashboard: React.FC<SponsorDashboardProps> = ({
           onClick={onNavigateToCreate}
           className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-95 text-white text-xs font-bold shadow-lg shadow-purple-600/30 flex items-center gap-1.5 cursor-pointer"
         >
-          <PlusCircle className="w-3.5 h-3.5" />
+          
           <span>New Campaign</span>
         </button>
       </div>
@@ -62,7 +59,7 @@ export const SponsorDashboard: React.FC<SponsorDashboardProps> = ({
         <div className="flex items-center justify-between text-xs text-zinc-400">
           <span>Sponsor Escrow Wallet</span>
           <span className="text-emerald-400 font-bold flex items-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5" />
+            
             100% Secured Escrow
           </span>
         </div>
@@ -104,7 +101,7 @@ export const SponsorDashboard: React.FC<SponsorDashboardProps> = ({
         <div className="p-3.5 rounded-xl bg-purple-600/10 border border-purple-500/30 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-purple-600/20 flex items-center justify-center text-purple-300">
-              <Clock className="w-4 h-4" />
+              
             </div>
             <div>
               <h4 className="text-xs font-bold text-white">
@@ -127,7 +124,7 @@ export const SponsorDashboard: React.FC<SponsorDashboardProps> = ({
       <div>
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-            <Briefcase className="w-4 h-4 text-purple-400" />
+            
             Your Live Campaigns
           </h3>
           <button
@@ -135,7 +132,7 @@ export const SponsorDashboard: React.FC<SponsorDashboardProps> = ({
             className="text-xs text-purple-400 font-semibold hover:underline flex items-center gap-0.5 cursor-pointer"
           >
             <span>All Campaigns</span>
-            <ChevronRight className="w-3 h-3" />
+            
           </button>
         </div>
 

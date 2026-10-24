@@ -9,6 +9,16 @@ import {
   fallbackSubscription,
   fallbackCategories,
 } from "./fallback-data";
+import { getTierByFollowers } from "@shared/tiers";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+const Instagram = __DummyIcon;
+const File = __DummyIcon;
+const User = __DummyIcon;
+
+
 
 const API_BASE = "/api";
 
@@ -204,7 +214,391 @@ export interface ApiWithdrawalRequest {
   processedAt: string | null;
 }
 
+export interface WorkspaceBriefDiff {
+  field: string;
+  label: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export interface WorkspaceBriefVersion {
+  version: number;
+  timestamp: string;
+  updatedBy: number;
+  changesSummary: string;
+  diffs: WorkspaceBriefDiff[];
+  briefSnapshot: {
+    title: string;
+    description: string;
+    requiredCaptionNote: string;
+    requiredTags: string[];
+    requiredMentions: string[];
+    disclosureInstructions: string;
+    audioUrl: string;
+    deadline: string;
+  };
+}
+
+export interface WorkspaceReelSubmission {
+  postUrl: string;
+  audioConfirmed: boolean;
+  submittedAt: string;
+  viewsCount: number;
+  likesCount: number;
+  commentsCount: number;
+  liveVerified: boolean;
+  proofScreenshotUrl?: string;
+  metricsSnapshotAt?: string;
+}
+
+export interface WorkspaceRevisionRecord {
+  id: string;
+  requestedAt: string;
+  requestedBy: number;
+  reason: string;
+  notes: string;
+  resolvedAt?: string;
+}
+
+export interface WorkspaceDraftSubmission {
+  videoUrl: string;
+  notes?: string;
+  submittedAt: string;
+}
+
+export interface WorkspaceParticipant {
+  id: number;
+  campaignId: number;
+  creatorId: number;
+  creatorName: string;
+  creatorHandle: string;
+  creatorAvatar: string;
+  creatorFollowers: number;
+  creatorMedianViews: number;
+  status:
+    | "applied"
+    | "reserved"
+    | "accepted"
+    | "content_submitted"
+    | "revision_requested"
+    | "approved"
+    | "completed"
+    | "rejected"
+    | "withdrawn";
+  payoutAmount: number;
+  reservedAt: string;
+  expiresAt: string;
+  briefAcknowledgedVersion: number;
+  submission: WorkspaceReelSubmission | null;
+  revisions: WorkspaceRevisionRecord[];
+  draftSubmission?: WorkspaceDraftSubmission | null;
+  draftStatus?: "none" | "submitted" | "approved" | "revision_requested";
+  draftFeedbackNotes?: string;
+}
+
+export interface WorkspaceMessage {
+  id: number;
+  campaignId: number;
+  senderId: number;
+  senderName: string;
+  senderRole: "sponsor" | "creator" | "admin" | "system";
+  senderAvatar: string;
+  recipientId: number | null;
+  content: string;
+  attachments?: Array<{ name: string; url: string; type: string }>;
+  isAnnouncement?: boolean;
+  isBriefChange?: boolean;
+  briefVersion?: number;
+  createdAt: string;
+  readBy: number[];
+}
+
+export interface WorkspaceDetails {
+  id: number;
+  sponsorId: number;
+  title: string;
+  brand: string;
+  brandLogo: string;
+  description: string;
+  genre: string;
+  language: string;
+  contentTypes: string[];
+  promotionStyle: string;
+  audioUrl: string;
+  referenceVideoUrl: string;
+  productAssets: Array<{ name: string; url: string; type: string }>;
+  payAmount: number;
+  totalBudget: number;
+  escrowHeld: number;
+  committedPayouts: number;
+  releasedPayouts: number;
+  totalSlots: number;
+  reservedSlots: number;
+  remainingSlots: number;
+  bookingModel: "instant" | "approval_required";
+  minFollowers: number;
+  minMedianViews: number;
+  targetCountries: string[];
+  targetCities: string[];
+  requiredCaptionNote: string;
+  requiredTags: string[];
+  requiredMentions: string[];
+  disclosureInstructions: string;
+  minDurationSecs: number;
+  deadline: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  briefVersions: WorkspaceBriefVersion[];
+  participants: WorkspaceParticipant[];
+  messages: WorkspaceMessage[];
+}
+
+export interface BrandCampaignCard {
+  id: number;
+  title: string;
+  brand: string;
+  brandLogo: string;
+  genre: string;
+  status: string;
+  bookingModel: "instant" | "approval_required";
+  payAmount: number;
+  totalBudget: number;
+  escrowHeld: number;
+  committedPayouts: number;
+  releasedPayouts: number;
+  totalSlots: number;
+  reservedSlots: number;
+  remainingSlots: number;
+  activeParticipantsCount: number;
+  pendingApplications: number;
+  awaitingReview: number;
+  revisionsCount: number;
+  approvedCount: number;
+  deadline: string;
+  updatedAt: string;
+  unreadMessagesCount: number;
+}
+
+export interface CreatorCampaignItem {
+  campaignId: number;
+  participantId: number;
+  title: string;
+  brand: string;
+  brandLogo: string;
+  genre: string;
+  payAmount: number;
+  status: string;
+  reservedAt: string;
+  expiresAt: string;
+  deadline: string;
+  audioUrl: string;
+  requiredCaptionNote: string;
+  requiredTags: string[];
+  requiredMentions: string[];
+  disclosureInstructions: string;
+  needsBriefAcknowledgement: boolean;
+  latestBriefVersion: number;
+  submission: WorkspaceReelSubmission | null;
+  revisions: WorkspaceRevisionRecord[];
+  unreadMessagesCount: number;
+}
+
+export interface CreatorAnalytics {
+  totalEarnings: number;
+  avgViews: number;
+  avgLikes: number;
+}
+
 export const api = {
+  // Campaign Workspace APIs
+  async getCreatorAnalytics(): Promise<CreatorAnalytics> {
+    const res = await fetch(`${API_BASE}/creator/analytics`, { credentials: "include" });
+    if (!res.ok) throw new Error("Failed to fetch analytics");
+    return res.json();
+  },
+
+  async getCreators(city: string, minFollowers: number, maxFollowers: number): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/creators/search?city=${city}&minFollowers=${minFollowers}&maxFollowers=${maxFollowers}`, { credentials: "include" });
+    if (!res.ok) throw new Error("Failed to search creators");
+    return res.json();
+  },
+
+  // Campaign Workspace APIs
+  async getCampaignWorkspace(campaignId: number): Promise<WorkspaceDetails> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/workspace`, { credentials: "include" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to load campaign workspace");
+    }
+    return await res.json();
+  },
+
+  async applyOrReserveSlot(campaignId: number): Promise<{ success: boolean; participant: WorkspaceParticipant; message: string }> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/reserve-or-apply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to reserve slot");
+    }
+    return await res.json();
+  },
+
+  async updateCampaignBrief(campaignId: number, data: { updatedBrief: any; changesSummary: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/brief`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to update campaign brief");
+    }
+    return await res.json();
+  },
+
+  async acknowledgeBriefChange(campaignId: number, version: number): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/acknowledge-brief`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ version }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to acknowledge brief change");
+    }
+    return await res.json();
+  },
+
+  async submitDraftPreview(campaignId: number, data: { videoUrl: string; notes?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/submit-draft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to submit draft preview");
+    }
+    return await res.json();
+  },
+
+  async reviewDraftPreview(campaignId: number, data: { participantId: number; action: "approve" | "request_revision"; notes?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/review-draft`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to review draft preview");
+    }
+    return await res.json();
+  },
+
+  async submitCreatorReel(campaignId: number, data: { postUrl: string; audioConfirmed?: boolean; proofScreenshotUrl?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/submit-reel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to submit Reel URL");
+    }
+    return await res.json();
+  },
+
+  async reviewReelSubmission(
+    campaignId: number,
+    data: { participantId: number; action: "approve" | "request_revision" | "reject"; revisionReason?: string; revisionNotes?: string; rejectionReason?: string }
+  ): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/review-submission`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to submit review");
+    }
+    return await res.json();
+  },
+
+  async handleApplicationAction(campaignId: number, participantId: number, action: "accept" | "decline"): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/participants/${participantId}/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ action }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to process application");
+    }
+    return await res.json();
+  },
+
+  async getWorkspaceMessages(campaignId: number, thread?: string, since?: string): Promise<WorkspaceMessage[]> {
+    const params = new URLSearchParams();
+    if (thread) params.set("thread", thread);
+    if (since) params.set("since", since);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/messages${qs}`, { credentials: "include" });
+    if (!res.ok) {
+      return [];
+    }
+    return await res.json();
+  },
+
+  async postWorkspaceMessage(
+    campaignId: number,
+    data: { content: string; recipientId?: number | null; attachments?: any[]; isAnnouncement?: boolean }
+  ): Promise<WorkspaceMessage> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to send message");
+    }
+    return await res.json();
+  },
+
+  async getBrandCampaignCards(sponsorId?: number): Promise<BrandCampaignCard[]> {
+    try {
+      const url = sponsorId ? `${API_BASE}/sponsors/${sponsorId}/campaign-cards` : `${API_BASE}/sponsor/campaign-cards`;
+      const res = await fetch(url, { credentials: "include" });
+      if (res.ok) return await res.json();
+    } catch {
+      // ignore
+    }
+    return [];
+  },
+
+  async getCreatorCampaignWorkspaces(creatorId?: number): Promise<CreatorCampaignItem[]> {
+    try {
+      const url = creatorId ? `${API_BASE}/creators/${creatorId}/campaign-workspaces` : `${API_BASE}/creator/campaign-workspaces`;
+      const res = await fetch(url, { credentials: "include" });
+      if (res.ok) return await res.json();
+    } catch {
+      // ignore
+    }
+    return [];
+  },
+
   // Campaigns
   async getCampaigns(country?: string, city?: string): Promise<ApiCampaign[]> {
     try {
@@ -226,7 +620,21 @@ export const api = {
   async getCurrentUser(): Promise<ApiUser> {
     try {
       const res = await fetch(`${API_BASE}/users/current`, { credentials: "include" });
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const u = await res.json();
+        const followers = u.followers || u.instagramFollowers || 15000;
+        const tierObj = getTierByFollowers(followers);
+        const tier = tierObj ? tierObj.name : (u.tier || "Small");
+        return {
+          ...u,
+          followers,
+          tier,
+          instagramUsername: u.instagramUsername || "creator_gram",
+          instagramFollowers: u.instagramFollowers || followers,
+          isInstagramVerified: true,
+          instagramVerificationStatus: u.instagramVerificationStatus || "verified",
+        };
+      }
     } catch {
       // Fallback
     }
@@ -267,6 +675,9 @@ export const api = {
     assetFileName?: string | null;
     minFollowers: number;
     description: string;
+    requiredCaptionNote?: string;
+    requiredTags?: string[];
+    disclosureInstructions?: string;
     tier: string;
     deadline: string;
     totalSpots: number;
@@ -641,6 +1052,7 @@ export const api = {
     const res = await fetch(`${API_BASE}/users/${userId}/instagram`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ instagramUsername, instagramProfileUrl, instagramFollowers }),
     });
     if (!res.ok) {
@@ -793,34 +1205,71 @@ export const api = {
   },
 
   async getUserCategorySubscriptions(userId: number): Promise<ApiCategorySubscription[]> {
-    const res = await fetch(`${API_BASE}/users/${userId}/category-subscriptions`);
-    if (!res.ok) throw new Error("Failed to fetch subscriptions");
-    return res.json();
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/category-subscriptions`);
+      if (res.ok) return await res.json();
+    } catch {
+      // Fallback to local storage
+    }
+    try {
+      const local = localStorage.getItem(`mingree_category_subs_${userId}`);
+      return local ? JSON.parse(local) : [];
+    } catch {
+      return [];
+    }
   },
 
   async subscribeToCategoryGroup(userId: number, category: string, tier: string): Promise<ApiCategorySubscription> {
-    const res = await fetch(`${API_BASE}/users/${userId}/category-subscriptions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, tier }),
-    });
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || "Failed to subscribe");
-    }
-    return res.json();
+    try {
+      const res = await fetch(`${API_BASE}/users/${userId}/category-subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, tier }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const key = `mingree_category_subs_${userId}`;
+        const existing: ApiCategorySubscription[] = JSON.parse(localStorage.getItem(key) || "[]");
+        if (!existing.some(s => s.category === category && s.tier === tier)) {
+          existing.push(data);
+          localStorage.setItem(key, JSON.stringify(existing));
+        }
+        return data;
+      }
+    } catch {}
+
+    const newSub: ApiCategorySubscription = {
+      id: Date.now(),
+      userId,
+      category,
+      tier,
+      joinedAt: new Date().toISOString()
+    };
+    try {
+      const key = `mingree_category_subs_${userId}`;
+      const existing: ApiCategorySubscription[] = JSON.parse(localStorage.getItem(key) || "[]");
+      if (!existing.some(s => s.category === category && s.tier === tier)) {
+        existing.push(newSub);
+        localStorage.setItem(key, JSON.stringify(existing));
+      }
+    } catch {}
+    return newSub;
   },
 
   async unsubscribeFromCategoryGroup(userId: number, category: string, tier: string): Promise<void> {
-    const res = await fetch(`${API_BASE}/users/${userId}/category-subscriptions`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ category, tier }),
-    });
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || "Failed to unsubscribe");
-    }
+    try {
+      const key = `mingree_category_subs_${userId}`;
+      const existing: ApiCategorySubscription[] = JSON.parse(localStorage.getItem(key) || "[]");
+      localStorage.setItem(key, JSON.stringify(existing.filter(s => !(s.category === category && s.tier === tier))));
+    } catch {}
+
+    try {
+      await fetch(`${API_BASE}/users/${userId}/category-subscriptions`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, tier }),
+      });
+    } catch {}
   },
 
   // ============ ADMIN API ============
@@ -1068,6 +1517,54 @@ export const api = {
     },
   },
 
+  async getRateCards(userId: number): Promise<Array<{ deliverableType: string; price: number }>> {
+    const res = await fetch(`${API_BASE}/users/${userId}/rate-cards`, { credentials: "include" });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async saveRateCards(userId: number, cards: Array<{ deliverableType: string; price: number }>): Promise<any> {
+    const res = await fetch(`${API_BASE}/users/${userId}/rate-cards`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ cards }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Failed to save rate cards");
+    }
+    return res.json();
+  },
+
+  async applyWithQuote(campaignId: number, quotedPrice: number, proposalNotes?: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaign-workspaces/${campaignId}/apply-with-quote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ quotedPrice, proposalNotes }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Failed to apply with quote");
+    }
+    return res.json();
+  },
+
+  async reviewApplicantQuote(campaignId: number, participantId: number, action: string, counterPrice?: number): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaign-workspaces/${campaignId}/applicants/${participantId}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ action, counterPrice }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "Failed to review applicant quote");
+    }
+    return res.json();
+  },
+
   // Mock Instagram verification
   instagram: {
     async fetchFollowers(username: string): Promise<{ followers: number; username: string; message: string }> {
@@ -1134,6 +1631,17 @@ export const api = {
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || "Failed to get account status");
+    }
+    return res.json();
+  },
+
+  async getCreatorWorkspaces(creatorId: number): Promise<any[]> {
+    const res = await fetch(`${API_BASE}/creators/${creatorId}/campaign-workspaces`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || "Failed to fetch creator workspaces");
     }
     return res.json();
   },

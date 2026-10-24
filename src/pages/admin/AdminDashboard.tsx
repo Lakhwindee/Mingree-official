@@ -10,66 +10,51 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, formatINR, type AdminStats, type ApiUser, type AdminWithdrawalRequest, type AdminPendingSubmission, type ApiCampaign, type CampaignGroup } from "@/lib/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { 
-  Users, 
-  Briefcase, 
-  CreditCard, 
-  FileCheck, 
-  Shield, 
-  CheckCircle, 
-  XCircle, 
-  Clock, 
-  TrendingUp, 
-  Building2,
-  Instagram,
-  ExternalLink,
-  AlertTriangle,
-  Pause,
-  Play,
-  DollarSign,
-  Eye,
-  Settings,
-  IndianRupee,
-  Ticket,
-  Plus,
-  Copy,
-  Trash2,
-  ToggleLeft,
-  ToggleRight,
-  Percent,
-  Calendar,
-  ArrowDown,
-  RefreshCw,
-  Search,
-  Mail,
-  Phone,
-  Star,
-  Wallet,
-  UserCheck,
-  UserX,
-  ChevronRight,
-  Crown,
-  Award,
-  EyeOff,
-  Save,
-  Menu,
-  X,
-  Home,
-  MessageCircle,
-  Send,
-  Ban,
-  Gift,
-  FileText,
-  LogOut
-} from "lucide-react";
+
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useState, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { SecurityAuditPanel } from "@/components/admin/SecurityAuditPanel";
-import { ShieldAlert } from "lucide-react";
+
 import { useAuth } from "@/lib/auth-context";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = (_props?: any) => null;
+const TrendingUp = __DummyIcon;
+const ShieldAlert = __DummyIcon;
+const Users = __DummyIcon;
+const Wallet = __DummyIcon;
+const CreditCard = __DummyIcon;
+const FileCheck = __DummyIcon;
+const Briefcase = __DummyIcon;
+const Shield = __DummyIcon;
+const Ticket = __DummyIcon;
+const Mail = __DummyIcon;
+const MessageCircle = __DummyIcon;
+const Settings = __DummyIcon;
+const Home = __DummyIcon;
+const Building2 = __DummyIcon;
+const DollarSign = __DummyIcon;
+const CheckCircle = __DummyIcon;
+const Instagram = __DummyIcon;
+const Ban = __DummyIcon;
+const Play = __DummyIcon;
+const IndianRupee = __DummyIcon;
+const Pause = __DummyIcon;
+const ToggleRight = __DummyIcon;
+const ToggleLeft = __DummyIcon;
+const ArrowDown = __DummyIcon;
+const Save = __DummyIcon;
+const Star = __DummyIcon;
+const Copy = __DummyIcon;
+const Send = __DummyIcon;
+const File = __DummyIcon;
+const User = __DummyIcon;
+const Trash2 = __DummyIcon;
+
+
 
 const adminMenuItems = [
   { id: "overview", label: "Overview", icon: TrendingUp },
@@ -125,7 +110,7 @@ function AdminSidebar({ activeTab, setActiveTab, isOpen, onClose }: {
         <div className="flex items-center justify-between mb-8 px-2 pt-2">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white shadow-lg shadow-indigo-500/30">
-              <Shield className="h-6 w-6" />
+              
             </div>
             <div>
               <span className="text-base font-bold bg-gradient-to-r from-purple-700 to-indigo-700 bg-clip-text text-transparent tracking-wide block">Admin Portal</span>
@@ -139,7 +124,7 @@ function AdminSidebar({ activeTab, setActiveTab, isOpen, onClose }: {
             onClick={onClose}
             data-testid="button-close-sidebar"
           >
-            <X className="h-5 w-5" />
+            
           </Button>
         </div>
 
@@ -180,7 +165,7 @@ function AdminSidebar({ activeTab, setActiveTab, isOpen, onClose }: {
             onClick={handleLogout}
             data-testid="button-admin-logout"
           >
-            <LogOut className="h-4 w-4 mr-2 text-red-500" />
+            
             Sign Out
           </Button>
         </div>
@@ -416,12 +401,12 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                 {user.isVerified && <Badge className="bg-green-600">Verified</Badge>}
                 {user.subscriptionPlan === "pro" && (
                   <Badge className="bg-yellow-600 gap-1">
-                    <Crown className="h-3 w-3" /> Pro
+                     Pro
                   </Badge>
                 )}
               </div>
               <DialogDescription className="text-slate-500 flex items-center gap-2">
-                <Mail className="h-4 w-4" /> {user.email}
+                 {user.email}
               </DialogDescription>
             </div>
           </div>
@@ -467,10 +452,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                 <Card className="bg-white border-indigo-100">
                   <CardContent className="p-4">
                     <p className="text-sm text-slate-500">Subscription</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-lg font-semibold text-slate-950 capitalize">{user.subscriptionPlan || "Free"}</p>
-                      {user.subscriptionPlan === "pro" && <Crown className="h-4 w-4 text-yellow-500" />}
-                    </div>
+                    <p className="text-lg font-semibold text-slate-950 capitalize">{user.subscriptionPlan || "Free"}</p>
                   </CardContent>
                 </Card>
                 <Card className="bg-white border-indigo-100">
@@ -479,12 +461,12 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                     <div className="flex items-center gap-2">
                       {user.isVerified ? (
                         <>
-                          <CheckCircle className="h-5 w-5 text-green-500" />
+                          
                           <p className="text-lg font-semibold text-green-500">Verified</p>
                         </>
                       ) : (
                         <>
-                          <Clock className="h-5 w-5 text-yellow-500" />
+                          
                           <p className="text-lg font-semibold text-yellow-500">Pending</p>
                         </>
                       )}
@@ -510,7 +492,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                     onClick={() => verifyMutation.mutate(user.id)}
                     disabled={verifyMutation.isPending}
                   >
-                    <UserCheck className="h-4 w-4 mr-2" />
+                    
                     Verify User
                   </Button>
                 </div>
@@ -532,7 +514,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                             <p className="text-sm text-slate-500">
                               {user.isInstagramVerified ? (
                                 <span className="text-green-500 flex items-center gap-1">
-                                  <CheckCircle className="h-4 w-4" /> Verified
+                                   Verified
                                 </span>
                               ) : (
                                 <span className="text-yellow-500">Pending verification</span>
@@ -546,7 +528,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                           rel="noopener noreferrer"
                           className="text-pink-500"
                         >
-                          <ExternalLink className="h-5 w-5" />
+                          
                         </a>
                       </div>
                     </CardContent>
@@ -582,7 +564,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                           disabled={disconnectInstagramMutation.isPending}
                           data-testid="button-disconnect-instagram"
                         >
-                          <X className="h-4 w-4 mr-1" />
+                          
                           Disconnect
                         </Button>
                         {(user as any).isInstagramBanned ? (
@@ -594,7 +576,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                             disabled={unbanInstagramMutation.isPending}
                             data-testid="button-unban-instagram"
                           >
-                            <CheckCircle className="h-4 w-4 mr-1" />
+                            
                             Unban Instagram
                           </Button>
                         ) : (
@@ -656,7 +638,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-500">Star Rewards</span>
                       <span className="text-yellow-500 flex items-center gap-1">
-                        <Star className="h-4 w-4" /> {user.starRewards || 0}
+                         {user.starRewards || 0}
                       </span>
                     </div>
                   </div>
@@ -733,7 +715,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                         disabled={unbanMutation.isPending}
                         data-testid="button-unban-user"
                       >
-                        <CheckCircle className="h-4 w-4 mr-2" />
+                        
                         Unban User
                       </Button>
                     ) : (
@@ -753,7 +735,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                       onClick={() => setShowDeleteDialog(true)}
                       data-testid="button-delete-user"
                     >
-                      <Trash2 className="h-4 w-4 mr-2" />
+                      
                       Delete User
                     </Button>
                     
@@ -764,7 +746,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                         onClick={() => setShowAwardStarsDialog(true)}
                         data-testid="button-award-stars"
                       >
-                        <Star className="h-4 w-4 mr-2" />
+                        
                         Award Stars
                       </Button>
                     )}
@@ -779,11 +761,11 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
                 <CardContent>
                   <div className="text-sm text-slate-500 space-y-2">
                     <p className="flex items-start gap-2">
-                      <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                      
                       <span><strong>Banning</strong> will prevent the user from logging in and participating in campaigns.</span>
                     </p>
                     <p className="flex items-start gap-2">
-                      <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+                      
                       <span><strong>Deleting</strong> is permanent and will remove all user data including wallet balance and history.</span>
                     </p>
                   </div>
@@ -857,7 +839,7 @@ function UserDetailDialog({ user, open, onClose }: { user: ApiUser | null; open:
           <DialogContent className="bg-white shadow-md border border-indigo-100 border-indigo-100">
             <DialogHeader>
               <DialogTitle className="text-slate-950 flex items-center gap-2">
-                <Star className="h-5 w-5 text-yellow-500" />
+                
                 Award Stars to {user.name}
               </DialogTitle>
               <DialogDescription className="text-slate-500">
@@ -958,7 +940,7 @@ function UsersTab() {
         <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
           <CardContent className="p-3 sm:p-4">
             <div className="flex items-center gap-2.5 sm:gap-3">
-              <Users className="h-6 w-6 sm:h-8 sm:w-8 text-purple-500 shrink-0" />
+              
               <div className="min-w-0">
                 <p className="text-xl sm:text-2xl font-bold text-slate-950 truncate">{managedUsers.length}</p>
                 <p className="text-[11px] sm:text-xs text-slate-500 truncate">Total Users</p>
@@ -980,7 +962,7 @@ function UsersTab() {
         <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
           <CardContent className="p-3 sm:p-4">
             <div className="flex items-center gap-2.5 sm:gap-3">
-              <Building2 className="h-6 w-6 sm:h-8 sm:w-8 text-blue-500 shrink-0" />
+              
               <div className="min-w-0">
                 <p className="text-xl sm:text-2xl font-bold text-slate-950 truncate">{sponsors.length}</p>
                 <p className="text-[11px] sm:text-xs text-slate-500 truncate">Sponsors</p>
@@ -991,7 +973,7 @@ function UsersTab() {
         <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
           <CardContent className="p-3 sm:p-4">
             <div className="flex items-center gap-2.5 sm:gap-3">
-              <CheckCircle className="h-6 w-6 sm:h-8 sm:w-8 text-green-500 shrink-0" />
+              
               <div className="min-w-0">
                 <p className="text-xl sm:text-2xl font-bold text-slate-950 truncate">{verified.length}</p>
                 <p className="text-[11px] sm:text-xs text-slate-500 truncate">Verified</p>
@@ -1003,7 +985,7 @@ function UsersTab() {
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-4">
         <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
+          
           <Input
             placeholder="Search by name, email, or Instagram..."
             value={searchQuery}
@@ -1045,7 +1027,7 @@ function UsersTab() {
 
       {filteredUsers.length === 0 ? (
         <div className="text-center py-12 text-slate-500">
-          <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          
           <p>No users found</p>
         </div>
       ) : (
@@ -1076,7 +1058,7 @@ function UsersTab() {
                         )}
                         {user.subscriptionPlan === "pro" && (
                           <Badge className="bg-yellow-600 text-[10px] px-1.5 py-0.5 gap-0.5">
-                            <Crown className="h-2.5 w-2.5" /> Pro
+                             Pro
                           </Badge>
                         )}
                       </div>
@@ -1109,7 +1091,7 @@ function UsersTab() {
                       </div>
                     )}
 
-                    <ChevronRight className="h-4 w-4 text-slate-500 shrink-0" />
+                    
                   </div>
                 </div>
               </CardContent>
@@ -1184,7 +1166,7 @@ function UpiPaymentsTab() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Clock className="w-6 h-6 animate-spin text-slate-500" />
+        
       </div>
     );
   }
@@ -1193,7 +1175,7 @@ function UpiPaymentsTab() {
     return (
       <Card className="bg-white border-gray-800">
         <CardContent className="p-8 text-center">
-          <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500/50" />
+          
           <h3 className="text-lg font-medium text-slate-950 mb-1">No Pending Payments</h3>
           <p className="text-slate-500">All UPI subscription payments have been processed.</p>
         </CardContent>
@@ -1238,7 +1220,7 @@ function UpiPaymentsTab() {
                   disabled={approveMutation.isPending || rejectMutation.isPending}
                   data-testid={`button-approve-upi-${payment.id}`}
                 >
-                  <CheckCircle className="w-4 h-4 mr-1" />
+                  
                   Approve
                 </Button>
                 <Button
@@ -1252,7 +1234,7 @@ function UpiPaymentsTab() {
                   disabled={approveMutation.isPending || rejectMutation.isPending}
                   data-testid={`button-reject-upi-${payment.id}`}
                 >
-                  <XCircle className="w-4 h-4 mr-1" />
+                  
                   Reject
                 </Button>
               </div>
@@ -1347,7 +1329,7 @@ function WithdrawalsTab() {
 
       {withdrawals.length === 0 ? (
         <div className="text-center py-12 text-slate-500">
-          <CreditCard className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          
           <p>No withdrawal requests found</p>
         </div>
       ) : (
@@ -1403,7 +1385,7 @@ function WithdrawalsTab() {
                         }}
                         data-testid={`button-approve-withdrawal-${request.id}`}
                       >
-                        <CheckCircle className="h-4 w-4 mr-1" />
+                        
                         Approve
                       </Button>
                       <Button
@@ -1415,7 +1397,7 @@ function WithdrawalsTab() {
                         }}
                         data-testid={`button-reject-withdrawal-${request.id}`}
                       >
-                        <XCircle className="h-4 w-4 mr-1" />
+                        
                         Reject
                       </Button>
                     </div>
@@ -1753,9 +1735,7 @@ function SubmissionsTab() {
                 >
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-3">
-                      <ChevronRight 
-                        className={`h-5 w-5 text-slate-500 transition-transform ${isExpanded ? "rotate-90" : ""}`} 
-                      />
+                      
                       <div>
                         <h3 className="text-lg font-bold text-slate-950">{group.campaign.title}</h3>
                         <p className="text-sm text-slate-500">
@@ -1825,7 +1805,7 @@ function SubmissionsTab() {
                                   rel="noopener noreferrer"
                                   className="text-blue-400 hover:underline flex items-center gap-1 text-sm"
                                 >
-                                  <ExternalLink className="h-4 w-4" />
+                                  
                                   View Submission
                                 </a>
                               </div>
@@ -1844,7 +1824,7 @@ function SubmissionsTab() {
                                   }}
                                   disabled={approveMutation.isPending}
                                 >
-                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  
                                   Approve
                                 </Button>
                                 <Button
@@ -1856,18 +1836,18 @@ function SubmissionsTab() {
                                     setRejectDialogOpen(true);
                                   }}
                                 >
-                                  <XCircle className="h-4 w-4 mr-1" />
+                                  
                                   Reject
                                 </Button>
                               </>
                             ) : item.reservation.status === "approved" ? (
                               <Badge className="bg-green-600 text-white">
-                                <CheckCircle className="h-3 w-3 mr-1" />
+                                
                                 Approved
                               </Badge>
                             ) : (
                               <Badge className="bg-red-600 text-white">
-                                <XCircle className="h-3 w-3 mr-1" />
+                                
                                 Rejected
                               </Badge>
                             )}
@@ -1900,9 +1880,7 @@ function SubmissionsTab() {
               >
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div className="flex items-start gap-2">
-                    <ChevronRight 
-                      className={`h-5 w-5 text-slate-500 transition-transform flex-shrink-0 mt-1 ${isTitleExpanded ? "rotate-90" : ""}`} 
-                    />
+                    
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="text-base sm:text-lg font-bold text-slate-950 break-words">{titleGroup.baseTitle}</h3>
@@ -1981,9 +1959,7 @@ function SubmissionsTab() {
                         >
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
-                              <ChevronRight 
-                                className={`h-4 w-4 text-slate-500 transition-transform flex-shrink-0 ${isExpanded ? "rotate-90" : ""}`} 
-                              />
+                              
                               <Badge className="bg-primary/20 text-primary text-xs">
                                 {group.campaign.tier}
                               </Badge>
@@ -2043,7 +2019,7 @@ function SubmissionsTab() {
                                           rel="noopener noreferrer"
                                           className="text-blue-400 hover:underline flex items-center gap-1 text-xs sm:text-sm"
                                         >
-                                          <ExternalLink className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
+                                          
                                           View Submission
                                         </a>
                                       </div>
@@ -2062,7 +2038,7 @@ function SubmissionsTab() {
                                           }}
                                           disabled={approveMutation.isPending}
                                         >
-                                          <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
+                                          
                                           <span className="hidden sm:inline">Approve</span>
                                         </Button>
                                         <Button
@@ -2075,18 +2051,18 @@ function SubmissionsTab() {
                                             setRejectDialogOpen(true);
                                           }}
                                         >
-                                          <XCircle className="h-3 w-3 sm:h-4 sm:w-4 sm:mr-1" />
+                                          
                                           <span className="hidden sm:inline">Reject</span>
                                         </Button>
                                       </>
                                     ) : item.reservation.status === "approved" ? (
                                       <Badge className="bg-green-600 text-white text-xs">
-                                        <CheckCircle className="h-3 w-3 mr-1" />
+                                        
                                         Approved
                                       </Badge>
                                     ) : (
                                       <Badge className="bg-red-600 text-white">
-                                        <XCircle className="h-3 w-3 mr-1" />
+                                        
                                         Rejected
                                       </Badge>
                                     )}
@@ -2423,7 +2399,7 @@ function CampaignsTab() {
       {pendingCampaignGroups.length > 0 && (
         <div>
           <h3 className="text-lg lg:text-xl font-bold text-yellow-300 mb-4 flex items-center gap-2">
-            <Clock className="h-5 w-5 lg:h-6 lg:w-6" />
+            
             Pending Approval ({pendingCampaignGroups.length} {pendingCampaignGroups.length === 1 ? 'campaign' : 'campaigns'})
           </h3>
           
@@ -2442,7 +2418,7 @@ function CampaignsTab() {
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <ChevronRight className={`h-4 w-4 text-yellow-300 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                            
                             <p className="text-slate-950 font-semibold text-base">{group.title}</p>
                           </div>
                           <p className="text-sm text-slate-500 ml-6">{group.brand}</p>
@@ -2492,7 +2468,7 @@ function CampaignsTab() {
                                     }}
                                     data-testid={`button-approve-campaign-${campaign.id}`}
                                   >
-                                    <CheckCircle className="h-4 w-4" />
+                                    
                                   </Button>
                                   <Button
                                     size="sm"
@@ -2504,7 +2480,7 @@ function CampaignsTab() {
                                     }}
                                     data-testid={`button-reject-campaign-${campaign.id}`}
                                   >
-                                    <XCircle className="h-4 w-4" />
+                                    
                                   </Button>
                                 </div>
                               </div>
@@ -2515,7 +2491,7 @@ function CampaignsTab() {
                               {/* Show uploaded asset file */}
                               {campaign.assetUrl && (
                                 <div className="flex items-center gap-2 p-2 bg-blue-500/10 border border-blue-500/30 rounded">
-                                  <FileText className="h-4 w-4 text-blue-400" />
+                                  
                                   <span className="text-sm text-blue-300">Uploaded File:</span>
                                   <a 
                                     href={campaign.assetUrl} 
@@ -2525,7 +2501,7 @@ function CampaignsTab() {
                                     onClick={(e) => e.stopPropagation()}
                                   >
                                     {campaign.assetFileName || "View File"}
-                                    <ExternalLink className="h-3 w-3" />
+                                    
                                   </a>
                                 </div>
                               )}
@@ -2547,7 +2523,7 @@ function CampaignsTab() {
                             }}
                             data-testid={`button-approve-all-${group.title}`}
                           >
-                            <CheckCircle className="h-4 w-4 mr-1" />
+                            
                             Approve All ({group.campaigns.length})
                           </Button>
                           <Button
@@ -2576,7 +2552,7 @@ function CampaignsTab() {
             Active ({activeCampaignGroups.length})
           </TabsTrigger>
           <TabsTrigger value="completed" className="data-[state=active]:bg-purple-600 data-[state=active]:text-white">
-            <CheckCircle className="h-4 w-4 mr-2" />
+            
             Completed ({completedCampaignGroups.length})
           </TabsTrigger>
         </TabsList>
@@ -2621,7 +2597,7 @@ function CampaignsTab() {
                           >
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <ChevronRight className={`h-4 w-4 text-green-300 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                
                                 <p className="text-slate-950 font-semibold text-base">{group.title}</p>
                               </div>
                               <p className="text-sm text-slate-500 ml-6">{group.brand}</p>
@@ -2661,7 +2637,7 @@ function CampaignsTab() {
                                 }}
                                 data-testid={`button-bulk-convert-stars-${group.title}`}
                               >
-                                <Star className="h-4 w-4 mr-1" />
+                                
                                 Convert All to Stars
                               </Button>
                               {group.campaigns.some(c => c.isPromotional) && (
@@ -2723,7 +2699,7 @@ function CampaignsTab() {
                                         <Badge className="bg-gray-600 text-white text-xs">{campaign.tier}</Badge>
                                         {campaign.isPromotional ? (
                                           <span className="text-yellow-300 font-semibold flex items-center gap-1">
-                                            <Star className="h-3 w-3" /> {campaign.starReward} Stars
+                                             {campaign.starReward} Stars
                                           </span>
                                         ) : (
                                           <span className="text-green-300 font-semibold">{formatINR(campaign.payAmount)}</span>
@@ -2736,7 +2712,7 @@ function CampaignsTab() {
                                       <div className="flex items-center gap-1 flex-shrink-0">
                                         {campaign.isPromotional && (
                                           <Badge className="bg-yellow-500 text-gray-900 text-xs">
-                                            <Star className="h-3 w-3 mr-1" />
+                                            
                                             Promo
                                           </Badge>
                                         )}
@@ -2802,7 +2778,7 @@ function CampaignsTab() {
                                           }}
                                           data-testid={`button-convert-to-stars-${campaign.id}`}
                                         >
-                                          <Star className="h-4 w-4 mr-1" />
+                                          
                                           To Stars
                                         </Button>
                                       )}
@@ -2814,7 +2790,7 @@ function CampaignsTab() {
                                             className="text-red-400 border-red-500"
                                             data-testid={`button-delete-campaign-${campaign.id}`}
                                           >
-                                            <Trash2 className="h-4 w-4" />
+                                            
                                           </Button>
                                         </AlertDialogTrigger>
                                         <AlertDialogContent className="bg-white border-gray-800">
@@ -2882,7 +2858,7 @@ function CampaignsTab() {
           <div className="bg-purple-500/20 border border-purple-500/50 rounded-lg p-3">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className="text-xl font-bold text-purple-400 flex items-center gap-2">
-                <CheckCircle className="h-6 w-6" />
+                
                 COMPLETED CAMPAIGNS
               </h3>
               <Badge className="bg-purple-500 text-white">
@@ -2895,7 +2871,7 @@ function CampaignsTab() {
             <div className="space-y-3 pr-2">
               {completedCampaignGroups.length === 0 ? (
                 <div className="text-center py-12 text-slate-500">
-                  <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  
                   <p>No completed campaigns yet</p>
                   <p className="text-sm mt-2">Campaigns will appear here when marked as complete</p>
                 </div>
@@ -2918,7 +2894,7 @@ function CampaignsTab() {
                           >
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
-                                <ChevronRight className={`h-4 w-4 text-purple-300 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                
                                 <p className="text-slate-950 font-semibold text-base">{group.title}</p>
                               </div>
                               <p className="text-sm text-slate-500 ml-6">{group.brand}</p>
@@ -3117,7 +3093,7 @@ function CampaignsTab() {
         <DialogContent className="bg-white shadow-md border border-indigo-100 text-slate-950 border-indigo-100">
           <DialogHeader>
             <DialogTitle className="text-yellow-400 flex items-center gap-2">
-              <Star className="h-5 w-5" />
+              
               Convert to Star-Based Campaign
             </DialogTitle>
             <DialogDescription className="text-slate-500">
@@ -3179,7 +3155,7 @@ function CampaignsTab() {
         <DialogContent className="bg-white shadow-md border border-indigo-100 text-slate-950 border-indigo-100">
           <DialogHeader>
             <DialogTitle className="text-yellow-400 flex items-center gap-2">
-              <Star className="h-5 w-5" />
+              
               Convert All Tiers to Stars
             </DialogTitle>
             <DialogDescription className="text-slate-500">
@@ -3325,7 +3301,7 @@ function VerificationsTab() {
           className={`flex items-center gap-2 ${activeSubTab !== "pending" ? "text-slate-950 border-gray-500" : ""}`}
           data-testid="button-pending-verifications"
         >
-          <Clock className="h-4 w-4" />
+          
           Pending ({pendingUsers.length})
         </Button>
         <Button
@@ -3334,7 +3310,7 @@ function VerificationsTab() {
           className={`flex items-center gap-2 ${activeSubTab !== "verified" ? "text-slate-950 border-gray-500" : ""}`}
           data-testid="button-verified-accounts"
         >
-          <CheckCircle className="h-4 w-4" />
+          
           Verified ({verifiedUsers.length})
         </Button>
       </div>
@@ -3344,7 +3320,7 @@ function VerificationsTab() {
       ) : activeSubTab === "pending" ? (
         pendingUsers.length === 0 ? (
           <div className="text-center py-12 text-slate-500">
-            <Shield className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            
             <p>No pending Instagram verifications</p>
           </div>
         ) : (
@@ -3367,7 +3343,7 @@ function VerificationsTab() {
                           rel="noopener noreferrer"
                           className="text-blue-400 hover:underline flex items-center gap-1 text-sm"
                         >
-                          <ExternalLink className="h-4 w-4" />
+                          
                           View Profile
                         </a>
                       )}
@@ -3391,7 +3367,7 @@ function VerificationsTab() {
                         className="h-8 w-8 p-0"
                         data-testid={`button-view-verification-user-${user.id}`}
                       >
-                        <Eye className="h-4 w-4" />
+                        
                       </Button>
                       <Button
                         size="sm"
@@ -3400,7 +3376,7 @@ function VerificationsTab() {
                         disabled={approveMutation.isPending}
                         data-testid={`button-approve-verification-${user.id}`}
                       >
-                        <CheckCircle className="h-4 w-4 mr-1" />
+                        
                         Approve
                       </Button>
                       <Button
@@ -3412,7 +3388,7 @@ function VerificationsTab() {
                         }}
                         data-testid={`button-reject-verification-${user.id}`}
                       >
-                        <XCircle className="h-4 w-4 mr-1" />
+                        
                         Reject
                       </Button>
                     </div>
@@ -3451,7 +3427,7 @@ function VerificationsTab() {
                           rel="noopener noreferrer"
                           className="text-blue-400 hover:underline flex items-center gap-1 text-sm"
                         >
-                          <ExternalLink className="h-4 w-4" />
+                          
                           View Profile
                         </a>
                       )}
@@ -3472,7 +3448,7 @@ function VerificationsTab() {
                       className="h-8 w-8 p-0"
                       data-testid={`button-view-verified-user-${user.id}`}
                     >
-                      <Eye className="h-4 w-4" />
+                      
                     </Button>
                   </div>
                 </CardContent>
@@ -3822,7 +3798,7 @@ function SettingsTab() {
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-semibold text-slate-950">Subscription Plans</h3>
             <Button onClick={() => setShowPlanDialog(true)} className="gap-2" data-testid="button-add-plan">
-              <Plus className="h-4 w-4" />
+              
               Add Plan
             </Button>
           </div>
@@ -3863,7 +3839,7 @@ function SettingsTab() {
                           onClick={() => setEditingPlan(plan)}
                           data-testid={`button-edit-plan-${plan.id}`}
                         >
-                          <Settings className="h-4 w-4" />
+                          
                         </Button>
                         <Button
                           variant="outline"
@@ -3880,7 +3856,7 @@ function SettingsTab() {
                           onClick={() => deletePlanMutation.mutate(plan.id)}
                           data-testid={`button-delete-plan-${plan.id}`}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          
                         </Button>
                       </div>
                     </div>
@@ -4026,7 +4002,7 @@ function DataResetSection() {
       <Card className="bg-red-950/30 border-red-700">
         <CardHeader>
           <CardTitle className="text-red-400 flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5" />
+            
             Danger Zone - Reset All Data
           </CardTitle>
         </CardHeader>
@@ -4051,7 +4027,7 @@ function DataResetSection() {
             className="gap-2"
             data-testid="button-reset-data"
           >
-            <Trash2 className="h-4 w-4" />
+            
             Reset All Data
           </Button>
         </CardContent>
@@ -4061,7 +4037,7 @@ function DataResetSection() {
         <DialogContent className="bg-white shadow-md border border-indigo-100 border-indigo-100">
           <DialogHeader>
             <DialogTitle className="text-red-400 flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5" />
+              
               Confirm Data Reset
             </DialogTitle>
             <DialogDescription className="text-slate-500">
@@ -4247,11 +4223,11 @@ function ApiKeysForm() {
             <Button
               type="button"
               variant="ghost"
-              size="icon"
-              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+              size="sm"
+              className="absolute right-1 top-1/2 -translate-y-1/2 h-7 text-xs px-2"
               onClick={() => toggleShowPassword(key)}
             >
-              {showPassword[key] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showPassword[key] ? "Hide" : "Show"}
             </Button>
           )}
         </div>
@@ -4294,7 +4270,7 @@ function ApiKeysForm() {
                 className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
                 onClick={() => toggleShowPassword(key)}
               >
-                {showPassword[key] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword[key] ? "Hide" : "Show"}
               </Button>
             )}
           </div>
@@ -4304,7 +4280,7 @@ function ApiKeysForm() {
             className="bg-green-600"
             data-testid={`button-save-${key}`}
           >
-            <Save className="h-4 w-4 mr-1" />
+            
             Save
           </Button>
         </div>
@@ -4376,7 +4352,7 @@ function ApiKeysForm() {
                   }}
                   data-testid="button-copy-redirect-uri"
                 >
-                  <Copy className="h-4 w-4 mr-1" />
+                  
                   Copy
                 </Button>
               </div>
@@ -4402,7 +4378,7 @@ function ApiKeysForm() {
                   }}
                   data-testid="button-copy-deauth-uri"
                 >
-                  <Copy className="h-4 w-4 mr-1" />
+                  
                   Copy
                 </Button>
               </div>
@@ -4428,7 +4404,7 @@ function ApiKeysForm() {
                   }}
                   data-testid="button-copy-data-deletion-uri"
                 >
-                  <Copy className="h-4 w-4 mr-1" />
+                  
                   Copy
                 </Button>
               </div>
@@ -4449,7 +4425,7 @@ function ApiKeysForm() {
                     toast.success("Privacy URL copied!");
                   }}
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  
                 </Button>
               </div>
               <div className="p-2.5 rounded-lg bg-gray-950 border border-gray-800 flex items-center justify-between">
@@ -4466,7 +4442,7 @@ function ApiKeysForm() {
                     toast.success("Data Deletion Instructions URL copied!");
                   }}
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  
                 </Button>
               </div>
             </div>
@@ -4509,7 +4485,7 @@ function ApiKeysForm() {
       <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
         <CardHeader>
           <CardTitle className="text-slate-950 flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-purple-500" />
+            
             Razorpay
           </CardTitle>
           <p className="text-sm text-slate-500">For sponsor wallet deposits</p>
@@ -4528,7 +4504,7 @@ function ApiKeysForm() {
       <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
         <CardHeader>
           <CardTitle className="text-slate-950 flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-blue-500" />
+            
             Stripe (International Payments)
           </CardTitle>
           <p className="text-sm text-slate-500">For international sponsor wallet deposits (non-India)</p>
@@ -4542,7 +4518,7 @@ function ApiKeysForm() {
             className="w-full bg-blue-600"
             data-testid="button-save-stripe"
           >
-            <Save className="h-4 w-4 mr-2" />
+            
             {saveMultipleMutation.isPending ? "Saving..." : "Save Stripe Settings"}
           </Button>
           <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg">
@@ -4556,7 +4532,7 @@ function ApiKeysForm() {
       <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
         <CardHeader>
           <CardTitle className="text-slate-950 flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-orange-500" />
+            
             PayU (Alternative India Payments)
           </CardTitle>
           <p className="text-sm text-slate-500">Alternative payment gateway for Indian sponsor wallet deposits</p>
@@ -4582,7 +4558,7 @@ function ApiKeysForm() {
             className="w-full bg-orange-600"
             data-testid="button-save-payu"
           >
-            <Save className="h-4 w-4 mr-2" />
+            
             {saveMultipleMutation.isPending ? "Saving..." : "Save PayU Settings"}
           </Button>
           <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg">
@@ -4596,7 +4572,7 @@ function ApiKeysForm() {
       <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
         <CardHeader>
           <CardTitle className="text-slate-950 flex items-center gap-2">
-            <Mail className="h-5 w-5 text-red-500" />
+            
             Gmail / Email Service (OTP Verification)
           </CardTitle>
           <p className="text-sm text-slate-500">Required for email OTP verification during signup</p>
@@ -4610,7 +4586,7 @@ function ApiKeysForm() {
             className="w-full bg-green-600"
             data-testid="button-save-gmail"
           >
-            <Save className="h-4 w-4 mr-2" />
+            
             {saveMultipleMutation.isPending ? "Saving..." : "Save Gmail Settings"}
           </Button>
           <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg">
@@ -4624,7 +4600,7 @@ function ApiKeysForm() {
       <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
         <CardHeader>
           <CardTitle className="text-slate-950 flex items-center gap-2">
-            <Settings className="h-5 w-5 text-blue-500" />
+            
             RapidAPI (Instagram Followers)
           </CardTitle>
           <p className="text-sm text-slate-500">For fetching real Instagram follower counts</p>
@@ -4765,7 +4741,7 @@ function PromoCodesTab() {
           <p className="text-slate-500">Create and manage promotional codes for discounts and free trials</p>
         </div>
         <Button onClick={() => setShowCreateDialog(true)} data-testid="button-create-promo">
-          <Plus className="h-4 w-4 mr-2" />
+          
           Create Promo Code
         </Button>
       </div>
@@ -4774,7 +4750,7 @@ function PromoCodesTab() {
         {promoCodes.length === 0 ? (
           <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
             <CardContent className="p-8 text-center">
-              <Ticket className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+              
               <p className="text-slate-500">No promo codes created yet</p>
               <p className="text-sm text-gray-500 mt-1">Click the button above to create your first promo code</p>
             </CardContent>
@@ -4795,14 +4771,14 @@ function PromoCodesTab() {
                         onClick={() => copyToClipboard(promo.code)}
                         data-testid={`button-copy-${promo.id}`}
                       >
-                        <Copy className="h-4 w-4 text-slate-500" />
+                        
                       </Button>
                     </div>
                     <Badge variant={promo.type === "trial" ? "default" : "secondary"}>
                       {promo.type === "trial" ? (
-                        <><Calendar className="h-3 w-3 mr-1" /> {promo.trialDays} Days Trial</>
+                        <> {promo.trialDays} Days Trial</>
                       ) : (
-                        <><Percent className="h-3 w-3 mr-1" /> {promo.discountPercent}% Off</>
+                        <> {promo.discountPercent}% Off</>
                       )}
                     </Badge>
                     <Badge variant={promo.isActive ? "outline" : "destructive"}>
@@ -4838,7 +4814,7 @@ function PromoCodesTab() {
                         onClick={() => deleteMutation.mutate(promo.id)}
                         data-testid={`button-delete-${promo.id}`}
                       >
-                        <Trash2 className="h-4 w-4 text-red-500" />
+                        
                       </Button>
                     </div>
                   </div>
@@ -4884,7 +4860,7 @@ function PromoCodesTab() {
                   size="sm"
                   className={newCode.type !== "trial" ? "text-slate-950 border-gray-500" : ""}
                 >
-                  <Calendar className="h-4 w-4 mr-1" />
+                  
                   Free Trial
                 </Button>
                 <Button
@@ -4893,7 +4869,7 @@ function PromoCodesTab() {
                   size="sm"
                   className={newCode.type !== "discount" ? "text-slate-950 border-gray-500" : ""}
                 >
-                  <Percent className="h-4 w-4 mr-1" />
+                  
                   Discount
                 </Button>
                 <Button
@@ -4911,7 +4887,7 @@ function PromoCodesTab() {
                   size="sm"
                   className={newCode.type !== "credit" ? "text-slate-950 border-gray-500" : ""}
                 >
-                  <Gift className="h-4 w-4 mr-1" />
+                  
                   Free Credit
                 </Button>
               </div>
@@ -4950,7 +4926,7 @@ function PromoCodesTab() {
                       className={`flex-1 ${newCode.afterTrialAction !== "continue" ? "text-slate-950 border-gray-500" : ""}`}
                       data-testid="button-after-trial-continue"
                     >
-                      <RefreshCw className="h-4 w-4 mr-2" />
+                      
                       Auto-Renew (Pay)
                     </Button>
                   </div>
@@ -5130,7 +5106,7 @@ function NewsletterTab() {
       <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
         <CardHeader>
           <CardTitle className="text-slate-950 flex items-center gap-2">
-            <Mail className="h-5 w-5 text-purple-500" />
+            
             Compose Newsletter
           </CardTitle>
         </CardHeader>
@@ -5144,7 +5120,7 @@ function NewsletterTab() {
                 size="sm"
                 data-testid="button-audience-all"
               >
-                <Users className="h-4 w-4 mr-2" />
+                
                 All Users
               </Button>
               <Button
@@ -5162,7 +5138,7 @@ function NewsletterTab() {
                 size="sm"
                 data-testid="button-audience-sponsors"
               >
-                <Building2 className="h-4 w-4 mr-2" />
+                
                 Sponsors Only
               </Button>
             </div>
@@ -5200,7 +5176,7 @@ function NewsletterTab() {
               <>Sending...</>
             ) : (
               <>
-                <Send className="h-4 w-4 mr-2" />
+                
                 Send Newsletter
               </>
             )}
@@ -5360,7 +5336,7 @@ function SupportTicketsTab() {
         <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100">
           <CardHeader>
             <CardTitle className="text-slate-950 flex items-center gap-2">
-              <MessageCircle className="h-5 w-5 text-purple-500" />
+              
               Tickets ({filteredTickets.length})
             </CardTitle>
           </CardHeader>
@@ -5490,7 +5466,7 @@ function SupportTicketsTab() {
                       disabled={isReplying || !replyText.trim()}
                       data-testid="button-send-reply"
                     >
-                      <Send className="h-4 w-4" />
+                      
                     </Button>
                   </div>
                 )}
@@ -5532,7 +5508,7 @@ export default function AdminDashboard() {
       <div className="min-h-screen bg-white flex items-center justify-center">
         <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100 p-8 max-w-md">
           <div className="text-center">
-            <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+            
             <h2 className="text-xl font-bold text-slate-950 mb-2">Access Denied</h2>
             <p className="text-slate-500 mb-4">You do not have admin access.</p>
             <Button onClick={() => setLocation("/")} data-testid="button-go-home">
@@ -5563,7 +5539,7 @@ export default function AdminDashboard() {
               className="text-slate-700 hover:text-slate-900 hover:bg-indigo-50 shrink-0"
               data-testid="button-open-sidebar"
             >
-              <Menu className="h-5 w-5 sm:h-6 sm:w-6" />
+              
             </Button>
             <h1 className="text-base sm:text-lg font-bold bg-gradient-to-r from-purple-700 to-indigo-700 bg-clip-text text-transparent truncate text-center flex-1 tracking-wide">
               {activeTab === "overview" && "Overview"}

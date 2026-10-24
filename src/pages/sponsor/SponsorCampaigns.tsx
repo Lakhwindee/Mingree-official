@@ -2,447 +2,195 @@ import { SponsorSidebar } from "@/components/SponsorSidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
-import { api, formatINR, type ApiCampaign } from "@/lib/api";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, formatINR, type BrandCampaignCard } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Instagram, Plus, Users, Clock, CheckCircle, Pause, Play, Trash2, ChevronDown, ChevronRight, FolderOpen, Folder, AlertCircle } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Link } from "wouter";
-import { toast } from "sonner";
-import { useState, useMemo } from "react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 
-interface CampaignGroup {
-  title: string;
-  brand: string | null;
-  brandLogo: string | null;
-  campaigns: ApiCampaign[];
-  totalSpots: number;
-  filledSpots: number;
-  totalBudget: number;
-  isActive: boolean;
-  // Aggregated reservation status counts
-  totalReserved: number;
-  totalSubmitted: number;
-  totalApproved: number;
-  totalRejected: number;
-  // Tier completion counts
-  completedTiers: number;
-  totalTiers: number;
-}
+import { Link, useLocation } from "wouter";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+
+
 
 export default function SponsorCampaigns() {
-  const queryClient = useQueryClient();
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [, setLocation] = useLocation();
 
   const { data: sponsor } = useQuery({
     queryKey: ["currentSponsor"],
     queryFn: api.getCurrentSponsor,
   });
 
-  const { data: campaigns = [] } = useQuery({
-    queryKey: ["sponsorCampaigns", sponsor?.id],
-    queryFn: () => sponsor ? api.getSponsorCampaigns(sponsor.id) : [],
+  const {
+    data: cards = [],
+    isLoading,
+  } = useQuery({
+    queryKey: ["brandCampaignCards", sponsor?.id],
+    queryFn: () => api.getBrandCampaignCards(sponsor?.id),
     enabled: !!sponsor,
+    refetchInterval: 4000,
   });
-
-  const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => api.updateCampaignStatus(id, status),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["sponsorCampaigns"] });
-      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      toast.success(variables.status === "paused" ? "Campaign paused" : "Campaign activated");
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || "Failed to update campaign");
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => api.deleteCampaign(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["sponsorCampaigns"] });
-      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      toast.success("Campaign deleted successfully");
-    },
-    onError: (error: Error) => {
-      toast.error(error.message || "Failed to delete campaign");
-    },
-  });
-
-  const campaignGroups = useMemo(() => {
-    const groups: Map<string, CampaignGroup> = new Map();
-    
-    // Extract base title without tier suffix like "(Starter)" or "(Tier 1)"
-    const getBaseTitle = (title: string) => {
-      return title.replace(/\s*\((?:Tier\s*\d+|Starter|Nano|Micro|Mid|Macro|Mega)\)\s*$/i, '').trim();
-    };
-    
-    campaigns.forEach(campaign => {
-      const baseTitle = getBaseTitle(campaign.title);
-      const key = baseTitle;
-      
-      if (!groups.has(key)) {
-        groups.set(key, {
-          title: baseTitle,
-          brand: campaign.brand,
-          brandLogo: campaign.brandLogo,
-          campaigns: [],
-          totalSpots: 0,
-          filledSpots: 0,
-          totalBudget: 0,
-          isActive: false,
-          totalReserved: 0,
-          totalSubmitted: 0,
-          totalApproved: 0,
-          totalRejected: 0,
-          completedTiers: 0,
-          totalTiers: 0,
-        });
-      }
-      
-      const group = groups.get(key)!;
-      group.campaigns.push(campaign);
-      group.totalSpots += campaign.totalSpots;
-      group.filledSpots += (campaign.totalSpots - campaign.spotsRemaining);
-      group.totalBudget += parseFloat(campaign.payAmount) * campaign.totalSpots;
-      // Aggregate reservation status counts from all tiers
-      group.totalReserved += campaign.reservedCount || 0;
-      group.totalSubmitted += campaign.submittedCount || 0;
-      group.totalApproved += campaign.approvedCount || 0;
-      group.totalRejected += campaign.rejectedCount || 0;
-      // Track tier completion
-      group.totalTiers += 1;
-      if (campaign.isTierCompleted) {
-        group.completedTiers += 1;
-      }
-      if (campaign.spotsRemaining > 0 && campaign.status === "active" && campaign.isApproved) {
-        group.isActive = true;
-      }
-    });
-
-    groups.forEach(group => {
-      group.campaigns.sort((a, b) => {
-        const tierA = parseInt(a.tier.replace(/\D/g, '')) || 0;
-        const tierB = parseInt(b.tier.replace(/\D/g, '')) || 0;
-        return tierA - tierB;
-      });
-    });
-
-    // Sort groups by priority: pending/active first, completed last
-    const getGroupPriority = (group: any) => {
-      const hasPending = group.campaigns.some((c: any) => !c.isApproved || c.status === 'pending');
-      const hasActive = group.campaigns.some((c: any) => c.isApproved && c.status === 'active' && c.spotsRemaining > 0);
-      const hasInReview = group.campaigns.some((c: any) => c.spotsRemaining === 0 && !c.isTierCompleted);
-      const allCompleted = group.campaigns.every((c: any) => c.isTierCompleted);
-      
-      if (hasPending) return 1; // Pending approval - highest
-      if (hasActive) return 2; // Active campaigns
-      if (hasInReview) return 3; // In review
-      if (allCompleted) return 4; // Completed - lowest
-      return 2;
-    };
-
-    return Array.from(groups.values()).sort((a, b) => {
-      const priorityDiff = getGroupPriority(a) - getGroupPriority(b);
-      if (priorityDiff !== 0) return priorityDiff;
-      return a.title.localeCompare(b.title);
-    });
-  }, [campaigns]);
-
-  const handleGroupOpenChange = (title: string, open: boolean) => {
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (open) {
-        next.add(title);
-      } else {
-        next.delete(title);
-      }
-      return next;
-    });
-  };
-
-  const getStatusBadge = (campaign: ApiCampaign) => {
-    // Tier is completed when all spots are filled AND all work is approved
-    if (campaign.isTierCompleted) {
-      return <Badge className="bg-purple-600"><CheckCircle className="w-3 h-3 mr-1" /> Completed</Badge>;
-    }
-    // All spots filled but work still pending review
-    if (campaign.spotsRemaining === 0) {
-      return <Badge className="bg-blue-500"><Clock className="w-3 h-3 mr-1" /> In Review</Badge>;
-    }
-    if (campaign.status === "pending" || !campaign.isApproved) {
-      return <Badge className="bg-orange-500"><Clock className="w-3 h-3 mr-1" /> Pending Approval</Badge>;
-    }
-    if (campaign.status === "paused") {
-      return <Badge className="bg-yellow-500"><Pause className="w-3 h-3 mr-1" /> Paused</Badge>;
-    }
-    return <Badge className="bg-green-500"><CheckCircle className="w-3 h-3 mr-1" /> Active</Badge>;
-  };
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen w-full bg-zinc-950 text-zinc-100">
       <SponsorSidebar />
-      <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
-        <div className="mx-auto max-w-6xl p-6">
-          <div className="mb-8 flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">My Campaigns</h1>
-              <p className="text-muted-foreground">Manage your influencer campaigns</p>
+
+      <main className="flex-1 w-full min-w-0 overflow-y-auto pb-28 md:pb-8">
+        {/* Header */}
+        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md px-4 py-4 md:px-8">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs uppercase tracking-wider font-semibold text-pink-400">Brand Management</span>
             </div>
-            <Link href="/sponsor/create-campaign">
-              <Button className="rounded-full gap-2" data-testid="button-create">
-                <Plus className="w-4 h-4" /> New Campaign
-              </Button>
-            </Link>
+            <h1 className="text-xl md:text-2xl font-bold text-white">Campaigns & Workspaces</h1>
           </div>
 
-          {campaignGroups.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed p-12 text-center">
-              <div className="rounded-full bg-muted p-4">
-                <Instagram className="h-8 w-8 text-muted-foreground" />
-              </div>
-              <h3 className="mt-4 text-lg font-semibold">No campaigns yet</h3>
-              <p className="mb-4 mt-2 text-sm text-muted-foreground max-w-sm">
-                Create your first influencer campaign to start reaching creators.
+          <Link href="/sponsor/create-campaign">
+            <Button className="bg-pink-600 hover:bg-pink-500 font-bold text-white rounded-xl text-xs sm:text-sm">
+               Create Campaign
+            </Button>
+          </Link>
+        </div>
+
+        <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
+          {isLoading ? (
+            <div className="text-center py-24">
+              <div className="h-10 w-10 animate-spin rounded-full border-4 border-pink-500 border-t-transparent mx-auto" />
+              <p className="mt-4 text-xs text-zinc-400">Loading campaign cards...</p>
+            </div>
+          ) : cards.length === 0 ? (
+            <Card className="bg-zinc-900 border-zinc-800 p-12 text-center space-y-4">
+              
+              <h3 className="text-lg font-bold text-white">No Campaigns Created Yet</h3>
+              <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                Launch your first Instagram Reels campaign with targeted creator matching, escrow protection, and dedicated campaign workspaces.
               </p>
               <Link href="/sponsor/create-campaign">
-                <Button className="rounded-full" data-testid="button-create-first">
-                  Create Campaign
+                <Button className="mt-2 bg-pink-600 hover:bg-pink-500 font-bold text-white">
+                  + Create Your First Campaign
                 </Button>
               </Link>
-            </div>
+            </Card>
           ) : (
-            <div className="space-y-4">
-              {campaignGroups.map((group, i) => {
-                const isExpanded = expandedGroups.has(group.title);
-                
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {cards.map((c) => {
+                const fillPercent = c.totalSlots > 0 ? Math.round((c.reservedSlots / c.totalSlots) * 100) : 0;
+                const payoutProgress = c.totalBudget > 0 ? Math.round((c.releasedPayouts / c.totalBudget) * 100) : 0;
+
                 return (
                   <motion.div
-                    key={group.title}
-                    initial={{ opacity: 0, y: 10 }}
+                    key={c.id}
+                    initial={{ opacity: 0, y: 15 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.05 }}
+                    className="flex flex-col"
                   >
-                    <Collapsible open={isExpanded} onOpenChange={(open) => handleGroupOpenChange(group.title, open)}>
-                      <Card className={`overflow-hidden transition-all ${
-                        group.isActive 
-                          ? "ring-2 ring-green-500/50" 
-                          : "opacity-80"
-                      }`}>
-                        <CollapsibleTrigger asChild>
-                          <div 
-                            className="flex items-center gap-4 p-4 cursor-pointer hover-elevate"
-                            data-testid={`campaign-group-${group.title}`}
+                    <Card
+                      onClick={() => setLocation(`/sponsor/campaigns/${c.id}/workspace`)}
+                      className="group cursor-pointer bg-zinc-900/90 hover:bg-zinc-900 border-zinc-800 hover:border-pink-500/50 transition-all rounded-2xl overflow-hidden flex flex-col justify-between shadow-lg hover:shadow-pink-500/10"
+                    >
+                      <CardHeader className="p-5 pb-3 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={c.brandLogo}
+                              alt=""
+                              className="h-12 w-12 rounded-xl object-cover border border-zinc-800 shrink-0"
+                            />
+                            <div>
+                              <span className="text-[11px] font-semibold text-pink-400">{c.genre}</span>
+                              <h3 className="font-bold text-white text-base group-hover:text-pink-300 transition-colors line-clamp-1">
+                                {c.title}
+                              </h3>
+                            </div>
+                          </div>
+
+                          <Badge
+                            className={`text-[10px] font-bold uppercase shrink-0 ${
+                              c.status === "filling_slots"
+                                ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                                : c.status === "under_review"
+                                ? "bg-purple-500/10 text-purple-400 border border-purple-500/30"
+                                : c.status === "completed"
+                                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                                : "bg-blue-500/10 text-blue-400 border border-blue-500/30"
+                            }`}
                           >
-                            <div className={`h-14 w-14 rounded-md flex items-center justify-center ${
-                              group.isActive 
-                                ? "bg-gradient-to-br from-green-50 to-emerald-100 dark:from-green-900/30 dark:to-emerald-900/20" 
-                                : "bg-muted"
-                            }`}>
-                              {group.brandLogo ? (
-                                <img src={group.brandLogo} alt={group.brand || "Brand"} className="max-h-10 max-w-[40px] object-contain" />
-                              ) : (
-                                isExpanded ? <FolderOpen className="h-6 w-6 text-muted-foreground" /> : <Folder className="h-6 w-6 text-muted-foreground" />
-                              )}
-                            </div>
-                            
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="font-bold text-lg truncate">{group.title}</h3>
-                                <Badge variant="secondary" className="text-xs">
-                                  {group.campaigns.length} {group.campaigns.length === 1 ? 'tier' : 'tiers'}
-                                </Badge>
-                                {group.completedTiers === group.totalTiers ? (
-                                  <Badge className="bg-purple-600 text-xs">Completed</Badge>
-                                ) : group.isActive ? (
-                                  <Badge className="bg-green-500 text-xs">Active</Badge>
-                                ) : (
-                                  <Badge className="bg-blue-500 text-xs">In Review</Badge>
-                                )}
-                              </div>
-                              <p className="text-sm text-muted-foreground">{group.brand || "Campaign"}</p>
-                            </div>
+                            {c.status.replace("_", " ")}
+                          </Badge>
+                        </div>
 
-                            <div className="hidden sm:flex items-center gap-4 text-sm">
-                              <div className="text-center">
-                                <p className="text-muted-foreground text-xs">Completed</p>
-                                <p className="font-semibold text-purple-600">{group.completedTiers}/{group.totalTiers} tiers</p>
-                              </div>
-                              <div className="text-center border-l pl-4">
-                                <p className="text-muted-foreground text-xs">Reserved</p>
-                                <p className="font-semibold text-yellow-600">{group.totalReserved}</p>
-                              </div>
-                              <div className="text-center">
-                                <p className="text-muted-foreground text-xs">Submitted</p>
-                                <p className="font-semibold text-blue-600">{group.totalSubmitted}</p>
-                              </div>
-                              <div className="text-center">
-                                <p className="text-muted-foreground text-xs">Approved</p>
-                                <p className="font-semibold text-green-600">{group.totalApproved}</p>
-                              </div>
-                              <div className="text-center border-l pl-4">
-                                <p className="text-muted-foreground text-xs">Spots</p>
-                                <p className="font-semibold">{group.filledSpots}/{group.totalSpots}</p>
-                              </div>
-                              <div className="text-center">
-                                <p className="text-muted-foreground text-xs">Budget</p>
-                                <p className="font-semibold text-green-600">{formatINR(group.totalBudget.toString())}</p>
-                              </div>
-                            </div>
+                        {/* Slots Progress Bar */}
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-zinc-400 font-medium">
+                              Slots: <strong className="text-white">{c.reservedSlots} / {c.totalSlots}</strong>
+                            </span>
+                            <span className="text-amber-400 font-semibold">{c.remainingSlots} remaining</span>
+                          </div>
+                          <div className="w-full bg-zinc-950 rounded-full h-2 overflow-hidden border border-zinc-800">
+                            <div
+                              className="bg-gradient-to-r from-pink-500 to-indigo-500 h-full rounded-full transition-all duration-500"
+                              style={{ width: `${Math.min(100, fillPercent)}%` }}
+                            />
+                          </div>
+                        </div>
+                      </CardHeader>
 
-                            <div className="flex items-center gap-2">
-                              {isExpanded ? (
-                                <ChevronDown className="h-5 w-5 text-muted-foreground" />
-                              ) : (
-                                <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                              )}
-                            </div>
+                      <CardContent className="p-5 py-2 space-y-3.5">
+                        {/* Financial Snapshot */}
+                        <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-zinc-950/70 border border-zinc-800/80 text-xs">
+                          <div>
+                            <span className="text-[10px] text-zinc-400 uppercase tracking-wider block">Total Budget</span>
+                            <span className="font-bold text-white text-sm">{formatINR(c.totalBudget)}</span>
                           </div>
-                        </CollapsibleTrigger>
-                        
-                        <CollapsibleContent>
-                          <div className="border-t bg-muted/30 p-4">
-                            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                              {group.campaigns.map((campaign) => (
-                                <Card 
-                                  key={campaign.id}
-                                  className={`flex flex-col overflow-hidden transition-all ${
-                                    campaign.spotsRemaining > 0 
-                                      ? "border-green-500/30" 
-                                      : "opacity-75"
-                                  }`} 
-                                  data-testid={`campaign-card-${campaign.id}`}
-                                >
-                                  <CardHeader className="pb-2 pt-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <Badge variant="secondary" className="bg-primary/10 text-primary">
-                                        {campaign.tier}
-                                      </Badge>
-                                      {getStatusBadge(campaign)}
-                                    </div>
-                                    <div className="flex items-center gap-2 mt-2">
-                                      <Instagram className="h-4 w-4 text-muted-foreground" />
-                                      <span className="text-sm text-muted-foreground">{campaign.type}</span>
-                                    </div>
-                                  </CardHeader>
-                                  <CardContent className="flex-1 text-sm text-muted-foreground py-2">
-                                    <div className="flex items-center gap-4">
-                                      <div className="flex items-center gap-1">
-                                        <Users className="h-4 w-4" />
-                                        <span className="font-medium" data-testid={`spots-${campaign.id}`}>
-                                          {campaign.totalSpots - campaign.spotsRemaining}/{campaign.totalSpots}
-                                        </span>
-                                      </div>
-                                      <span className="text-xs">Min: {campaign.minFollowers.toLocaleString()} followers</span>
-                                    </div>
-                                    {/* Show reservation status counts for this tier */}
-                                    {((campaign.reservedCount || 0) + (campaign.submittedCount || 0) + (campaign.approvedCount || 0)) > 0 && (
-                                      <div className="flex items-center gap-3 mt-2 text-xs">
-                                        {(campaign.reservedCount || 0) > 0 && (
-                                          <span className="text-yellow-600">Reserved: {campaign.reservedCount}</span>
-                                        )}
-                                        {(campaign.submittedCount || 0) > 0 && (
-                                          <span className="text-blue-600">Submitted: {campaign.submittedCount}</span>
-                                        )}
-                                        {(campaign.approvedCount || 0) > 0 && (
-                                          <span className="text-green-600">Paid: {campaign.approvedCount}</span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </CardContent>
-                                  <CardFooter className="border-t bg-muted/20 p-3">
-                                    <div className="flex w-full items-center justify-between gap-2">
-                                      <div>
-                                        <p className="text-xs text-muted-foreground">Per Creator</p>
-                                        <p className="text-lg font-bold text-green-600" data-testid={`pay-${campaign.id}`}>{formatINR(campaign.payAmount)}</p>
-                                      </div>
-                                      <div className="flex gap-1">
-                                        {campaign.spotsRemaining > 0 && campaign.status !== "paused" && (
-                                          <Button
-                                            size="icon"
-                                            variant="outline"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              statusMutation.mutate({ id: campaign.id, status: "paused" });
-                                            }}
-                                            disabled={statusMutation.isPending}
-                                            data-testid={`pause-${campaign.id}`}
-                                          >
-                                            <Pause className="w-4 h-4" />
-                                          </Button>
-                                        )}
-                                        {campaign.status === "paused" && (
-                                          <Button
-                                            size="icon"
-                                            variant="outline"
-                                            className="border-green-500 text-green-600"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              statusMutation.mutate({ id: campaign.id, status: "active" });
-                                            }}
-                                            disabled={statusMutation.isPending}
-                                            data-testid={`play-${campaign.id}`}
-                                          >
-                                            <Play className="w-4 h-4" />
-                                          </Button>
-                                        )}
-                                        <AlertDialog>
-                                          <AlertDialogTrigger asChild>
-                                            <Button
-                                              size="icon"
-                                              variant="outline"
-                                              className="border-red-500 text-red-600"
-                                              onClick={(e) => e.stopPropagation()}
-                                              disabled={deleteMutation.isPending}
-                                              data-testid={`delete-${campaign.id}`}
-                                            >
-                                              <Trash2 className="w-4 h-4" />
-                                            </Button>
-                                          </AlertDialogTrigger>
-                                          <AlertDialogContent>
-                                            <AlertDialogHeader>
-                                              <AlertDialogTitle>Delete Campaign?</AlertDialogTitle>
-                                              <AlertDialogDescription>
-                                                Are you sure you want to delete "{campaign.title}" ({campaign.tier})? 
-                                                This action cannot be undone. Campaigns with active reservations cannot be deleted.
-                                              </AlertDialogDescription>
-                                            </AlertDialogHeader>
-                                            <AlertDialogFooter>
-                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                              <AlertDialogAction
-                                                className="bg-red-600 hover:bg-red-700"
-                                                onClick={() => deleteMutation.mutate(campaign.id)}
-                                              >
-                                                Delete
-                                              </AlertDialogAction>
-                                            </AlertDialogFooter>
-                                          </AlertDialogContent>
-                                        </AlertDialog>
-                                      </div>
-                                    </div>
-                                  </CardFooter>
-                                </Card>
-                              ))}
-                            </div>
+                          <div>
+                            <span className="text-[10px] text-zinc-400 uppercase tracking-wider block">Committed Payouts</span>
+                            <span className="font-bold text-emerald-400 text-sm">{formatINR(c.committedPayouts)}</span>
                           </div>
-                        </CollapsibleContent>
-                      </Card>
-                    </Collapsible>
+                        </div>
+
+                        {/* Workflow Badges */}
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                          <div className="p-2 rounded-lg bg-zinc-950/50 border border-zinc-800">
+                            <span className="text-[10px] text-zinc-500 block">Creators</span>
+                            <span className="font-bold text-white">{c.activeParticipantsCount}</span>
+                          </div>
+                          <div className={`p-2 rounded-lg border ${c.awaitingReview > 0 ? "bg-amber-950/20 border-amber-500/40 text-amber-300" : "bg-zinc-950/50 border-zinc-800 text-white"}`}>
+                            <span className="text-[10px] text-zinc-500 block">Review</span>
+                            <span className="font-bold">{c.awaitingReview}</span>
+                          </div>
+                          <div className="p-2 rounded-lg bg-zinc-950/50 border border-zinc-800">
+                            <span className="text-[10px] text-zinc-500 block">Approved</span>
+                            <span className="font-bold text-emerald-400">{c.approvedCount}</span>
+                          </div>
+                        </div>
+
+                        {/* Pending Alerts */}
+                        {c.pendingApplications > 0 && (
+                          <div className="p-2 rounded-lg bg-pink-950/30 border border-pink-900/40 text-[11px] text-pink-300 flex items-center justify-between font-medium">
+                            <span className="flex items-center gap-1.5">
+                              
+                              {c.pendingApplications} Pending Application{c.pendingApplications > 1 ? "s" : ""}
+                            </span>
+                            <span className="text-[10px] underline">Review</span>
+                          </div>
+                        )}
+                      </CardContent>
+
+                      <CardFooter className="p-5 pt-3 border-t border-zinc-800/80 bg-zinc-950/40 flex items-center justify-between">
+                        <div className="text-[11px] text-zinc-400">
+                          Deadline: <span className="text-zinc-200 font-medium">{c.deadline}</span>
+                        </div>
+
+                        <Button
+                          size="sm"
+                          className="bg-zinc-800 group-hover:bg-pink-600 text-white text-xs font-bold rounded-xl transition-all"
+                        >
+                          Open Workspace 
+                        </Button>
+                      </CardFooter>
+                    </Card>
                   </motion.div>
                 );
               })}

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { User, Mail, Building2, LogOut, AlertCircle, Loader2, ShieldAlert, ChevronRight, Lock, KeyRound, Shield } from "lucide-react";
+
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { useState } from "react";
@@ -18,6 +18,10 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Settings = __DummyIcon;
 
 export default function SponsorSettings() {
   const [, navigate] = useLocation();
@@ -102,7 +106,7 @@ export default function SponsorSettings() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <User className="h-5 w-5 text-primary" />
+                  
                   Account Information
                 </CardTitle>
                 <CardDescription>
@@ -123,7 +127,7 @@ export default function SponsorSettings() {
                 <div className="space-y-2">
                   <Label htmlFor="email">Email Address</Label>
                   <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-muted-foreground" />
+                    
                     <Input
                       id="email"
                       value={sponsor.email || ""}
@@ -137,7 +141,7 @@ export default function SponsorSettings() {
                   <div className="space-y-2">
                     <Label htmlFor="company">Company / Organization</Label>
                     <div className="flex items-center gap-2">
-                      <Building2 className="h-4 w-4 text-muted-foreground" />
+                      
                       <Input
                         id="company"
                         value={sponsor.companyName}
@@ -166,7 +170,7 @@ export default function SponsorSettings() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-muted-foreground" />
+                  
                   Account Security & Session
                 </CardTitle>
                 <CardDescription>
@@ -185,7 +189,7 @@ export default function SponsorSettings() {
                     className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 border-red-200 dark:border-red-900/40"
                     data-testid="button-logout"
                   >
-                    <LogOut className="h-4 w-4 mr-2" />
+                    
                     Logout
                   </Button>
                 </div>
@@ -200,13 +204,13 @@ export default function SponsorSettings() {
                 className="w-full flex items-center justify-between p-4 rounded-xl border border-dashed border-border/80 text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-all text-left text-xs"
               >
                 <div className="flex items-center gap-2.5">
-                  <Lock className="h-4 w-4 text-muted-foreground" />
+                  
                   <div>
                     <p className="font-medium text-foreground">Advanced Privacy & Account Data Settings</p>
                     <p className="text-[11px] text-muted-foreground">Manage data retention, regulatory compliance, and account closure</p>
                   </div>
                 </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                
               </button>
             </div>
 
@@ -219,7 +223,7 @@ export default function SponsorSettings() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
-              <Shield className="h-4.5 w-4.5 text-primary" />
+              
               Advanced Privacy & Data Settings
             </DialogTitle>
             <DialogDescription className="text-xs">
@@ -237,7 +241,7 @@ export default function SponsorSettings() {
 
             <div className="p-3 rounded-lg border border-red-100 dark:border-red-950 bg-red-50/40 dark:bg-red-950/20 space-y-2">
               <div className="flex items-center gap-2 text-red-600 dark:text-red-400 font-semibold">
-                <ShieldAlert className="h-4 w-4" />
+                
                 <span>Account Closure & Deletion</span>
               </div>
               <p className="text-muted-foreground text-[11px] leading-relaxed">
@@ -271,7 +275,7 @@ export default function SponsorSettings() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-destructive text-base">
-              <AlertCircle className="h-5 w-5" />
+              
               Confirm Permanent Account Deletion
             </DialogTitle>
             <DialogDescription className="text-xs text-destructive/90 font-medium">
@@ -282,7 +286,7 @@ export default function SponsorSettings() {
           <div className="space-y-4 py-2">
             {statusLoading ? (
               <div className="flex justify-center p-4">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                
               </div>
             ) : !canDelete ? (
               <div className="rounded-lg p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs space-y-2">
@@ -339,7 +343,6 @@ export default function SponsorSettings() {
                 className="text-xs font-semibold"
                 data-testid="button-confirm-delete-account"
               >
-                {deleteAccountMutation.isPending && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
                 Permanently Delete Account
               </Button>
             )}

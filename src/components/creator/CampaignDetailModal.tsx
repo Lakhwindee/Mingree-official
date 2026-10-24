@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
-import {
-  X,
-  Clock,
-  Users,
-  CheckCircle,
-  AlertCircle,
-  Sparkles,
-  Share2,
-  ShieldAlert,
-} from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { Campaign, CreatorProfile } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Info = __DummyIcon;
+const Check = __DummyIcon;
+
+
 
 interface CampaignDetailModalProps {
   campaign: Campaign | null;
@@ -58,7 +56,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
             onClick={onClose}
             className="absolute top-4 right-4 w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            
           </button>
 
           <div className="flex items-center gap-3">
@@ -101,7 +99,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
             <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800">
               <span className="text-zinc-500 block text-[10px]">Spots Remaining</span>
               <span className="text-base font-black text-white flex items-center gap-1 mt-0.5">
-                <Users className="w-4 h-4 text-zinc-400" />
+                
                 {campaign.availableSpots} / {campaign.totalSpots}
               </span>
             </div>
@@ -109,7 +107,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
 
           {/* Countdown & Expiry Notice */}
           <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-2 text-amber-300">
-            <Clock className="w-4 h-4 shrink-0 text-amber-400" />
+            
             <div className="leading-tight">
               <span className="font-bold block">48 Hours Reservation Window</span>
               <span className="text-[11px] text-zinc-400">
@@ -130,7 +128,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
             <div className="space-y-2">
               {campaign.requirements.map((req, idx) => (
                 <div key={idx} className="flex items-start gap-2 bg-zinc-900/60 p-2.5 rounded-xl border border-zinc-800/60">
-                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+                  
                   <span className="text-zinc-300 leading-tight">{req}</span>
                 </div>
               ))}
@@ -141,7 +139,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
           {campaign.guidelines && (
             <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800">
               <span className="font-bold text-zinc-300 block mb-1 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-[#FF3399]" />
+                
                 Brand Creative Guidelines
               </span>
               <p className="text-zinc-400 leading-relaxed">{campaign.guidelines}</p>
@@ -170,7 +168,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
         <div className="p-4 border-t border-zinc-800 bg-zinc-900/80 sticky bottom-0">
           {isAlreadyReserved ? (
             <div className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 text-zinc-400 font-bold text-center flex items-center justify-center gap-2">
-              <CheckCircle className="w-4 h-4 text-emerald-400" />
+              
               <span>You Have Already Reserved This Spot</span>
             </div>
           ) : !spotsAvailable ? (
@@ -179,7 +177,7 @@ export const CampaignDetailModal: React.FC<CampaignDetailModalProps> = ({
             </div>
           ) : !isEligible ? (
             <div className="w-full py-2.5 px-4 rounded-xl bg-zinc-800 text-rose-400 font-bold text-center flex items-center justify-center gap-2">
-              <ShieldAlert className="w-4 h-4" />
+              
               <span>Follower Count Below Requirement</span>
             </div>
           ) : (

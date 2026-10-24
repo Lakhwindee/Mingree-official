@@ -11,15 +11,15 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
-import { 
-  MessageCircle, 
-  Plus, 
-  Send, 
-  HelpCircle,
-  ChevronLeft,
-  Clock
-} from "lucide-react";
 import type { ApiUser } from "@/lib/api";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Ticket = __DummyIcon;
+const Send = __DummyIcon;
+const Help = __DummyIcon;
+
+
 
 interface SupportTicket {
   id: number;
@@ -161,42 +161,39 @@ export default function Support() {
 
   if (view === "new") {
     return (
-      <div className="min-h-screen bg-gray-900 p-4 lg:p-8">
+      <div className="min-h-screen bg-background p-4 lg:p-8">
         <div className="max-w-2xl mx-auto">
           <Button
             variant="ghost"
             onClick={() => setView("list")}
-            className="mb-6 text-gray-400"
+            className="mb-6 text-xs text-muted-foreground"
             data-testid="button-back-to-list"
           >
-            <ChevronLeft className="h-4 w-4 mr-2" />
             Back to Tickets
           </Button>
 
-          <Card className="bg-gray-800 border-gray-700">
+          <Card className="border-border">
             <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <HelpCircle className="h-5 w-5 text-purple-500" />
+              <CardTitle className="text-foreground text-lg">
                 Create Support Ticket
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label className="text-gray-300">Subject</Label>
+                <Label>Subject</Label>
                 <Input
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="Brief description of your issue"
-                  className="bg-gray-700 border-gray-600 text-white"
                   data-testid="input-ticket-subject"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label className="text-gray-300">Category</Label>
+                  <Label>Category</Label>
                   <Select value={category} onValueChange={setCategory}>
-                    <SelectTrigger className="bg-gray-700 border-gray-600 text-white" data-testid="select-category">
+                    <SelectTrigger data-testid="select-category">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -210,9 +207,9 @@ export default function Support() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-gray-300">Priority</Label>
+                  <Label>Priority</Label>
                   <Select value={priority} onValueChange={setPriority}>
-                    <SelectTrigger className="bg-gray-700 border-gray-600 text-white" data-testid="select-priority">
+                    <SelectTrigger data-testid="select-priority">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -226,12 +223,12 @@ export default function Support() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-gray-300">Message</Label>
+                <Label>Message</Label>
                 <Textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder="Describe your issue in detail..."
-                  className="bg-gray-700 border-gray-600 text-white min-h-[150px]"
+                  className="min-h-[150px]"
                   data-testid="input-ticket-message"
                 />
               </div>
@@ -239,7 +236,7 @@ export default function Support() {
               <Button
                 onClick={handleCreateTicket}
                 disabled={isSubmitting || !subject.trim() || !message.trim()}
-                className="w-full"
+                className="w-full text-xs font-semibold"
                 data-testid="button-submit-ticket"
               >
                 {isSubmitting ? "Submitting..." : "Submit Ticket"}
@@ -253,7 +250,7 @@ export default function Support() {
 
   if (view === "detail" && selectedTicketId) {
     return (
-      <div className="min-h-screen bg-gray-900 p-4 lg:p-8">
+      <div className="min-h-screen bg-background p-4 lg:p-8">
         <div className="max-w-3xl mx-auto">
           <Button
             variant="ghost"
@@ -261,28 +258,26 @@ export default function Support() {
               setView("list");
               setSelectedTicketId(null);
             }}
-            className="mb-6 text-gray-400"
+            className="mb-6 text-xs text-muted-foreground"
             data-testid="button-back-from-detail"
           >
-            <ChevronLeft className="h-4 w-4 mr-2" />
             Back to Tickets
           </Button>
 
           {detailsLoading ? (
-            <div className="text-center text-gray-400 py-8">Loading...</div>
+            <div className="text-center text-muted-foreground py-8 text-xs">Loading...</div>
           ) : ticketDetails ? (
-            <Card className="bg-gray-800 border-gray-700">
+            <Card className="border-border">
               <CardHeader>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <CardTitle className="text-white">{ticketDetails.subject}</CardTitle>
+                  <CardTitle className="text-foreground text-base">{ticketDetails.subject}</CardTitle>
                   <Badge className={getStatusBadge(ticketDetails.status)}>
                     {ticketDetails.status.replace("_", " ")}
                   </Badge>
                 </div>
-                <div className="flex flex-wrap gap-2 text-sm text-gray-400">
+                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground mt-1">
                   <Badge variant="secondary">{ticketDetails.category}</Badge>
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
+                  <span>
                     {new Date(ticketDetails.createdAt).toLocaleDateString()}
                   </span>
                 </div>
@@ -293,22 +288,22 @@ export default function Support() {
                     {ticketDetails.messages?.map((msg) => (
                       <div
                         key={msg.id}
-                        className={`p-4 rounded-lg ${
+                        className={`p-4 rounded-lg border ${
                           msg.isAdminReply
-                            ? "bg-purple-500/20 ml-4"
-                            : "bg-gray-700/50 mr-4"
+                            ? "bg-muted/40 border-border ml-4"
+                            : "bg-card border-border mr-4"
                         }`}
                       >
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="font-medium text-white text-sm">
+                          <span className="font-semibold text-foreground text-xs">
                             {msg.isAdminReply ? "Support Team" : "You"}
                           </span>
                           {msg.isAdminReply && (
-                            <Badge variant="secondary" className="text-xs">Admin</Badge>
+                            <Badge variant="secondary" className="text-[10px]">Admin</Badge>
                           )}
                         </div>
-                        <p className="text-gray-300 whitespace-pre-wrap">{msg.message}</p>
-                        <p className="text-xs text-gray-500 mt-2">
+                        <p className="text-xs text-muted-foreground whitespace-pre-wrap">{msg.message}</p>
+                        <p className="text-[10px] text-muted-foreground mt-2">
                           {new Date(msg.createdAt).toLocaleString()}
                         </p>
                       </div>
@@ -322,28 +317,29 @@ export default function Support() {
                       value={replyText}
                       onChange={(e) => setReplyText(e.target.value)}
                       placeholder="Type your reply..."
-                      className="bg-gray-700 border-gray-600 text-white flex-1"
+                      className="flex-1 text-xs"
                       data-testid="input-user-reply"
                     />
                     <Button
                       onClick={handleReply}
                       disabled={isSubmitting || !replyText.trim()}
+                      className="text-xs"
                       data-testid="button-send-user-reply"
                     >
-                      <Send className="h-4 w-4" />
+                      Send
                     </Button>
                   </div>
                 )}
 
                 {ticketDetails.status === "closed" && (
-                  <div className="text-center text-gray-500 py-4">
+                  <div className="text-center text-xs text-muted-foreground py-4">
                     This ticket is closed and cannot receive new replies.
                   </div>
                 )}
               </CardContent>
             </Card>
           ) : (
-            <div className="text-center text-gray-400 py-8">Ticket not found</div>
+            <div className="text-center text-xs text-muted-foreground py-8">Ticket not found</div>
           )}
         </div>
       </div>
@@ -351,14 +347,14 @@ export default function Support() {
   }
 
   return (
-    <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-gray-950 text-white">
+    <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <Sidebar />
 
       {/* Mobile Sticky Top Header */}
-      <header className="sticky top-0 z-40 flex items-center justify-between bg-zinc-950/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-zinc-800 md:hidden w-full max-w-full shadow-xs">
+      <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full">
         <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-base font-bold text-white truncate">Help & Support</h1>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 whitespace-nowrap">Tickets</span>
+          <h1 className="text-base font-bold text-foreground truncate">Help & Support</h1>
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-muted text-foreground whitespace-nowrap">Tickets</span>
         </div>
         {user && <NotificationDropdown userId={user.id} />}
       </header>
@@ -367,43 +363,41 @@ export default function Support() {
         <div className="w-full max-w-4xl mx-auto px-3.5 py-4 sm:px-6 sm:py-6 overflow-x-hidden box-border">
           <div className="hidden md:flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl lg:text-3xl font-bold text-white mb-1">Help & Support</h1>
-              <p className="text-sm text-gray-400">Get help with your account, campaigns, and earnings</p>
+              <h1 className="text-2xl lg:text-3xl font-bold text-foreground mb-1">Help & Support</h1>
+              <p className="text-xs text-muted-foreground">Get help with your account, campaigns, and earnings</p>
             </div>
-            <Button onClick={() => setView("new")} data-testid="button-new-ticket">
-              <Plus className="h-4 w-4 mr-2" />
+            <Button size="sm" onClick={() => setView("new")} className="text-xs" data-testid="button-new-ticket">
               New Ticket
             </Button>
           </div>
 
-          <Card className="bg-gray-900 border-gray-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <MessageCircle className="h-5 w-5 text-purple-500" />
+          <Card className="border-border">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-foreground text-base">
                 Your Tickets
               </CardTitle>
             </CardHeader>
             <CardContent>
               {ticketsLoading ? (
-                <div className="text-center text-gray-400 py-8">Loading tickets...</div>
+                <div className="text-center text-xs text-muted-foreground py-8">Loading tickets...</div>
               ) : tickets && tickets.length > 0 ? (
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {tickets.map((ticket) => (
                     <div
                       key={ticket.id}
-                      className="bg-gray-800/60 rounded-lg p-4 cursor-pointer transition-colors hover:bg-gray-800 border border-gray-700/50"
+                      className="bg-card rounded-lg p-4 cursor-pointer transition-colors hover:bg-muted/40 border border-border"
                       onClick={() => openTicket(ticket.id)}
                       data-testid={`user-ticket-${ticket.id}`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                        <h4 className="font-medium text-white">{ticket.subject}</h4>
+                        <h4 className="font-semibold text-foreground text-sm">{ticket.subject}</h4>
                         <Badge className={getStatusBadge(ticket.status)}>
                           {ticket.status.replace("_", " ")}
                         </Badge>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
                         <Badge variant="secondary">{ticket.category}</Badge>
-                        <span className="text-gray-500 text-xs">
+                        <span className="text-muted-foreground">
                           {new Date(ticket.createdAt).toLocaleDateString()}
                         </span>
                       </div>
@@ -412,11 +406,9 @@ export default function Support() {
                 </div>
               ) : (
                 <div className="text-center py-12">
-                  <MessageCircle className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-white mb-2">No tickets yet</h3>
-                  <p className="text-gray-400 mb-4">Create a ticket to get help from our support team</p>
-                  <Button onClick={() => setView("new")} data-testid="button-create-first-ticket">
-                    <Plus className="h-4 w-4 mr-2" />
+                  <h3 className="text-base font-semibold text-foreground mb-1">No tickets yet</h3>
+                  <p className="text-xs text-muted-foreground mb-4">Create a ticket to get help from our support team</p>
+                  <Button size="sm" onClick={() => setView("new")} className="text-xs" data-testid="button-create-first-ticket">
                     Create Your First Ticket
                   </Button>
                 </div>

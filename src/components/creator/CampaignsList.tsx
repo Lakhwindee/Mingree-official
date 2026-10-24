@@ -1,6 +1,14 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Sparkles, Filter, Users, Globe2, ChevronRight } from 'lucide-react';
+
 import { Campaign, CATEGORIES, TIERS } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+const X = __DummyIcon;
+const Star = __DummyIcon;
+
+
 
 interface CampaignsListProps {
   campaigns: Campaign[];
@@ -46,7 +54,7 @@ export const CampaignsList: React.FC<CampaignsListProps> = ({
 
       {/* Search & Filter Bar */}
       <div className="relative">
-        <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-500" />
+        
         <input
           type="text"
           value={searchQuery}
@@ -76,7 +84,7 @@ export const CampaignsList: React.FC<CampaignsListProps> = ({
               : 'text-zinc-400 hover:text-amber-400'
           }`}
         >
-          <Sparkles className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+          
           <span>Star Campaigns ⭐</span>
         </button>
       </div>
@@ -102,7 +110,7 @@ export const CampaignsList: React.FC<CampaignsListProps> = ({
       <div className="p-3 rounded-xl bg-zinc-900/60 border border-zinc-800">
         <div className="flex items-center justify-between text-xs mb-2">
           <span className="text-zinc-400 flex items-center gap-1 font-medium">
-            <Filter className="w-3 h-3 text-[#FF3399]" />
+            
             Filter by Influencer Tier
           </span>
           {selectedTierId !== 'all' && (
@@ -147,7 +155,7 @@ export const CampaignsList: React.FC<CampaignsListProps> = ({
       <div className="space-y-3">
         {filteredCampaigns.length === 0 ? (
           <div className="p-8 text-center bg-zinc-900/40 rounded-2xl border border-zinc-800/80">
-            <Sparkles className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+            
             <p className="text-sm font-semibold text-zinc-300">No campaigns found</p>
             <p className="text-xs text-zinc-500 mt-1">Try resetting your search or filters</p>
           </div>
@@ -203,7 +211,7 @@ export const CampaignsList: React.FC<CampaignsListProps> = ({
                 <div className="mt-3">
                   <div className="flex items-center justify-between text-[11px] mb-1">
                     <span className="text-zinc-400 flex items-center gap-1">
-                      <Users className="w-3 h-3 text-zinc-500" />
+                      
                       Spots Left: <strong className="text-white">{camp.availableSpots}</strong> / {camp.totalSpots}
                     </span>
                     <span className="text-[10px] text-zinc-500 font-mono">
@@ -236,7 +244,7 @@ export const CampaignsList: React.FC<CampaignsListProps> = ({
 
                   <div className="flex items-center gap-1 text-[#FF3399] font-semibold text-xs group-hover:translate-x-0.5 transition-transform">
                     <span>{isEligible ? 'View & Join' : 'Details'}</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
+                    
                   </div>
                 </div>
               </div>

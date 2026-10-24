@@ -207,6 +207,12 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.appcompat.app.AppCompatActivity;
 
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Camera = __DummyIcon;
+
+
+
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
 

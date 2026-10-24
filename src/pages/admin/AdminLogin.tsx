@@ -5,11 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Shield, Lock, Mail, AlertCircle } from "lucide-react";
 import { motion } from "framer-motion";
-import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
-import mingreeLogo from "@assets/generated_images/mingree_mg_circular_logo.png";
 
 export default function AdminLogin() {
   const [, setLocation] = useLocation();
@@ -57,100 +54,66 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
-      
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: 0.3 }}
         className="w-full max-w-md relative z-10"
       >
         <div className="text-center mb-8">
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-            className="inline-flex mb-4"
-          >
-            <img src={mingreeLogo} alt="Mingree" className="w-20 h-20 object-cover rounded-full" />
-          </motion.div>
-          <h1 className="text-3xl font-bold text-white mb-2">Admin Portal</h1>
-          <p className="text-gray-400">Mingree Management</p>
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-1">Admin Portal</h1>
+          <p className="text-sm text-slate-400">Mingree Management Console</p>
         </div>
 
-        <Card className="bg-gray-800/80 backdrop-blur-xl border-gray-700 shadow-2xl">
+        <Card className="bg-slate-900 border-slate-800 shadow-xl">
           <CardHeader className="space-y-1 pb-4">
-            <CardTitle className="text-xl text-white text-center">Sign In</CardTitle>
-            <CardDescription className="text-center text-gray-400">
-              Enter your admin credentials to continue
+            <CardTitle className="text-lg text-white text-center">Sign In</CardTitle>
+            <CardDescription className="text-center text-slate-400 text-xs">
+              Enter your administrator credentials to continue
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               {error && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm"
-                >
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                  <span>{error}</span>
-                </motion.div>
+                <div className="p-3 rounded-lg bg-red-950/60 border border-red-800/60 text-red-300 text-xs">
+                  {error}
+                </div>
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-gray-300">Email</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="admin@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="pl-10 bg-gray-700/50 border-gray-600 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500"
-                    data-testid="input-admin-email"
-                  />
-                </div>
+                <Label htmlFor="email" className="text-slate-300 text-xs uppercase tracking-wider font-semibold">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="admin@mingree.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="bg-slate-800/80 border-slate-700 text-white placeholder:text-slate-500 focus:border-slate-500"
+                  data-testid="input-admin-email"
+                />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-gray-300">Password</Label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 bg-gray-700/50 border-gray-600 text-white placeholder:text-gray-500 focus:border-purple-500 focus:ring-purple-500"
-                    data-testid="input-admin-password"
-                  />
-                </div>
+                <Label htmlFor="password" className="text-slate-300 text-xs uppercase tracking-wider font-semibold">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="bg-slate-800/80 border-slate-700 text-white placeholder:text-slate-500 focus:border-slate-500"
+                  data-testid="input-admin-password"
+                />
               </div>
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-semibold py-5 shadow-lg shadow-purple-500/20 rounded-xl"
+                className="w-full bg-slate-100 hover:bg-white text-slate-900 font-semibold py-2.5 rounded-lg text-sm"
                 disabled={loginMutation.isPending}
                 data-testid="button-admin-login"
               >
-                {loginMutation.isPending ? (
-                  <span className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Signing in...
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <Shield className="h-4 w-4" />
-                    Access Admin Panel
-                  </span>
-                )}
+                {loginMutation.isPending ? "Signing in..." : "Access Admin Panel"}
               </Button>
 
               <Button
@@ -162,31 +125,30 @@ export default function AdminLogin() {
                   loginMutation.mutate({ email: "admin@mingree.com", password: "admin123" });
                 }}
                 disabled={loginMutation.isPending}
-                className="w-full bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 text-amber-300 font-medium py-4 rounded-xl gap-2 text-xs"
+                className="w-full bg-slate-800/60 border-slate-700 hover:bg-slate-800 text-slate-300 font-medium py-2 rounded-lg text-xs"
               >
-                <Shield className="h-3.5 w-3.5 text-amber-400" />
                 1-Tap Demo Admin Sign-In
               </Button>
             </form>
 
-            <div className="mt-6 pt-4 border-t border-gray-700 text-center space-y-3">
+            <div className="mt-6 pt-4 border-t border-slate-800 text-center space-y-3">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setLocation("/login")}
-                className="text-xs text-gray-400 hover:text-white"
+                className="text-xs text-slate-400 hover:text-white"
               >
-                ← Back to Creator / Brand Login
+                Back to Creator / Brand Login
               </Button>
-              <p className="text-xs text-gray-500">
+              <p className="text-[11px] text-slate-500">
                 This area is restricted to authorized administrators only.
               </p>
             </div>
           </CardContent>
         </Card>
 
-        <p className="text-center text-gray-500 text-sm mt-6">
-          Protected by Mingree Security
+        <p className="text-center text-slate-600 text-xs mt-6">
+          Mingree Internal Administration
         </p>
       </motion.div>
     </div>

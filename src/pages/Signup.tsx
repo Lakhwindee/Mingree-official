@@ -1,60 +1,17 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { motion } from "framer-motion";
-import { Eye, EyeOff, Mail, Lock, User, UserPlus, ArrowLeft, Building2, Send, Loader2, Phone, Globe, FileText, MapPin, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { queryClient } from "@/lib/queryClient";
-import mingreeLogo from "@assets/generated_images/mingree_mg_circular_logo.png";
 import { getCitiesByCountry } from "@shared/cities";
 import { useAuth } from "@/lib/auth-context";
 
 const COUNTRIES = [
-  { code: "IN", name: "India" },
-  { code: "US", name: "United States" },
-  { code: "GB", name: "United Kingdom" },
-  { code: "CA", name: "Canada" },
-  { code: "AU", name: "Australia" },
-  { code: "DE", name: "Germany" },
-  { code: "FR", name: "France" },
-  { code: "AE", name: "UAE" },
-  { code: "SG", name: "Singapore" },
-  { code: "JP", name: "Japan" },
-  { code: "BR", name: "Brazil" },
-  { code: "MX", name: "Mexico" },
-  { code: "ID", name: "Indonesia" },
-  { code: "PH", name: "Philippines" },
-  { code: "TH", name: "Thailand" },
-  { code: "MY", name: "Malaysia" },
-  { code: "ZA", name: "South Africa" },
-  { code: "NG", name: "Nigeria" },
-  { code: "KE", name: "Kenya" },
-  { code: "PK", name: "Pakistan" },
-  { code: "BD", name: "Bangladesh" },
-  { code: "VN", name: "Vietnam" },
-  { code: "EG", name: "Egypt" },
-  { code: "SA", name: "Saudi Arabia" },
-  { code: "IT", name: "Italy" },
-  { code: "ES", name: "Spain" },
-  { code: "NL", name: "Netherlands" },
-  { code: "SE", name: "Sweden" },
-  { code: "CH", name: "Switzerland" },
-  { code: "PL", name: "Poland" },
-  { code: "RU", name: "Russia" },
-  { code: "KR", name: "South Korea" },
-  { code: "TW", name: "Taiwan" },
-  { code: "HK", name: "Hong Kong" },
-  { code: "NZ", name: "New Zealand" },
-  { code: "AR", name: "Argentina" },
-  { code: "CL", name: "Chile" },
-  { code: "CO", name: "Colombia" },
-  { code: "PE", name: "Peru" },
-  { code: "TR", name: "Turkey" },
+  { code: "IN", name: "India" }
 ];
 
 type UserRole = "creator" | "sponsor";
@@ -121,136 +78,22 @@ export default function Signup() {
         body: JSON.stringify({ email, name }),
       });
 
-      let data: any = {};
-      try {
-        const text = await response.text();
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        throw new Error("Server returned an invalid response. Please verify your connection or try again.");
-      }
+      const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to send OTP. Please try again.");
+        throw new Error(data.error || "Failed to send verification code");
       }
 
+      toast({
+        title: "Code Sent",
+        description: `Verification code sent to ${email}`,
+      });
       setStep("otp");
       setResendTimer(60);
-      toast({
-        title: "OTP Sent to Mail",
-        description: `A 6-digit verification code was sent to ${email}`,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error Sending OTP",
-        description: error.message || "Failed to send verification code. Please check your email and try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const verifyAndSignup = async () => {
-    if (otp.length !== 6) {
-      toast({
-        title: "Invalid OTP",
-        description: "Please enter the complete 6-digit code.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const verifyResponse = await fetch("/api/auth/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp }),
-      });
-
-      let verifyData: any = {};
-      try {
-        const text = await verifyResponse.text();
-        verifyData = text ? JSON.parse(text) : {};
-      } catch {
-        verifyData = {};
-      }
-
-      if (!verifyResponse.ok) {
-        throw new Error(verifyData.error || "Invalid or expired OTP");
-      }
-
-      // Clear any existing session before signup to prevent session conflicts
-      await fetch("/api/auth/logout", { 
-        method: "POST",
-        credentials: "include"
-      });
-      
-      // Clear all cached data before signup
-      queryClient.clear();
-
-      const signupResponse = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          name, 
-          email, 
-          phone, 
-          password, 
-          role, 
-          country,
-          city,
-          ...(role === "sponsor" && {
-            companyName,
-            gstNumber: country === "IN" ? gstNumber : undefined,
-            panNumber: country === "IN" ? panNumber : undefined,
-            billingAddress,
-            billingCity,
-            billingState,
-            billingPincode,
-            website,
-          })
-        }),
-        credentials: "include",
-      });
-
-      let signupData: any = {};
-      try {
-        const sText = await signupResponse.text();
-        signupData = sText ? JSON.parse(sText) : {};
-      } catch {
-        signupData = {};
-      }
-
-      if (!signupResponse.ok) {
-        throw new Error(signupData.error || "Signup failed");
-      }
-
-      // Persist auth session in native context & localStorage
-      login({
-        id: signupData.id || 1,
-        name: signupData.name || name,
-        email: signupData.email || email,
-        handle: signupData.handle || `@${(signupData.email || email).split("@")[0]}`,
-        role: role,
-        avatar: signupData.avatar,
-        followers: signupData.followers || signupData.instagramFollowers || 0,
-        tier: signupData.tier || "New Creator",
-        instagramUsername: signupData.instagramUsername,
-        isInstagramVerified: signupData.isInstagramVerified,
-      });
-
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-
-      if (role === "sponsor") {
-        setLocation("/sponsor");
-      } else {
-        setLocation("/dashboard");
-      }
     } catch (error) {
       toast({
-        title: "Signup Failed",
-        description: error instanceof Error ? error.message : "Could not create account",
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to send OTP",
         variant: "destructive",
       });
     } finally {
@@ -260,36 +103,80 @@ export default function Signup() {
 
   const resendOtp = async () => {
     if (resendTimer > 0) return;
-    
+    await sendOtp();
+  };
+
+  const verifyAndSignup = async () => {
+    if (!otp || otp.length !== 6) {
+      toast({
+        title: "Invalid Code",
+        description: "Please enter the 6-digit code.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const response = await fetch("/api/auth/send-otp", {
+      const verifyRes = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, name }),
+        body: JSON.stringify({ email, otp }),
       });
 
-      let data: any = {};
-      try {
-        const text = await response.text();
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = {};
+      const verifyData = await verifyRes.json();
+
+      if (!verifyRes.ok) {
+        throw new Error(verifyData.error || "Invalid verification code");
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to resend OTP");
+      const signupRes = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          email,
+          phone,
+          country,
+          city,
+          password,
+          role,
+          companyName: role === "sponsor" ? companyName : undefined,
+          gstNumber: role === "sponsor" ? gstNumber : undefined,
+          panNumber: role === "sponsor" ? panNumber : undefined,
+          billingAddress: role === "sponsor" ? billingAddress : undefined,
+          billingCity: role === "sponsor" ? billingCity : undefined,
+          billingState: role === "sponsor" ? billingState : undefined,
+          billingPincode: role === "sponsor" ? billingPincode : undefined,
+          website: role === "sponsor" ? website : undefined,
+        }),
+        credentials: "include",
+      });
+
+      const signupData = await signupRes.json();
+
+      if (!signupRes.ok) {
+        throw new Error(signupData.error || "Failed to create account");
       }
 
-      setResendTimer(60);
+      login(signupData);
+      queryClient.setQueryData(["currentUser"], signupData);
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+
       toast({
-        title: "OTP Resent!",
-        description: `A new code has been sent to ${email}`,
+        title: "Account Created",
+        description: "Welcome to Mingree!",
       });
+
+      if (role === "sponsor") {
+        setLocation("/sponsor");
+      } else {
+        setLocation("/dashboard");
+      }
     } catch (error) {
       toast({
-        title: "Failed to Resend",
-        description: error instanceof Error ? error.message : "Could not resend code",
+        title: "Registration Failed",
+        description: error instanceof Error ? error.message : "Something went wrong",
         variant: "destructive",
       });
     } finally {
@@ -298,141 +185,112 @@ export default function Signup() {
   };
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-gradient-to-br from-zinc-950 via-[#180828] to-zinc-950 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className={`w-full ${role === "sponsor" ? "max-w-md" : "max-w-sm"}`}
-      >
+    <div className="min-h-screen bg-background flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <button
           onClick={() => step === "form" ? setLocation("/login") : setStep("form")}
-          className="mb-4 flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-sm"
+          className="mb-4 text-xs text-muted-foreground hover:text-foreground font-medium"
           data-testid="button-back"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>{step === "form" ? "Back to Login" : "Back"}</span>
+          {step === "form" ? "Back to Login" : "Back"}
         </button>
         
-        <Card className="border-purple-500/20 bg-black/60 backdrop-blur-2xl text-white shadow-2xl rounded-3xl overflow-hidden">
-          <CardHeader className="text-center pt-8 pb-4">
-            {step === "otp" ? (
-              <div className="mx-auto mb-3 h-16 w-16 rounded-2xl bg-gradient-to-tr from-pink-500 via-purple-500 to-amber-400 p-[2px] shadow-lg">
-                <div className="h-full w-full rounded-[14px] bg-zinc-950 flex items-center justify-center">
-                  <Mail className="h-7 w-7 text-white" />
-                </div>
-              </div>
-            ) : (
-              <div className="mx-auto mb-3 h-16 w-16 rounded-2xl bg-gradient-to-tr from-pink-500 via-purple-500 to-amber-400 p-[2px] shadow-lg">
-                <div className="h-full w-full rounded-[14px] bg-zinc-950 flex items-center justify-center">
-                  <img src={mingreeLogo} alt="Mingree" className="h-12 w-12 rounded-xl object-cover" />
-                </div>
-              </div>
-            )}
-            <CardTitle className="text-2xl font-bold text-white tracking-tight">
+        <Card className="border-border">
+          <CardHeader className="text-center pt-6 pb-4">
+            <CardTitle className="text-xl font-bold tracking-tight text-foreground">
               {step === "form" ? "Create Account" : "Verify Email"}
             </CardTitle>
-            <CardDescription className="text-zinc-400 text-sm mt-1">
+            <CardDescription className="text-xs text-muted-foreground mt-1">
               {step === "form" 
-                ? "Sign up to find brand campaigns" 
+                ? "Sign up to join Mingree" 
                 : `Enter the code sent to ${email}`}
             </CardDescription>
           </CardHeader>
           
-          <CardContent className="px-6 pb-8">
+          <CardContent className="px-6 pb-6">
             {step === "form" && (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setRole("creator")}
-                    className={`flex items-center justify-center gap-2 p-2.5 rounded-lg border text-sm transition-all ${
+                    className={`p-2 rounded border text-xs font-medium transition-colors ${
                       role === "creator"
-                        ? "bg-gradient-to-r from-purple-500 to-pink-500 border-transparent text-white"
-                        : "bg-white/5 border-purple-500/30 text-gray-300 hover:bg-white/10"
+                        ? "bg-foreground text-background border-foreground"
+                        : "bg-muted text-muted-foreground border-border hover:text-foreground"
                     }`}
                     data-testid="button-role-creator"
                   >
-                    <User className="h-4 w-4" />
-                    <span className="font-medium">Creator</span>
+                    Creator
                   </button>
                   <button
                     type="button"
                     onClick={() => setRole("sponsor")}
-                    className={`flex items-center justify-center gap-2 p-2.5 rounded-lg border text-sm transition-all ${
+                    className={`p-2 rounded border text-xs font-medium transition-colors ${
                       role === "sponsor"
-                        ? "bg-gradient-to-r from-purple-500 to-pink-500 border-transparent text-white"
-                        : "bg-white/5 border-purple-500/30 text-gray-300 hover:bg-white/10"
+                        ? "bg-foreground text-background border-foreground"
+                        : "bg-muted text-muted-foreground border-border hover:text-foreground"
                     }`}
                     data-testid="button-role-sponsor"
                   >
-                    <Building2 className="h-4 w-4" />
-                    <span className="font-medium">Artist / Brand</span>
+                    Artist / Brand
                   </button>
                 </div>
 
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <div>
                   <Input
                     type="text"
                     placeholder={role === "sponsor" ? "Contact Person Name" : "Full Name"}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9"
                     data-testid="input-name"
                   />
                 </div>
 
                 {role === "sponsor" && (
-                  <div className="relative">
-                    <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <div>
                     <Input
                       type="text"
                       placeholder="Company/Brand Name *"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
-                      className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                      className="text-xs h-9"
                       data-testid="input-company-name"
                     />
                   </div>
                 )}
 
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <div>
                   <Input
                     type="email"
                     placeholder={role === "sponsor" ? "Business Email *" : "Email"}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9"
                     data-testid="input-email"
                   />
                 </div>
 
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <div>
                   <Input
                     type="tel"
                     placeholder="Phone Number"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9"
                     data-testid="input-phone"
                   />
                 </div>
 
-                <div className="relative">
-                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                <div>
                   <Select value={country} onValueChange={(val) => { setCountry(val); setCity(""); }}>
-                    <SelectTrigger 
-                      className="pl-10 bg-white/10 border-purple-500/30 text-white"
-                      data-testid="select-country"
-                    >
+                    <SelectTrigger className="text-xs h-9" data-testid="select-country">
                       <SelectValue placeholder="Select Country" />
                     </SelectTrigger>
-                    <SelectContent className="max-h-60 bg-gray-900 border-purple-500/30">
+                    <SelectContent>
                       {COUNTRIES.map((c) => (
-                        <SelectItem key={c.code} value={c.code} className="text-white hover:bg-purple-500/20">
+                        <SelectItem key={c.code} value={c.code} className="text-xs">
                           {c.name}
                         </SelectItem>
                       ))}
@@ -440,18 +298,14 @@ export default function Signup() {
                   </Select>
                 </div>
 
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                <div>
                   <Select value={city} onValueChange={setCity}>
-                    <SelectTrigger 
-                      className="pl-10 bg-white/10 border-purple-500/30 text-white"
-                      data-testid="select-city"
-                    >
+                    <SelectTrigger className="text-xs h-9" data-testid="select-city">
                       <SelectValue placeholder="Select City *" />
                     </SelectTrigger>
-                    <SelectContent className="max-h-60 bg-gray-900 border-purple-500/30">
+                    <SelectContent className="max-h-60">
                       {availableCities.map((c) => (
-                        <SelectItem key={c} value={c} className="text-white hover:bg-purple-500/20">
+                        <SelectItem key={c} value={c} className="text-xs">
                           {c}
                         </SelectItem>
                       ))}
@@ -463,41 +317,34 @@ export default function Signup() {
                   <>
                     {country === "IN" && (
                       <div className="grid grid-cols-2 gap-2">
-                        <div className="relative">
-                          <FileText className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <Input
-                            type="text"
-                            placeholder="GST (optional)"
-                            value={gstNumber}
-                            onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
-                            className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500 text-sm"
-                            data-testid="input-gst"
-                            maxLength={15}
-                          />
-                        </div>
-                        <div className="relative">
-                          <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <Input
-                            type="text"
-                            placeholder="PAN (optional)"
-                            value={panNumber}
-                            onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
-                            className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500 text-sm"
-                            data-testid="input-pan"
-                            maxLength={10}
-                          />
-                        </div>
+                        <Input
+                          type="text"
+                          placeholder="GST (optional)"
+                          value={gstNumber}
+                          onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
+                          className="text-xs h-9"
+                          data-testid="input-gst"
+                          maxLength={15}
+                        />
+                        <Input
+                          type="text"
+                          placeholder="PAN (optional)"
+                          value={panNumber}
+                          onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
+                          className="text-xs h-9"
+                          data-testid="input-pan"
+                          maxLength={10}
+                        />
                       </div>
                     )}
 
-                    <div className="relative">
-                      <MapPin className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                    <div>
                       <Input
                         type="text"
                         placeholder="Business Address"
                         value={billingAddress}
                         onChange={(e) => setBillingAddress(e.target.value)}
-                        className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                        className="text-xs h-9"
                         data-testid="input-address"
                       />
                     </div>
@@ -508,7 +355,7 @@ export default function Signup() {
                         placeholder="City"
                         value={billingCity}
                         onChange={(e) => setBillingCity(e.target.value)}
-                        className="bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500 text-sm"
+                        className="text-xs h-9"
                         data-testid="input-city"
                       />
                       <Input
@@ -516,7 +363,7 @@ export default function Signup() {
                         placeholder="State"
                         value={billingState}
                         onChange={(e) => setBillingState(e.target.value)}
-                        className="bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500 text-sm"
+                        className="text-xs h-9"
                         data-testid="input-state"
                       />
                       <Input
@@ -524,20 +371,19 @@ export default function Signup() {
                         placeholder="Pincode"
                         value={billingPincode}
                         onChange={(e) => setBillingPincode(e.target.value)}
-                        className="bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500 text-sm"
+                        className="text-xs h-9"
                         data-testid="input-pincode"
                         maxLength={10}
                       />
                     </div>
 
-                    <div className="relative">
-                      <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <div>
                       <Input
                         type="url"
                         placeholder="Website (optional)"
                         value={website}
                         onChange={(e) => setWebsite(e.target.value)}
-                        className="pl-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                        className="text-xs h-9"
                         data-testid="input-website"
                       />
                     </div>
@@ -545,49 +391,44 @@ export default function Signup() {
                 )}
 
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
                     type={showPassword ? "text" : "password"}
                     placeholder="Password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 pr-10 bg-white/10 border-purple-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9 pr-14"
                     data-testid="input-password"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
                     data-testid="button-toggle-password"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? "Hide" : "Show"}
                   </button>
                 </div>
 
                 <Button
                   type="button"
                   onClick={sendOtp}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                  className="w-full text-xs font-semibold h-9"
                   disabled={isLoading || !name || !email || !password || !city || (role === "sponsor" && !companyName)}
                   data-testid="button-signup"
                 >
-                  {isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    role === "sponsor" ? "Register Brand" : "Sign Up"
-                  )}
+                  {isLoading ? "Please wait..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
                 </Button>
 
-                <p className="text-center text-xs text-gray-400">
+                <p className="text-center text-[11px] text-muted-foreground">
                   By signing up, you agree to our Terms of Service
                 </p>
 
-                <div className="border-t border-purple-500/20 pt-4 mt-4">
-                  <p className="text-center text-gray-400 text-sm">
+                <div className="border-t border-border pt-3 mt-3">
+                  <p className="text-center text-muted-foreground text-xs">
                     Have an account?{" "}
                     <button
                       onClick={() => setLocation("/login")}
-                      className="text-purple-400 hover:text-purple-300 font-medium"
+                      className="text-foreground font-semibold hover:underline"
                       data-testid="link-login"
                     >
                       Log in
@@ -607,12 +448,12 @@ export default function Signup() {
                     data-testid="input-otp"
                   >
                     <InputOTPGroup>
-                      <InputOTPSlot index={0} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={1} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={2} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={3} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={4} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
-                      <InputOTPSlot index={5} className="bg-white/10 border-purple-500/30 text-white text-lg w-10 h-12" />
+                      <InputOTPSlot index={0} className="text-base w-10 h-10" />
+                      <InputOTPSlot index={1} className="text-base w-10 h-10" />
+                      <InputOTPSlot index={2} className="text-base w-10 h-10" />
+                      <InputOTPSlot index={3} className="text-base w-10 h-10" />
+                      <InputOTPSlot index={4} className="text-base w-10 h-10" />
+                      <InputOTPSlot index={5} className="text-base w-10 h-10" />
                     </InputOTPGroup>
                   </InputOTP>
                 </div>
@@ -620,23 +461,19 @@ export default function Signup() {
                 <Button
                   type="button"
                   onClick={verifyAndSignup}
-                  className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+                  className="w-full text-xs font-semibold h-9"
                   disabled={isLoading || otp.length !== 6}
                   data-testid="button-verify"
                 >
-                  {isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    "Verify & Create Account"
-                  )}
+                  {isLoading ? "Verifying..." : "Verify & Create Account"}
                 </Button>
 
-                <p className="text-center text-sm text-gray-400">
+                <p className="text-center text-xs text-muted-foreground">
                   Didn't receive code?{" "}
                   <button
                     onClick={resendOtp}
                     disabled={resendTimer > 0 || isLoading}
-                    className={`font-medium ${resendTimer > 0 ? "text-gray-500" : "text-purple-400 hover:text-purple-300"}`}
+                    className={`font-semibold ${resendTimer > 0 ? "text-muted-foreground" : "text-foreground hover:underline"}`}
                     data-testid="button-resend"
                   >
                     {resendTimer > 0 ? `Resend in ${resendTimer}s` : "Resend"}
@@ -646,7 +483,7 @@ export default function Signup() {
             )}
           </CardContent>
         </Card>
-      </motion.div>
+      </div>
     </div>
   );
 }

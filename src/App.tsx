@@ -26,18 +26,28 @@ import CategoryCampaignsPage from "@/pages/CategoryCampaigns";
 import SponsorDashboard from "@/pages/sponsor/SponsorDashboard";
 import SponsorCampaigns from "@/pages/sponsor/SponsorCampaigns";
 import CreateCampaign from "@/pages/sponsor/CreateCampaign";
+import CreateCampaignManual from "@/pages/sponsor/CreateCampaignManual";
+import CreateCampaignSelect from "@/pages/sponsor/CreateCampaignSelect";
 import SponsorSettings from "@/pages/sponsor/SponsorSettings";
 import SponsorWallet from "@/pages/sponsor/SponsorWallet";
 import AdminLogin from "@/pages/admin/AdminLogin";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
-import Subscription from "@/pages/Subscription";
 import Support from "@/pages/Support";
 import ForgotPassword from "@/pages/ForgotPassword";
+import CampaignWorkspace from "@/pages/sponsor/CampaignWorkspace";
+import CreatorCampaignWorkspace from "@/pages/CreatorCampaignWorkspace";
+import CreatorRequests from "@/pages/CreatorRequests";
 import Terms from "@/pages/legal/Terms";
 import Privacy from "@/pages/legal/Privacy";
 import DataDeletion from "@/pages/legal/DataDeletion";
 import Refunds from "@/pages/legal/Refunds";
 import Contact from "@/pages/legal/Contact";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Help = __DummyIcon;
+
+
 
 // Root entry point that routes authenticated users directly to their dashboard
 function RootEntry() {
@@ -151,6 +161,9 @@ function Router() {
       <Route path="/campaigns">
         <ProtectedCreatorRoute component={Campaigns} />
       </Route>
+      <Route path="/creator-requests">
+        <ProtectedCreatorRoute component={CreatorRequests} />
+      </Route>
       <Route path="/campaigns/:categoryId">
         <ProtectedCreatorRoute component={CategoryCampaignsPage} />
       </Route>
@@ -170,7 +183,7 @@ function Router() {
         <ProtectedCreatorRoute component={Profile} />
       </Route>
       <Route path="/subscription">
-        <ProtectedCreatorRoute component={Subscription} />
+        <Redirect to="/dashboard" />
       </Route>
       <Route path="/support" component={Support} />
       
@@ -181,8 +194,20 @@ function Router() {
       <Route path="/sponsor/campaigns">
         <ProtectedSponsorRoute component={SponsorCampaigns} />
       </Route>
-      <Route path="/sponsor/create-campaign">
+      <Route path="/sponsor/campaigns/:id/workspace">
+        <ProtectedSponsorRoute component={CampaignWorkspace} />
+      </Route>
+      <Route path="/campaigns/:id/workspace">
+        <ProtectedCreatorRoute component={CreatorCampaignWorkspace} />
+      </Route>
+      <Route path="/sponsor/create-campaign/fixed">
         <ProtectedSponsorRoute component={CreateCampaign} />
+      </Route>
+      <Route path="/sponsor/create-campaign/manual">
+        <ProtectedSponsorRoute component={CreateCampaignManual} />
+      </Route>
+      <Route path="/sponsor/create-campaign">
+        <ProtectedSponsorRoute component={CreateCampaignSelect} />
       </Route>
       <Route path="/sponsor/settings">
         <ProtectedSponsorRoute component={SponsorSettings} />

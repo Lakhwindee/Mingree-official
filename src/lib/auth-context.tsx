@@ -40,57 +40,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return null;
   });
 
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Validate or synchronize active session on initial boot
+  // Validate or synchronize active session on initial boot in background
   useEffect(() => {
     let isMounted = true;
 
     async function checkSession() {
       try {
-        const saved = localStorage.getItem(AUTH_STORAGE_KEY);
-        if (saved) {
-          const parsed: AuthUser = JSON.parse(saved);
-          if (isMounted) {
-            setUser(parsed);
-          }
-
-          // If creator session is active, refresh dynamic Instagram/tier data in background
-          if (parsed.role === "creator") {
-            try {
-              const res = await fetch("/api/users/current", { credentials: "include" });
-              if (res.ok) {
-                const data = await res.json();
-                if (data && isMounted) {
-                  const updated: AuthUser = {
-                    ...parsed,
-                    name: data.name || parsed.name,
-                    handle: data.handle || parsed.handle,
-                    followers: data.followers ?? parsed.followers,
-                    tier: data.tier || parsed.tier,
-                    instagramUsername: data.instagramUsername ?? parsed.instagramUsername,
-                    isInstagramVerified: data.isInstagramVerified ?? parsed.isInstagramVerified,
-                  };
-                  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
-                  setUser(updated);
-                }
-              }
-            } catch {
-              // Ignore background sync error
-            }
-          }
-        } else {
-          // No local session saved -> User is guest / logged out
-          if (isMounted) {
-            setUser(null);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch("/api/users/current", { credentials: "include", signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && isMounted) {
+            setUser(data);
+            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(data));
           }
         }
       } catch (err) {
-        console.warn("Session check error:", err);
-      } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        // Keep local user session if offline or backend check fails
       }
     }
 

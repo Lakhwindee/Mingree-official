@@ -1,13 +1,9 @@
-import { Loader2Icon } from "lucide-react"
-
 import { cn } from "@/lib/utils"
 
-function Spinner({ className, ...props }: React.ComponentProps<"svg">) {
+function Spinner({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <Loader2Icon
-      role="status"
-      aria-label="Loading"
-      className={cn("size-4 animate-spin", className)}
+    <div
+      className={cn("h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent", className)}
       {...props}
     />
   )

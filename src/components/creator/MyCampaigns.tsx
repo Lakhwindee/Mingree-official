@@ -1,16 +1,15 @@
 import React, { useState } from 'react';
-import {
-  Clock,
-  CheckCircle2,
-  AlertCircle,
-  ExternalLink,
-  Upload,
-  ArrowUpRight,
-  Sparkles,
-  Link2,
-} from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { CampaignSubmission } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+const Upload = __DummyIcon;
+const Info = __DummyIcon;
+
+
 
 interface MyCampaignsProps {
   submissions: CampaignSubmission[];
@@ -102,7 +101,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
       <div className="space-y-3">
         {filtered.length === 0 ? (
           <div className="p-8 text-center bg-zinc-900/40 rounded-2xl border border-zinc-800/80">
-            <Clock className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+            
             <p className="text-sm font-semibold text-zinc-300">No tasks in this tab</p>
             <button
               onClick={onBrowseCampaigns}
@@ -137,7 +136,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
                 {/* Status Pill */}
                 {item.status === 'reserved' && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px] font-bold border border-amber-500/20 whitespace-nowrap flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
+                    
                     Reserved
                   </span>
                 )}
@@ -148,7 +147,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
                 )}
                 {item.status === 'approved' && (
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20 whitespace-nowrap flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" />
+                    
                     Paid & Approved
                   </span>
                 )}
@@ -160,7 +159,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
                   <span className="text-zinc-400 text-[11px]">Reward:</span>
                   {item.starReward ? (
                     <span className="font-bold text-amber-400 flex items-center gap-0.5">
-                      <Sparkles className="w-3 h-3 fill-amber-400" />
+                      
                       {item.starReward} Stars
                     </span>
                   ) : (
@@ -188,7 +187,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
                     className="text-[#FF3399] font-bold flex items-center gap-1 hover:underline"
                   >
                     <span>View</span>
-                    <ExternalLink className="w-3 h-3" />
+                    
                   </a>
                 </div>
               )}
@@ -206,7 +205,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
                   onClick={() => setSubmittingItem(item)}
                   className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-[#FF3399] to-[#FF6B6B] hover:opacity-95 text-white font-bold text-xs shadow-md shadow-[#FF3399]/20 flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Upload className="w-3.5 h-3.5" />
+                  
                   <span>Submit Instagram Proof</span>
                 </button>
               )}
@@ -244,7 +243,7 @@ export const MyCampaigns: React.FC<MyCampaignsProps> = ({
               </div>
 
               <div className="p-3 rounded-xl bg-zinc-900 border border-dashed border-zinc-700 text-center cursor-pointer hover:border-[#FF3399]/60 transition-colors">
-                <Upload className="w-5 h-5 text-zinc-500 mx-auto mb-1" />
+                
                 <span className="text-[11px] text-zinc-300 block font-medium">
                   Upload Screenshot Proof (Optional)
                 </span>

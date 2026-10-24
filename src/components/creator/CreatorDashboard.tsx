@@ -1,16 +1,14 @@
 import React from 'react';
-import {
-  Wallet,
-  Sparkles,
-  TrendingUp,
-  Clock,
-  ArrowUpRight,
-  ShieldCheck,
-  ChevronRight,
-  Flame,
-  Award,
-} from 'lucide-react';
+
 import { Campaign, CampaignSubmission, CreatorProfile } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+const X = __DummyIcon;
+const Star = __DummyIcon;
+
+
 
 interface CreatorDashboardProps {
   profile: CreatorProfile;
@@ -46,7 +44,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-xs text-zinc-400">@{profile.instagramUsername}</span>
             <span className="inline-flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-semibold border border-emerald-500/20">
-              <ShieldCheck className="w-3 h-3" />
+              
               Verified
             </span>
           </div>
@@ -70,7 +68,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         <div className="flex items-center justify-between text-xs text-zinc-400">
           <span>Available Wallet Balance</span>
           <span className="text-emerald-400 flex items-center gap-1 font-semibold">
-            <TrendingUp className="w-3.5 h-3.5" />
+            
             +₹300 this week
           </span>
         </div>
@@ -89,7 +87,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
             onClick={onNavigateToWallet}
             className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF3399] to-[#FF6B6B] hover:opacity-95 text-white text-xs font-bold shadow-md shadow-[#FF3399]/30 flex items-center gap-1.5 cursor-pointer transition-all"
           >
-            <Wallet className="w-3.5 h-3.5" />
+            
             <span>Withdraw UPI</span>
           </button>
         </div>
@@ -98,7 +96,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         <div className="mt-4 pt-3 border-t border-zinc-800/80 grid grid-cols-2 gap-2 text-xs">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-400">
-              <Sparkles className="w-4 h-4 fill-amber-400" />
+              
             </div>
             <div>
               <span className="text-zinc-400 text-[10px] block">Star Balance</span>
@@ -122,7 +120,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
       <div className="p-3.5 rounded-xl bg-gradient-to-r from-amber-500/10 via-zinc-900 to-amber-500/5 border border-amber-500/20">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5 font-bold text-amber-300">
-            <Sparkles className="w-4 h-4 fill-amber-400 text-amber-400" />
+            
             <span>Star Milestone Reward</span>
           </div>
           <span className="text-[11px] text-zinc-400">
@@ -147,7 +145,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         <div className="p-3.5 rounded-xl bg-[#FF3399]/10 border border-[#FF3399]/30 space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="text-[#FF3399] font-bold flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5 animate-spin" />
+              
               Active Reservation Spot
             </span>
             <span className="text-zinc-400 text-[11px]">46h Remaining</span>
@@ -183,7 +181,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
           className="text-xs text-[#FF3399] font-semibold hover:underline flex items-center gap-0.5 cursor-pointer"
         >
           <span>View All</span>
-          <ChevronRight className="w-3 h-3" />
+          
         </button>
       </div>
 

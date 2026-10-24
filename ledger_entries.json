@@ -1,0 +1,12 @@
+[
+  {
+    "userId": 4,
+    "type": "escrow_lock",
+    "amount": -25000,
+    "balanceAfter": 55000,
+    "refType": "campaign_launch",
+    "refId": "11",
+    "id": 1,
+    "createdAt": "2026-10-22T09:34:01.920Z"
+  }
+]

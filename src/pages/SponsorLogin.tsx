@@ -1,7 +1,5 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { motion } from "motion/react";
-import { Eye, EyeOff, Mail, Lock, Building2, ArrowLeft, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,7 +7,12 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
-import { cn } from "@/lib/utils";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Home = __DummyIcon;
+
+
 
 export default function SponsorLogin() {
   const [, setLocation] = useLocation();
@@ -49,14 +52,13 @@ export default function SponsorLogin() {
         return;
       }
 
-      // Pre-seed query client caches
       queryClient.setQueryData(["currentUser"], data);
       queryClient.setQueryData(["currentSponsor"], data);
 
       setIsSuccess(true);
       toast({
-        title: "Welcome Back!",
-        description: `Signed in as ${data.name || "Brand Sponsor"}. Redirecting...`,
+        title: "Welcome Back",
+        description: `Signed in as ${data.name || "Brand Sponsor"}.`,
       });
 
       await new Promise((resolve) => setTimeout(resolve, 350));
@@ -84,118 +86,88 @@ export default function SponsorLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-800 to-indigo-900 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-md"
-      >
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
         <button
           onClick={() => setLocation("/")}
-          className="mb-4 flex items-center gap-2 text-gray-300 hover:text-white transition-colors"
+          className="mb-4 text-xs text-muted-foreground hover:text-foreground font-medium"
           data-testid="button-back-home"
         >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Back to Home</span>
+          Back to Home
         </button>
-        <Card className="border-indigo-500/20 bg-black/40 backdrop-blur-xl">
-          <CardHeader className="text-center">
-            <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 flex items-center justify-center">
-              <Building2 className="h-6 w-6 text-white" />
-            </div>
-            <CardTitle className="text-2xl font-bold text-white">Brand Login</CardTitle>
-            <CardDescription className="text-gray-400">
+        <Card className="border-border">
+          <CardHeader className="text-center pt-6 pb-4">
+            <CardTitle className="text-xl font-bold text-foreground">Brand Login</CardTitle>
+            <CardDescription className="text-xs text-muted-foreground mt-1">
               Sign in to manage your influencer campaigns
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-6 pb-6">
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email" className="text-gray-200">Business Email</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="you@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="pl-10 bg-white/10 border-indigo-500/30 text-white placeholder:text-gray-500"
-                    required
-                    data-testid="input-email"
-                  />
-                </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="email" className="text-xs font-semibold text-foreground">Business Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="text-xs h-9"
+                  required
+                  data-testid="input-email"
+                />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="password" className="text-gray-200">Password</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="password" className="text-xs font-semibold text-foreground">Password</Label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 pr-10 bg-white/10 border-indigo-500/30 text-white placeholder:text-gray-500"
+                    className="text-xs h-9 pr-14"
                     required
                     data-testid="input-password"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
                     data-testid="button-toggle-password"
                   >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    {showPassword ? "Hide" : "Show"}
                   </button>
                 </div>
               </div>
 
               <Button
                 type="submit"
-                className={cn(
-                  "w-full h-11 rounded-xl text-white font-semibold shadow-lg transition-all duration-300",
-                  isSuccess 
-                    ? "bg-emerald-600 hover:bg-emerald-600" 
-                    : "bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 active:scale-[0.98]"
-                )}
+                className="w-full text-xs font-semibold h-9"
                 disabled={isLoading || isSuccess}
                 data-testid="button-login"
               >
-                {isSuccess ? (
-                  <span className="flex items-center justify-center gap-2 animate-in fade-in zoom-in-95 duration-200">
-                    <CheckCircle2 className="h-4 w-4 text-white animate-bounce" />
-                    <span>Taking you to dashboard...</span>
-                  </span>
-                ) : isLoading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
-                    <span>Signing in...</span>
-                  </span>
-                ) : (
-                  "Sign In"
-                )}
+                {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Sign In"}
               </Button>
             </form>
 
-            <div className="mt-6 text-center">
-              <p className="text-gray-400">
+            <div className="mt-5 text-center border-t border-border pt-4 space-y-1">
+              <p className="text-xs text-muted-foreground">
                 Don't have an account?{" "}
                 <button
                   onClick={() => setLocation("/signup")}
-                  className="text-indigo-400 hover:text-indigo-300 font-medium"
+                  className="text-foreground font-semibold hover:underline"
                   data-testid="link-signup"
                 >
                   Register your brand
                 </button>
               </p>
-              <p className="text-gray-500 text-sm mt-2">
+              <p className="text-xs text-muted-foreground">
                 Are you a creator?{" "}
                 <button
                   onClick={() => setLocation("/login")}
-                  className="text-purple-400 hover:text-purple-300"
+                  className="text-foreground font-semibold hover:underline"
                   data-testid="link-creator-login"
                 >
                   Sign in as creator
@@ -204,7 +176,7 @@ export default function SponsorLogin() {
             </div>
           </CardContent>
         </Card>
-      </motion.div>
+      </div>
     </div>
   );
 }

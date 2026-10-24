@@ -6,25 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { 
-  Shield, 
-  ShieldAlert, 
-  ShieldCheck, 
-  AlertTriangle, 
-  Users, 
-  Clock, 
-  RefreshCw, 
-  Filter, 
-  Search, 
-  Lock, 
-  Unlock, 
-  Activity,
-  Layers,
-  CheckCircle2,
-  XCircle,
-  FileText
-} from "lucide-react";
+
 import { toast } from "sonner";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+const Info = __DummyIcon;
+const User = __DummyIcon;
+
+
 
 interface SecurityLog {
   id: string;
@@ -173,7 +164,7 @@ export function SecurityAuditPanel() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Shield className="h-6 w-6 text-purple-400" />
+            
             Instagram OAuth Security &amp; Anti-Abuse
           </h2>
           <p className="text-sm text-gray-400 mt-1">
@@ -187,7 +178,7 @@ export function SecurityAuditPanel() {
             onClick={handleRefreshAll}
             className="border-gray-700 bg-gray-800 text-gray-200 hover:bg-gray-700 hover:text-white"
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
+            
             Refresh Logs
           </Button>
         </div>
@@ -199,7 +190,7 @@ export function SecurityAuditPanel() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Bound Identities</span>
-              <Layers className="h-4 w-4 text-blue-400" />
+              
             </div>
             <div className="text-2xl font-bold text-white">
               {stats?.activeBound ?? 0}
@@ -213,7 +204,7 @@ export function SecurityAuditPanel() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Blocked Attacks</span>
-              <ShieldAlert className="h-4 w-4 text-red-400" />
+              
             </div>
             <div className="text-2xl font-bold text-red-400">
               {stats?.blockedAttempts ?? 0}
@@ -226,7 +217,7 @@ export function SecurityAuditPanel() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">High-Risk Detections</span>
-              <AlertTriangle className="h-4 w-4 text-orange-400" />
+              
             </div>
             <div className="text-2xl font-bold text-orange-400">
               {stats?.highRiskEvents ?? 0}
@@ -239,7 +230,7 @@ export function SecurityAuditPanel() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-gray-400 font-medium">Audits Recorded</span>
-              <Activity className="h-4 w-4 text-green-400" />
+              
             </div>
             <div className="text-2xl font-bold text-white">
               {stats?.totalAuditsRecorded ?? 0}
@@ -253,7 +244,7 @@ export function SecurityAuditPanel() {
       <Card className="bg-gray-900/60 border-gray-800">
         <CardContent className="p-4 text-xs space-y-2 text-gray-300">
           <div className="font-semibold text-white flex items-center gap-2 text-sm">
-            <ShieldCheck className="h-4 w-4 text-green-400" />
+            
             Active Anti-Abuse Protections &amp; Thresholds
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
@@ -279,7 +270,7 @@ export function SecurityAuditPanel() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-lg text-white flex items-center gap-2">
-                <Users className="h-5 w-5 text-indigo-400" />
+                
                 Verified Instagram Identity Registry
               </CardTitle>
               <CardDescription className="text-xs text-gray-400 mt-0.5">
@@ -387,7 +378,7 @@ export function SecurityAuditPanel() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <CardTitle className="text-lg text-white flex items-center gap-2">
-                <FileText className="h-5 w-5 text-purple-400" />
+                
                 Security Audit Trail &amp; Risk Evaluations
               </CardTitle>
               <CardDescription className="text-xs text-gray-400 mt-0.5">
@@ -397,7 +388,7 @@ export function SecurityAuditPanel() {
             {/* Filter & Search */}
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative">
-                <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-gray-400" />
+                
                 <Input
                   type="text"
                   placeholder="Search user, @handle, IP..."
@@ -441,13 +432,6 @@ export function SecurityAuditPanel() {
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        {isBlocked ? (
-                          <XCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                        ) : isMonitor ? (
-                          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
-                        ) : (
-                          <CheckCircle2 className="h-4 w-4 text-green-400 flex-shrink-0" />
-                        )}
                         <span className="font-semibold text-white text-xs">
                           {log.event}
                         </span>
@@ -476,7 +460,7 @@ export function SecurityAuditPanel() {
                         </Badge>
                       </div>
                       <div className="text-[11px] text-gray-400 flex items-center gap-2">
-                        <Clock className="h-3 w-3 text-gray-500" />
+                        
                         {new Date(log.timestamp).toLocaleString()}
                       </div>
                     </div>
@@ -533,7 +517,7 @@ export function SecurityAuditPanel() {
         <DialogContent className="bg-gray-800 text-white border-gray-700 max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
-              <Unlock className="h-5 w-5 text-purple-400" />
+              
               Manage Instagram Identity Binding
             </DialogTitle>
             <DialogDescription className="text-xs text-gray-400">

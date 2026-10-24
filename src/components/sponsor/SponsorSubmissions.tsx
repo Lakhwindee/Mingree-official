@@ -1,7 +1,13 @@
 import React from 'react';
-import { CheckCircle2, XCircle, ExternalLink, Clock, User, ShieldCheck } from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { CampaignSubmission } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Instagram = __DummyIcon;
+
+
 
 interface SponsorSubmissionsProps {
   submissions: CampaignSubmission[];
@@ -32,7 +38,7 @@ export const SponsorSubmissions: React.FC<SponsorSubmissionsProps> = ({
       <div className="space-y-3">
         {submissions.length === 0 ? (
           <div className="p-8 text-center bg-zinc-900/40 rounded-2xl border border-zinc-800/80">
-            <Clock className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
+            
             <p className="text-sm font-semibold text-zinc-300">No submissions to review</p>
             <p className="text-xs text-zinc-500 mt-1">Creator submissions will show up here once posted.</p>
           </div>
@@ -69,7 +75,7 @@ export const SponsorSubmissions: React.FC<SponsorSubmissionsProps> = ({
               <div className="p-2.5 rounded-xl bg-black/40 border border-zinc-800/80 space-y-2 text-xs">
                 <div className="flex items-center justify-between text-zinc-400">
                   <span className="flex items-center gap-1">
-                    <User className="w-3.5 h-3.5 text-zinc-500" />
+                    
                     Creator: <strong className="text-zinc-200">@aarav_vibes</strong>
                   </span>
                   <span className="text-emerald-400 font-bold">Payout: ₹{sub.payAmount}</span>
@@ -87,7 +93,7 @@ export const SponsorSubmissions: React.FC<SponsorSubmissionsProps> = ({
                       className="text-purple-400 hover:text-purple-300 font-bold text-[11px] flex items-center gap-1 hover:underline"
                     >
                       <span>Open Post</span>
-                      <ExternalLink className="w-3 h-3" />
+                      
                     </a>
                   </div>
                 ) : (
@@ -102,14 +108,14 @@ export const SponsorSubmissions: React.FC<SponsorSubmissionsProps> = ({
                     onClick={() => onReject(sub.id)}
                     className="py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-rose-400 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors border border-rose-500/20"
                   >
-                    <XCircle className="w-3.5 h-3.5" />
+                    
                     <span>Request Changes</span>
                   </button>
                   <button
                     onClick={() => handleApprove(sub.id)}
                     className="py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-md shadow-emerald-600/20"
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    
                     <span>Approve & Pay</span>
                   </button>
                 </div>

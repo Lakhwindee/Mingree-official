@@ -1,16 +1,13 @@
 import React, { useState } from 'react';
-import {
-  Wallet,
-  ArrowUpRight,
-  TrendingUp,
-  Receipt,
-  CheckCircle2,
-  AlertCircle,
-  HelpCircle,
-  Building,
-} from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { CreatorProfile, WithdrawalTransaction } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+
+
 
 interface CreatorWalletProps {
   profile: CreatorProfile;
@@ -81,7 +78,7 @@ export const CreatorWallet: React.FC<CreatorWalletProps> = ({
         <div className="flex items-center justify-between text-xs text-zinc-400">
           <span>Available for Instant Withdrawal</span>
           <span className="text-emerald-400 font-semibold flex items-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5" />
+            
             Bulkpe Auto-UPI
           </span>
         </div>
@@ -101,7 +98,7 @@ export const CreatorWallet: React.FC<CreatorWalletProps> = ({
       {/* UPI Withdrawal Form Card */}
       <div className="p-4 rounded-2xl bg-zinc-900/90 border border-zinc-800 shadow-md space-y-4">
         <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-          <Building className="w-4 h-4 text-[#FF3399]" />
+          
           Instant UPI Payout Request
         </h3>
 
@@ -160,7 +157,7 @@ export const CreatorWallet: React.FC<CreatorWalletProps> = ({
               <span className="flex items-center gap-1">
                 <span>GST (18% Govt Mandate):</span>
                 <span title="18% GST as per Indian Tax rules">
-                  <HelpCircle className="w-3 h-3 text-zinc-500" />
+                  
                 </span>
               </span>
               <span className="text-rose-400 font-semibold">-₹{gstDeduction}</span>
@@ -173,14 +170,14 @@ export const CreatorWallet: React.FC<CreatorWalletProps> = ({
 
           {errorMsg && (
             <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-1.5">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+              
               <span>{errorMsg}</span>
             </div>
           )}
 
           {successMsg && (
             <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              
               <span>{successMsg}</span>
             </div>
           )}
@@ -205,7 +202,7 @@ export const CreatorWallet: React.FC<CreatorWalletProps> = ({
       {/* Transaction History */}
       <div>
         <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-1.5">
-          <Receipt className="w-4 h-4 text-zinc-400" />
+          
           Recent Payout History
         </h3>
 

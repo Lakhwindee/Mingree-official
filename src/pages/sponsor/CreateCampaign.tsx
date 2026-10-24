@@ -12,11 +12,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { TIERS, getPaymentByStyle, calculateSponsorPayment, TAX_RATES, formatTierRange } from "@shared/tiers";
+import { TIERS, FIXED_TIERS, getPaymentByStyle, calculateSponsorPayment, TAX_RATES, formatTierRange } from "@shared/tiers";
 import { PROMOTION_CATEGORIES } from "@shared/schema";
-import { Upload, X, FileCheck, Loader2, Users, Trash2, AlertTriangle, CheckCircle, Wallet, Calendar, Tag, Globe, Plus, AtSign, MapPin } from "lucide-react";
 import { COUNTRIES, getCountryByCode } from "@shared/countries";
-import { getCitiesByCountry } from "@shared/cities";
+import { getCitiesByCountry, CITIES_BY_COUNTRY } from "@shared/cities";
+import { CreatorListPopup } from "@/components/CreatorListPopup";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +25,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = (_props?: any) => null;
+const Wallet = __DummyIcon;
+const FileCheck = __DummyIcon;
+const Instagram = __DummyIcon;
+const AtSign = __DummyIcon;
+const Camera = __DummyIcon;
+const Upload = __DummyIcon;
+const Tag = __DummyIcon;
+const File = __DummyIcon;
 
 const CONTENT_TYPES = [
   { id: "reel", label: "Reel", icon: "🎬" },
@@ -87,13 +98,40 @@ export default function CreateCampaign() {
     types: [] as string[],
     promotionStyle: "",
     description: "",
+    requiredCaptionNote: "",
+    requiredTags: [""] as string[],
+    disclosureInstructions: "#ad | Paid Partnership",
     deadline: "",
     assetUrl: "",
     assetFileName: "",
-    targetCountries: ["IN"] as string[],
     targetCities: [] as string[],
     mentions: [""] as string[],
   });
+
+  const [isPopupOpen, setIsPopupOpen] = useState(false);
+  const [selectedCreators, setSelectedCreators] = useState<any[]>([]);
+  const [selectedTierName, setSelectedTierName] = useState("");
+
+  const [cityError, setCityError] = useState(false);
+
+  const toggleTier = (tier: typeof TIERS[0]) => {
+    const exists = tierSelections.find(t => t.tierName === tier.name);
+    if (exists) {
+      setTierSelections(prev => prev.filter(t => t.tierName !== tier.name));
+    } else {
+      const payment = formData.promotionStyle 
+        ? getPaymentByStyle(tier.basePayment, formData.promotionStyle)
+        : tier.basePayment;
+      setTierSelections(prev => [...prev, {
+        tierName: tier.name,
+        tierId: tier.id,
+        creatorsNeeded: 1,
+        paymentPerCreator: payment,
+        minFollowers: tier.minFollowers,
+        maxFollowers: tier.maxFollowers,
+      }]);
+    }
+  };
 
   const [tierSelections, setTierSelections] = useState<TierSelection[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -202,24 +240,6 @@ export default function CreateCampaign() {
     if (logoInputRef.current) logoInputRef.current.value = "";
   };
 
-  const toggleTier = (tier: typeof TIERS[0]) => {
-    const exists = tierSelections.find(t => t.tierName === tier.name);
-    if (exists) {
-      setTierSelections(prev => prev.filter(t => t.tierName !== tier.name));
-    } else {
-      const payment = formData.promotionStyle 
-        ? getPaymentByStyle(tier.basePayment, formData.promotionStyle)
-        : tier.basePayment;
-      setTierSelections(prev => [...prev, {
-        tierName: tier.name,
-        tierId: tier.id,
-        creatorsNeeded: 1,
-        paymentPerCreator: payment,
-        minFollowers: tier.minFollowers,
-        maxFollowers: tier.maxFollowers,
-      }]);
-    }
-  };
 
   const updateTierCreators = (tierName: string, count: number) => {
     setTierSelections(prev => prev.map(t => 
@@ -261,6 +281,10 @@ export default function CreateCampaign() {
       toast.error("Please fill all required fields");
       return false;
     }
+    if (formData.targetCities.length === 0) {
+      toast.error("Please select at least one city");
+      return false;
+    }
     if (formData.types.length === 0) {
       toast.error("Please select at least one content type");
       return false;
@@ -300,33 +324,39 @@ export default function CreateCampaign() {
     const typeLabel = formData.types.map(t => CONTENT_TYPES.find(ct => ct.id === t)?.label).filter(Boolean).join(", ");
 
     try {
-      for (const tierSelection of tierSelections) {
         await api.createCampaign(sponsor.id, {
-          title: `${formData.title} (${tierSelection.tierName})`,
+          title: formData.title,
           brand: formData.brand,
           brandLogo: formData.brandLogo,
           category: formData.category,
-          payAmount: tierSelection.paymentPerCreator.toString(),
+          payAmount: "0", // Will be handled per tier
           type: typeLabel || "Reel",
           contentTypes: formData.types,
-          promotionStyle: formData.promotionStyle,
+          promotionStyle: formData.promotionStyle || undefined,
           assetUrl: formData.assetUrl || null,
           assetFileName: formData.assetFileName || null,
-          tier: tierSelection.tierName,
           description: formData.description,
+          requiredCaptionNote: formData.requiredCaptionNote,
+          requiredTags: formData.requiredTags.filter(t => t.trim() !== ''),
+          disclosureInstructions: formData.disclosureInstructions,
           deadline: formData.deadline,
-          minFollowers: tierSelection.minFollowers,
-          totalSpots: tierSelection.creatorsNeeded,
-          targetCountries: formData.targetCountries,
           targetCities: formData.targetCities,
+          targetCountries: [],
           mentions: formData.mentions.filter(m => m.trim() !== ''),
+          minFollowers: Math.min(...tierSelections.map(t => t.minFollowers)),
+          totalSpots: getTotalCreators(),
+          tier: JSON.stringify(tierSelections.map(t => ({
+            name: t.tierName,
+            creatorsNeeded: t.creatorsNeeded,
+            paymentPerCreator: t.paymentPerCreator,
+            minFollowers: t.minFollowers
+          })))
         });
-      }
       
       queryClient.invalidateQueries({ queryKey: ["sponsorCampaigns"] });
       queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
-      toast.success(`${tierSelections.length} campaign(s) created successfully!`);
+      toast.success(`Campaign created successfully!`);
       setShowConfirmDialog(false);
       navigate("/sponsor/campaigns");
     } catch (error: any) {
@@ -344,14 +374,19 @@ export default function CreateCampaign() {
     return PROMOTION_CATEGORIES.find(c => c.id === formData.category)?.name || "";
   };
 
+  const campaignMode = 'fixed';
+
   return (
     <div className="flex min-h-screen bg-background">
       <SponsorSidebar />
       <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
         <div className="mx-auto max-w-3xl p-6">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold tracking-tight">Create Campaign</h1>
-            <p className="text-muted-foreground">List a new influencer marketing campaign</p>
+          <div className="mb-8 flex items-center gap-4">
+            <Button variant="ghost" onClick={() => navigate("/sponsor/create-campaign")}>&larr; Back</Button>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Create Fixed Price Campaign</h1>
+              <p className="text-muted-foreground">List a new fixed price influencer marketing campaign</p>
+            </div>
           </div>
 
           <form onSubmit={handleReviewClick}>
@@ -399,7 +434,7 @@ export default function CreateCampaign() {
                           className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-white flex items-center justify-center"
                           data-testid="button-remove-logo"
                         >
-                          <X className="h-3 w-3" />
+                          
                         </button>
                       </div>
                     ) : (
@@ -425,131 +460,135 @@ export default function CreateCampaign() {
                         data-testid="button-upload-logo"
                       >
                         {isUploadingLogo ? (
-                          <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Uploading...</>
+                          <> Uploading...</>
                         ) : (
-                          <><Upload className="h-4 w-4 mr-2" /> Upload Logo</>
+                          <> Upload Logo</>
                         )}
                       </Button>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Upload your brand logo. If not uploaded, first letter of brand name will be shown.
+                        Upload your brand logo.
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Target Countries *</Label>
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {formData.targetCountries.map((code) => {
-                      const country = COUNTRIES.find(c => c.code === code);
-                      if (!country) return null;
-                      return (
-                        <Badge 
-                          key={code} 
-                          variant="secondary" 
-                          className="flex items-center gap-1"
-                        >
-                          {country.flag} {country.name}
-                          <button
-                            type="button"
-                            onClick={() => setFormData({
-                              ...formData,
-                              targetCountries: formData.targetCountries.filter(c => c !== code)
-                            })}
-                            className="ml-1 hover:text-destructive"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                  <Select 
-                    value=""
-                    onValueChange={(value) => {
-                      if (value && !formData.targetCountries.includes(value)) {
-                        setFormData({ 
-                          ...formData, 
-                          targetCountries: [...formData.targetCountries, value] 
-                        });
-                      }
-                    }}
-                  >
-                    <SelectTrigger data-testid="select-target-country">
-                      <Globe className="h-4 w-4 mr-2 text-muted-foreground" />
-                      <SelectValue placeholder="Add countries to target..." />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[300px]">
-                      {COUNTRIES.filter(c => !formData.targetCountries.includes(c.code)).map((c) => (
-                        <SelectItem key={c.code} value={c.code}>
-                          {c.flag} {c.name} ({c.currencySymbol})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Select one or more countries. Only creators from selected countries will see your campaign.
-                  </p>
-                </div>
 
                 <div className="space-y-2">
-                  <Label>Target Cities (Optional)</Label>
+                  <Label htmlFor="targetCities">Target Cities *</Label>
                   <div className="flex flex-wrap gap-2 mb-2">
-                    {formData.targetCities.map((cityName) => (
-                      <Badge 
-                        key={cityName} 
-                        variant="secondary" 
-                        className="flex items-center gap-1"
-                      >
-                        <MapPin className="h-3 w-3" />
-                        {cityName}
+                    {formData.targetCities.map((city) => (
+                      <Badge key={city} variant="secondary" className="flex items-center gap-1">
+                        {city.includes(':') ? city.split(':')[1] : city}
                         <button
                           type="button"
-                          onClick={() => setFormData({
-                            ...formData,
-                            targetCities: formData.targetCities.filter(c => c !== cityName)
-                          })}
-                          className="ml-1 hover:text-destructive"
+                          onClick={() => setFormData(prev => ({ 
+                            ...prev, 
+                            targetCities: prev.targetCities.filter(c => c !== city) 
+                          }))}
+                          className="ml-1 text-xs hover:text-red-400"
                         >
-                          <X className="h-3 w-3" />
+                          &times;
                         </button>
                       </Badge>
                     ))}
                   </div>
-                  <Select 
-                    value=""
-                    onValueChange={(value) => {
-                      if (value && !formData.targetCities.includes(value)) {
-                        setFormData({ 
-                          ...formData, 
-                          targetCities: [...formData.targetCities, value] 
-                        });
-                      }
-                    }}
-                  >
-                    <SelectTrigger data-testid="select-target-city">
-                      <MapPin className="h-4 w-4 mr-2 text-muted-foreground" />
-                      <SelectValue placeholder="Add cities to target..." />
+                  <Select onValueChange={(val) => {
+                    const cleanCity = val.includes(':') ? val.split(':')[1] : val;
+                    if (!formData.targetCities.includes(cleanCity)) {
+                      setFormData(prev => ({ ...prev, targetCities: [...prev.targetCities, cleanCity] }));
+                    }
+                  }}>
+                    <SelectTrigger className={cityError ? "border-red-500" : ""}>
+                      <SelectValue placeholder="Search and select cities..." />
                     </SelectTrigger>
                     <SelectContent className="max-h-[300px]">
-                      {formData.targetCountries.flatMap(countryCode => {
-                        const cities = getCitiesByCountry(countryCode);
-                        const country = COUNTRIES.find(c => c.code === countryCode);
-                        if (cities.length === 0) return [];
-                        return cities
-                          .filter(c => !formData.targetCities.includes(c))
-                          .map(c => (
-                            <SelectItem key={`${countryCode}-${c}`} value={c}>
-                              {c} {formData.targetCountries.length > 1 && country ? `(${country.name})` : ""}
-                            </SelectItem>
-                          ));
-                      })}
+                      {Object.entries(CITIES_BY_COUNTRY).flatMap(([country, cities]) => 
+                        cities.map(city => ({ country, city }))
+                      ).sort((a, b) => a.city.localeCompare(b.city)).map(({ country, city }) => (
+                        <SelectItem key={`${country}-${city}`} value={city}>
+                          {city}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Leave empty to target all cities in selected countries. Add specific cities to narrow your reach.
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Please select at least one city to target.
                   </p>
                 </div>
+
+                <div className="space-y-3 pt-6 border-t">
+                  <Label className="text-lg">Select Tiers & Number of Creators *</Label>
+                  <p className="text-sm text-muted-foreground">Click on tiers to add them, then specify how many creators you need for each</p>
+                  <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                      {(campaignMode === 'fixed' ? FIXED_TIERS : TIERS).map((tier) => {
+                        const isSelected = tierSelections.some(t => t.tierName === tier.name);
+                        return (
+                          <button
+                            key={tier.id}
+                            type="button"
+                            onClick={() => toggleTier(tier)}
+                            disabled={isCreating}
+                            className={`flex flex-col items-center justify-center rounded-lg border-2 p-2 text-center transition-all ${
+                              isSelected
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-muted hover:border-muted-foreground/50"
+                            } ${isCreating ? "opacity-50 cursor-not-allowed" : ""}`}
+                            data-testid={`tier-${tier.id}`}
+                          >
+                            <div className="font-semibold text-sm">{tier.name}</div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatTierRange(tier.minFollowers, tier.maxFollowers)}
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
+
+                  {tierSelections.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      <Label className="text-sm">Selected Tiers - Set Creators Count</Label>
+                      <div className="space-y-2">
+                        {tierSelections
+                          .sort((a, b) => a.tierId - b.tierId)
+                          .map((selection, index) => (
+                          <div 
+                            key={`${selection.tierName}-${index}`}
+                            className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30"
+                            data-testid={`tier-selection-${selection.tierId}`}
+                          >
+                            <div className="flex-1">
+                              <div className="font-medium">{selection.tierName}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {formatTierRange(selection.minFollowers, selection.maxFollowers)} followers | {formatINR(selection.paymentPerCreator)}/creator
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              
+                              <Input
+                                type="number"
+                                min="1"
+                                className="w-20"
+                                value={selection.creatorsNeeded}
+                                onChange={(e) => updateTierCreators(selection.tierName, parseInt(e.target.value) || 1)}
+                                data-testid={`input-creators-${selection.tierId}`}
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => removeTierSelection(selection.tierName)}
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              >
+                                
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
 
                 <div className="space-y-2">
                   <Label htmlFor="description">Campaign Description *</Label>
@@ -576,7 +615,7 @@ export default function CreateCampaign() {
                       onClick={() => setFormData({ ...formData, mentions: [...formData.mentions, ""] })}
                       data-testid="button-add-mention"
                     >
-                      <Plus className="h-4 w-4 mr-1" /> Add
+                       Add
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -611,12 +650,84 @@ export default function CreateCampaign() {
                             }}
                             data-testid={`button-remove-mention-${index}`}
                           >
-                            <X className="h-4 w-4" />
+                            
                           </Button>
                         )}
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* Required Caption Note */}
+                <div className="space-y-2">
+                  <Label htmlFor="requiredCaptionNote">Required Caption Note (What creators must include in caption)</Label>
+                  <Textarea
+                    id="requiredCaptionNote"
+                    placeholder="e.g., Vibing to our new track! Stream now on Spotify. #ad"
+                    rows={3}
+                    value={formData.requiredCaptionNote}
+                    onChange={(e) => setFormData({ ...formData, requiredCaptionNote: e.target.value })}
+                    data-testid="input-required-caption"
+                  />
+                  <p className="text-xs text-muted-foreground">This exact text will be provided to creators to copy and paste.</p>
+                </div>
+
+                {/* Required Hashtags */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">
+                      
+                      Required Hashtags
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFormData({ ...formData, requiredTags: [...formData.requiredTags, ""] })}
+                    >
+                       Add Tag
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    {formData.requiredTags.map((tag, index) => (
+                      <div key={index} className="flex gap-2">
+                        <Input
+                          placeholder="#hashtag"
+                          value={tag}
+                          onChange={(e) => {
+                            const newTags = [...formData.requiredTags];
+                            newTags[index] = e.target.value;
+                            setFormData({ ...formData, requiredTags: newTags });
+                          }}
+                        />
+                        {formData.requiredTags.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-500"
+                            onClick={() => {
+                              const newTags = formData.requiredTags.filter((_, i) => i !== index);
+                              setFormData({ ...formData, requiredTags: newTags });
+                            }}
+                          >
+                            
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Disclosure Instructions */}
+                <div className="space-y-2">
+                  <Label htmlFor="disclosureInstructions">Mandatory FTC / Platform Disclosure</Label>
+                  <Input
+                    id="disclosureInstructions"
+                    placeholder="#ad | Paid Partnership"
+                    value={formData.disclosureInstructions}
+                    onChange={(e) => setFormData({ ...formData, disclosureInstructions: e.target.value })}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -710,78 +821,6 @@ export default function CreateCampaign() {
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  <Label>Select Tiers & Number of Creators *</Label>
-                  <p className="text-sm text-muted-foreground">Click on tiers to add them, then specify how many creators you need for each</p>
-                  <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
-                    {TIERS.map((tier) => {
-                      const isSelected = tierSelections.some(t => t.tierName === tier.name);
-                      return (
-                        <button
-                          key={tier.id}
-                          type="button"
-                          onClick={() => toggleTier(tier)}
-                          className={`flex flex-col items-center justify-center rounded-lg border-2 p-2 text-center transition-all ${
-                            isSelected
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-muted hover:border-muted-foreground/50"
-                          }`}
-                          data-testid={`tier-${tier.id}`}
-                        >
-                          <div className="font-semibold text-sm">{tier.name}</div>
-                          <div className="text-[10px] text-muted-foreground">
-                            {formatTierRange(tier.minFollowers, tier.maxFollowers)}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {tierSelections.length > 0 && (
-                    <div className="mt-4 space-y-3">
-                      <Label className="text-sm">Selected Tiers - Set Creators Count</Label>
-                      <div className="space-y-2">
-                        {tierSelections
-                          .sort((a, b) => a.tierId - b.tierId)
-                          .map((selection) => (
-                          <div 
-                            key={selection.tierName}
-                            className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30"
-                            data-testid={`tier-selection-${selection.tierId}`}
-                          >
-                            <div className="flex-1">
-                              <div className="font-medium">{selection.tierName}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {formatTierRange(selection.minFollowers, selection.maxFollowers)} followers | {formatINR(selection.paymentPerCreator)}/creator
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Users className="h-4 w-4 text-muted-foreground" />
-                              <Input
-                                type="number"
-                                min="1"
-                                className="w-20"
-                                value={selection.creatorsNeeded}
-                                onChange={(e) => updateTierCreators(selection.tierName, parseInt(e.target.value) || 1)}
-                                data-testid={`input-creators-${selection.tierId}`}
-                              />
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => removeTierSelection(selection.tierName)}
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 <div className="space-y-2">
                   <Label htmlFor="deadline">Deadline *</Label>
                   <Input
@@ -815,7 +854,7 @@ export default function CreateCampaign() {
                       />
                       {isUploading ? (
                         <div className="flex flex-col items-center gap-3 w-full px-6">
-                          <Loader2 className="h-10 w-10 text-primary animate-spin" />
+                          
                           <div className="w-full max-w-xs">
                             <div className="flex justify-between text-sm mb-1">
                               <span className="text-muted-foreground">Uploading...</span>
@@ -832,7 +871,7 @@ export default function CreateCampaign() {
                       ) : (
                         <div className="flex flex-col items-center gap-3">
                           <div className="rounded-full bg-primary/10 p-4">
-                            <Upload className="h-8 w-8 text-primary" />
+                            
                           </div>
                           <div>
                             <p className="font-medium">Click to upload file</p>
@@ -860,11 +899,12 @@ export default function CreateCampaign() {
                         className="text-red-500 hover:text-red-700 hover:bg-red-50"
                         data-testid="button-remove-file"
                       >
-                        <X className="h-4 w-4" />
+                        
                       </Button>
                     </div>
                   )}
                 </div>
+
 
                 {tierSelections.length > 0 && (
                   <div className="rounded-xl border-2 border-primary/20 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 p-6">
@@ -905,7 +945,7 @@ export default function CreateCampaign() {
                         </div>
                         <div className="flex justify-between items-center mt-2 pt-2 border-t border-dashed">
                           <span className="text-sm flex items-center gap-2">
-                            <Wallet className="h-4 w-4" />
+                            
                             Wallet Balance
                           </span>
                           <span className={`font-semibold ${hasInsufficientBalance ? "text-red-500" : "text-green-600"}`}>
@@ -915,7 +955,7 @@ export default function CreateCampaign() {
                         {hasInsufficientBalance && (
                           <div className="mt-3 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
                             <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
-                              <AlertTriangle className="h-4 w-4" />
+                              
                               <span className="text-sm font-medium">
                                 Insufficient balance! Need {formatINR(totalPayable - walletBalance)} more
                               </span>
@@ -963,7 +1003,7 @@ export default function CreateCampaign() {
           <div className="space-y-6 py-4">
             <div className="space-y-3">
               <h4 className="font-semibold flex items-center gap-2">
-                <Tag className="h-4 w-4" />
+                
                 Campaign Details
               </h4>
               <div className="grid grid-cols-2 gap-3 text-sm bg-muted/30 p-4 rounded-lg">
@@ -995,7 +1035,7 @@ export default function CreateCampaign() {
                 </div>
                 <div>
                   <span className="text-muted-foreground flex items-center gap-1">
-                    <Calendar className="h-3 w-3" /> Deadline:
+                     Deadline:
                   </span>
                   <p className="font-medium">{new Date(formData.deadline).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>
                 </div>
@@ -1004,7 +1044,7 @@ export default function CreateCampaign() {
 
             <div className="space-y-3">
               <h4 className="font-semibold flex items-center gap-2">
-                <Users className="h-4 w-4" />
+                
                 Tier & Creator Selection
               </h4>
               <div className="space-y-2">
@@ -1031,7 +1071,7 @@ export default function CreateCampaign() {
 
             <div className="space-y-3">
               <h4 className="font-semibold flex items-center gap-2">
-                <Wallet className="h-4 w-4" />
+                
                 Payment Breakdown
               </h4>
               <div className={`p-4 rounded-lg ${hasInsufficientBalance ? "bg-red-50 dark:bg-red-900/20 border border-red-200" : "bg-green-50 dark:bg-green-900/20 border border-green-200"}`}>
@@ -1060,7 +1100,7 @@ export default function CreateCampaign() {
                   <span className={`font-bold ${hasInsufficientBalance ? "text-red-500" : "text-green-600"}`}>
                     {hasInsufficientBalance ? (
                       <span className="flex items-center gap-2">
-                        <AlertTriangle className="h-4 w-4" />
+                        
                         Insufficient Balance
                       </span>
                     ) : (
@@ -1073,7 +1113,7 @@ export default function CreateCampaign() {
               {hasInsufficientBalance && (
                 <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200">
                   <p className="text-sm text-amber-700 dark:text-amber-300 flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4" />
+                    
                     You need to add {formatINR(totalPayable - walletBalance)} to your wallet to create this campaign.
                   </p>
                   <Button
@@ -1107,12 +1147,12 @@ export default function CreateCampaign() {
             >
               {isCreating ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  
                   Creating...
                 </>
               ) : (
                 <>
-                  <CheckCircle className="h-4 w-4" />
+                  
                   Confirm & Create {tierSelections.length > 1 ? `${tierSelections.length} Campaigns` : "Campaign"}
                 </>
               )}
@@ -1120,6 +1160,14 @@ export default function CreateCampaign() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {isPopupOpen && (
+        <CreatorListPopup
+          isOpen={isPopupOpen}
+          onClose={() => setIsPopupOpen(false)}
+          creators={selectedCreators}
+          tierName={selectedTierName}
+        />
+      )}
     </div>
   );
 }

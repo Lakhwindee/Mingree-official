@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
-import { Building, ShieldCheck, Download, Plus, Receipt, ChevronRight } from 'lucide-react';
+
 import confetti from 'canvas-confetti';
 import { SponsorProfile } from '../../types';
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Wallet = __DummyIcon;
+
+
 
 interface SponsorProfileViewProps {
   sponsor: SponsorProfile;
@@ -50,7 +56,7 @@ export const SponsorProfileView: React.FC<SponsorProfileViewProps> = ({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <h2 className="text-base font-bold text-white truncate">{sponsor.companyName}</h2>
-            <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
+            
           </div>
           <p className="text-xs text-zinc-400">Account Admin: {sponsor.name}</p>
           <span className="text-[10px] text-zinc-500 font-mono block mt-0.5">
@@ -62,7 +68,7 @@ export const SponsorProfileView: React.FC<SponsorProfileViewProps> = ({
       {/* Escrow Deposit Card */}
       <div className="p-4 rounded-2xl bg-gradient-to-br from-purple-950/30 via-zinc-900 to-zinc-900 border border-purple-500/30 space-y-3">
         <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-          <Receipt className="w-4 h-4 text-purple-400" />
+          
           Add Escrow Campaign Funds
         </h3>
 
@@ -114,7 +120,7 @@ export const SponsorProfileView: React.FC<SponsorProfileViewProps> = ({
       <div className="p-4 rounded-2xl bg-zinc-900 border border-zinc-800 space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Download className="w-4 h-4 text-purple-400" />
+            
             <h3 className="text-xs font-bold text-white">Build Android APK (Production)</h3>
           </div>
           <span className="text-[10px] text-emerald-400 font-mono">Ready</span>
@@ -127,7 +133,7 @@ export const SponsorProfileView: React.FC<SponsorProfileViewProps> = ({
           className="w-full mt-1 py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-zinc-700/60"
         >
           <span>Open APK Center</span>
-          <ChevronRight className="w-3.5 h-3.5" />
+          
         </button>
       </div>
     </div>

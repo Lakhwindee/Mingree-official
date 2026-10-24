@@ -1,14 +1,21 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+
+// Dummy icon fallbacks for removed icons
+const __DummyIcon = () => null;
+const Users = __DummyIcon;
+const Home = __DummyIcon;
+const Instagram = __DummyIcon;
+const User = __DummyIcon;
+
+
 
 export default function Terms() {
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-4xl mx-auto px-4 py-12">
         <Link href="/">
-          <Button variant="ghost" className="mb-8">
-            <ArrowLeft className="h-4 w-4 mr-2" />
+          <Button variant="ghost" size="sm" className="mb-8 text-xs">
             Back to Home
           </Button>
         </Link>
