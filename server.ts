@@ -4804,58 +4804,117 @@ app.get("/api/cities", (req, res) => {
 
 app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { cities, tier, deliverable, q, minEngagement, genres, sort, cursor } = req.query;
-    let dbCreators: any[] = [];
-    try {
-      const result = await pool.query(`
-        SELECT id, name, handle, avatar, instagram_followers, city, gender, niche
-        FROM users 
-        WHERE role = 'creator'
-      `);
-      dbCreators = result.rows;
-    } catch {
-      dbCreators = [];
-    }
+    const { cities, tier, q, sort } = req.query;
 
-    if (dbCreators.length === 0) {
-      dbCreators = [
-        { id: 1, name: "Aisha Khan", handle: "thatbohogirl", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80", instagram_followers: 8500, city: "Mumbai", gender: "Female", niche: "Fashion" },
-        { id: 2, name: "Riya Sharma", handle: "stylewithriya", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80", instagram_followers: 9800, city: "Delhi", gender: "Female", niche: "Lifestyle" },
-        { id: 3, name: "Ankit Verma", handle: "musicvibes_ankit", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80", instagram_followers: 12500, city: "Bangalore", gender: "Male", niche: "Music" },
-        { id: 4, name: "Meera Nair", handle: "dancewithmeera", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150&auto=format&fit=crop&q=80", instagram_followers: 6500, city: "Pune", gender: "Female", niche: "Dance" },
-        { id: 5, name: "Arjun Malhotra", handle: "thefitarjun", avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80", instagram_followers: 45000, city: "Mumbai", gender: "Male", niche: "Fitness" }
-      ];
-    }
+    const requestedTier = (tier as string || "").toLowerCase();
+    const cityIds = cities ? (cities as string).split(",").map(Number).filter(n => !isNaN(n)) : [];
 
-    const items = dbCreators.map((c) => {
-      const followers = c.instagram_followers || 7500;
-      const basePrice = Math.round(800 + followers * 0.12);
-      const cityObj = CITIES_LIST.find(ci => ci.name.toLowerCase() === (c.city || "").toLowerCase()) || CITIES_LIST[0];
+    const allTiers = [
+      { id: "nano", minFollowers: 5000, maxFollowers: 10000, basePrice: 1200 },
+      { id: "micro", minFollowers: 10000, maxFollowers: 50000, basePrice: 2800 },
+      { id: "mid", minFollowers: 50000, maxFollowers: 100000, basePrice: 6500 },
+      { id: "upper_mid", minFollowers: 100000, maxFollowers: 250000, basePrice: 15000 },
+      { id: "macro", minFollowers: 250000, maxFollowers: 500000, basePrice: 32000 },
+      { id: "large", minFollowers: 500000, maxFollowers: 1000000, basePrice: 65000 },
+      { id: "mega", minFollowers: 1000000, maxFollowers: 2500000, basePrice: 125000 },
+      { id: "elite", minFollowers: 2500000, maxFollowers: 10000000, basePrice: 250000 },
+    ];
 
-      return {
-        id: c.id,
-        username: c.handle || `creator_${c.id}`,
-        displayName: c.name || `Creator ${c.id}`,
-        avatarUrl: c.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-        igVerifiedBadge: true,
-        city: cityObj,
-        tier: followers <= 5000 ? "nano" : followers <= 10000 ? "micro" : followers <= 50000 ? "small" : "mid",
-        followers,
-        engagementRate: 4.6,
-        medianViews: Math.round(followers * 35),
-        indiaAudiencePct: 92,
-        metricsSource: "api_verified" as const,
-        completedDeals: 12 + (c.id % 20),
-        onTimeRate: 98,
-        genres: [c.niche || "Music"],
-        recentReels: [
-          { thumbUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&auto=format&fit=crop&q=80" },
-          { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&auto=format&fit=crop&q=80" }
-        ],
-        price: basePrice,
-        pricePer1kViews: Math.round((basePrice / (followers * 35)) * 1000 * 100) / 100,
-      };
+    const names = [
+      "Aisha Khan", "Riya Sharma", "Ankit Verma", "Meera Nair", "Arjun Malhotra",
+      "Karan Patel", "Sneha Kapoor", "Rohan Mehta", "Pooja Hegde", "Devansh Roy",
+      "Tara Sutaria", "Ishaan Khatter", "Diya Mirza", "Kabir Bedi", "Siddharth Malhotra",
+      "Ananya Panday", "Aditya Roy", "Kiara Advani", "Aman Gupta", "Ranveer Singh"
+    ];
+
+    const handles = [
+      "thatbohogirl", "stylewithriya", "musicvibes_ankit", "dancewithmeera", "thefitarjun",
+      "karan_tech", "sneha_glam", "rohan_travels", "pooja_lifestyle", "dev_beats",
+      "tara_fashion", "ishaan_reels", "diya_vlogs", "kabir_fitness", "sid_style",
+      "ananya_trends", "aditya_music", "kiara_beauty", "aman_tech", "ranveer_energy"
+    ];
+
+    const avatars = [
+      "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+      "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150",
+      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
+      "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150",
+      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150",
+      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
+      "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150",
+      "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150"
+    ];
+
+    const generatedCreators: any[] = [];
+    let creatorIdCounter = 1;
+
+    allTiers.forEach((tierObj) => {
+      CITIES_LIST.forEach((cityObj) => {
+        for (let i = 0; i < 2; i++) {
+          const idx = (creatorIdCounter - 1) % names.length;
+          const followers = Math.round(tierObj.minFollowers + (tierObj.maxFollowers - tierObj.minFollowers) * (0.2 + (i * 0.4)));
+          const price = Math.round(tierObj.basePrice * (0.9 + Math.random() * 0.2));
+
+          generatedCreators.push({
+            id: creatorIdCounter,
+            username: `${handles[idx]}_${tierObj.id}_${i + 1}`,
+            displayName: `${names[idx]}`,
+            avatarUrl: avatars[idx % avatars.length],
+            igVerifiedBadge: followers >= 100000,
+            city: cityObj,
+            tier: tierObj.id,
+            followers,
+            engagementRate: 3.5 + Math.round(Math.random() * 30) / 10,
+            medianViews: Math.round(followers * (0.25 + Math.random() * 0.25)),
+            indiaAudiencePct: 90 + Math.floor(Math.random() * 8),
+            metricsSource: "api_verified" as const,
+            completedDeals: 10 + (creatorIdCounter % 25),
+            onTimeRate: 95 + (creatorIdCounter % 5),
+            genres: ["Music", "Fashion", "Lifestyle", "Tech", "Fitness"][creatorIdCounter % 5] ? [["Music", "Fashion", "Lifestyle", "Tech", "Fitness"][creatorIdCounter % 5]] : ["Music"],
+            recentReels: [
+              { thumbUrl: avatars[idx % avatars.length] },
+              { thumbUrl: avatars[(idx + 1) % avatars.length] }
+            ],
+            price,
+            pricePer1kViews: Math.round((price / (followers * 0.3)) * 1000 * 100) / 100,
+          });
+          creatorIdCounter++;
+        }
+      });
     });
+
+    let items = generatedCreators;
+
+    // Filter by tier
+    if (requestedTier && requestedTier !== "all") {
+      items = items.filter((c) => c.tier === requestedTier);
+    }
+
+    // Filter by cities
+    if (cityIds.length > 0) {
+      items = items.filter((c) => cityIds.includes(c.city.id));
+    }
+
+    // Filter by search query q
+    if (q) {
+      const qLower = (q as string).toLowerCase();
+      items = items.filter((c) =>
+        c.username.toLowerCase().includes(qLower) ||
+        c.displayName.toLowerCase().includes(qLower) ||
+        c.city.name.toLowerCase().includes(qLower)
+      );
+    }
+
+    // Sort
+    if (sort === "price_asc") {
+      items.sort((a, b) => a.price - b.price);
+    } else if (sort === "price_desc") {
+      items.sort((a, b) => b.price - a.price);
+    } else if (sort === "followers_desc") {
+      items.sort((a, b) => b.followers - a.followers);
+    } else if (sort === "views_desc") {
+      items.sort((a, b) => b.medianViews - a.medianViews);
+    }
 
     res.json({
       items,

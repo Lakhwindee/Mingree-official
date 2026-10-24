@@ -103,7 +103,17 @@ export default function Offers() {
                           </div>
                           <div>
                             <span className="text-[11px] text-muted-foreground block">Deadline</span>
-                            <span className="text-xs font-medium">{item.deadline ? new Date(item.deadline).toLocaleDateString() : "No deadline"}</span>
+                            <span className="text-xs font-medium">
+                              {(() => {
+                                if (!item.deadline) return "No deadline";
+                                try {
+                                  const d = new Date(item.deadline);
+                                  return !isNaN(d.getTime()) ? d.toLocaleDateString() : "No deadline";
+                                } catch {
+                                  return "No deadline";
+                                }
+                              })()}
+                            </span>
                           </div>
                         </div>
 

@@ -48,7 +48,8 @@ export function CampaignDetailsModal({ campaign, isOpen, onClose, onReserve, isR
   if (!campaign) return null;
 
   const promotionStyle = campaign.promotionStyle ? PROMOTION_STYLE_LABELS[campaign.promotionStyle] : null;
-  const deadlineDate = new Date(campaign.deadline);
+  const deadlineDate = campaign.deadline ? new Date(campaign.deadline) : null;
+  const isValidDeadline = deadlineDate && !isNaN(deadlineDate.getTime());
   const isProductCampaign = campaign.campaignType === "product";
   const isPromotionalCampaign = campaign.isPromotional === true;
   
@@ -124,7 +125,7 @@ export function CampaignDetailsModal({ campaign, isOpen, onClose, onReserve, isR
               <div className="rounded-lg bg-muted/40 border border-border p-3.5 text-center">
                 <span className="text-xs text-muted-foreground block">Deadline</span>
                 <span className="text-base font-bold text-foreground mt-0.5 block">
-                  {format(deadlineDate, "MMM d")}
+                  {isValidDeadline ? format(deadlineDate!, "MMM d") : "Flexible"}
                 </span>
               </div>
             </div>

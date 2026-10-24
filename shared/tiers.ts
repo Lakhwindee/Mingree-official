@@ -22,12 +22,15 @@ export const TIERS: Tier[] = [
 
 // Fixed Price mode tiers up to 500k followers named Tier 1 to Tier 6
 export const FIXED_TIERS: Tier[] = [
-  { id: 1, name: "Tier 1", label: "Tier 1", minFollowers: 500, maxFollowers: 5000, basePayment: 0 },
-  { id: 2, name: "Tier 2", label: "Tier 2", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
-  { id: 3, name: "Tier 3", label: "Tier 3", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
-  { id: 4, name: "Tier 4", label: "Tier 4", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
-  { id: 5, name: "Tier 5", label: "Tier 5", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
-  { id: 6, name: "Tier 6", label: "Tier 6", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
+  { id: 1, name: "Nano", label: "Nano", minFollowers: 500, maxFollowers: 5000, basePayment: 0 },
+  { id: 2, name: "Micro", label: "Micro", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
+  { id: 3, name: "Small", label: "Small", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
+  { id: 4, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
+  { id: 5, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
+  { id: 6, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
+  { id: 7, name: "Large", label: "Large", minFollowers: 500000, maxFollowers: 1000000, basePayment: 0 },
+  { id: 8, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: 2500000, basePayment: 0 },
+  { id: 9, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 0 },
 ];
 
 export const MIN_FOLLOWERS = 500;

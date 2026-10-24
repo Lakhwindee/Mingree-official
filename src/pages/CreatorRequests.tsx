@@ -291,7 +291,16 @@ export default function CreatorRequests() {
                               <div className="bg-muted/40 p-2.5 rounded-xl border border-border/40">
                                 <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Submission Deadline</span>
                                 <span className="font-medium text-foreground text-xs mt-0.5 block truncate">
-                                  {ws.deadline || ws.expiresAt ? new Date(ws.deadline || ws.expiresAt).toLocaleDateString() : "Flexible"}
+                                  {(() => {
+                                    const val = ws.deadline || ws.expiresAt;
+                                    if (!val) return "Flexible";
+                                    try {
+                                      const d = new Date(val);
+                                      return !isNaN(d.getTime()) ? d.toLocaleDateString() : "Flexible";
+                                    } catch {
+                                      return "Flexible";
+                                    }
+                                  })()}
                                 </span>
                               </div>
                             </div>

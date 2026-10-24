@@ -33,8 +33,22 @@ const STEPS = ["Campaign Details", "Creator Selection", "Promotion Content", "Re
 const DISCLOSURE = "Add #ad or the Instagram “Paid partnership” label.";
 
 const emptyDetails: CampaignDetails = {
-  title: "", songUrl: "", description: "", genre: "", language: "", deliverable: "reel", deadline: "",
-  cityIds: [], accountsToMention: [], requiredTags: ["#Mingree"], captionNote: "Check out this brand new release! Use official audio.", disclosureInstructions: "#ad | Paid Partnership", assetUrl: "", assetFileName: "", websiteUrl: "", promotionStyle: "lyrics",
+  title: "New Song / Brand Promo Campaign", 
+  songUrl: "https://instagram.com/reels/sample", 
+  description: "Promote brand audio / product on Instagram Reels across top creator channels.", 
+  genre: "Music & Lifestyle", 
+  language: "Hindi & English", 
+  deliverable: "reel", 
+  deadline: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+  cityIds: [1, 2, 3], 
+  accountsToMention: [], 
+  requiredTags: ["#MingreePromotions"], 
+  captionNote: "Check out this brand new release! Use official audio.", 
+  disclosureInstructions: "#ad | Paid Partnership", 
+  assetUrl: "", 
+  assetFileName: "", 
+  websiteUrl: "", 
+  promotionStyle: "lyrics",
 };
 
 function Field({ id, label, required, hint, children }: { id: string; label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -167,11 +181,17 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         <ol className="flex flex-1 min-w-0 items-center justify-center gap-2 sm:gap-4 overflow-x-auto" aria-label="Progress">
           {STEPS.map((s, i) => (
             <li key={s} className="flex items-center gap-2 shrink-0">
-              <span className={cn("h-7 w-7 rounded-full text-xs font-semibold flex items-center justify-center border",
-                i < step ? "bg-primary text-primary-foreground border-primary" : i === step ? "border-primary text-primary bg-primary/10" : "text-muted-foreground")}>
-                {i < step ? "✓" : i + 1}
-              </span>
-              <span className={cn("text-sm hidden md:inline", i === step ? "font-semibold text-primary" : "text-muted-foreground")}>{s}</span>
+              <button
+                type="button"
+                onClick={() => setStep(i)}
+                className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition"
+              >
+                <span className={cn("h-7 w-7 rounded-full text-xs font-semibold flex items-center justify-center border",
+                  i < step ? "bg-primary text-primary-foreground border-primary" : i === step ? "border-primary text-primary bg-primary/10" : "text-muted-foreground")}>
+                  {i < step ? "✓" : i + 1}
+                </span>
+                <span className={cn("text-sm hidden md:inline font-medium", i === step ? "font-semibold text-primary" : "text-muted-foreground")}>{s}</span>
+              </button>
             </li>
           ))}
         </ol>
