@@ -186,7 +186,15 @@ export default function Campaigns() {
     if (!r) return false;
     if (r.status === "expired" || r.status === "rejected") return false;
     if (r.status === "reserved" && !r.submittedAt) {
-      const isExpired = r.expiresAt ? new Date(r.expiresAt).getTime() <= Date.now() : false;
+      let isExpired = false;
+      if (r.expiresAt) {
+        try {
+          const t = new Date(r.expiresAt).getTime();
+          isExpired = !isNaN(t) && t <= Date.now();
+        } catch {
+          isExpired = false;
+        }
+      }
       if (isExpired) return false; // Time passed without submission -> spot is freed
     }
     return true; // Active reserved (within time), submitted, or approved
@@ -631,7 +639,15 @@ export default function Campaigns() {
                               {/* Footer metadata: Deadline & spots */}
                               <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2 border-t border-border/60">
                                 <span className="truncate">
-                                  Due {new Date(group.deadline).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
+                                  Due {(() => {
+                                    if (!group.deadline) return "Flexible";
+                                    try {
+                                      const d = new Date(group.deadline);
+                                      return !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : "Flexible";
+                                    } catch {
+                                      return "Flexible";
+                                    }
+                                  })()}
                                 </span>
                                 <span className="font-medium text-foreground whitespace-nowrap tabular-nums">
                                   {group.totalSpots} spots
@@ -986,7 +1002,15 @@ export default function Campaigns() {
                       <div className="flex flex-col items-center justify-center rounded-xl bg-card border border-border/80 p-3 text-center">
                         <span className="text-[10px] text-muted-foreground uppercase font-medium">Deadline</span>
                         <span className="text-xs sm:text-sm font-bold text-foreground mt-1 tabular-nums">
-                          {activeTargetCampaign.deadline ? new Date(activeTargetCampaign.deadline).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : 'Flexible'}
+                          {(() => {
+                            if (!activeTargetCampaign.deadline) return "Flexible";
+                            try {
+                              const d = new Date(activeTargetCampaign.deadline);
+                              return !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : "Flexible";
+                            } catch {
+                              return "Flexible";
+                            }
+                          })()}
                         </span>
                       </div>
                     </div>
