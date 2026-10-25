@@ -10,7 +10,13 @@ export interface AuthUser {
   avatar?: string | null;
   followers?: number;
   tier?: string;
+  city?: string;
+  isVerified?: boolean;
   instagramUsername?: string | null;
+  instagramProfileUrl?: string | null;
+  instagramFollowers?: number;
+  reach?: number;
+  medianViews?: number;
   isInstagramVerified?: boolean;
 }
 

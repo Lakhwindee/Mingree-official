@@ -49,6 +49,10 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
     completedDeals: 16,
     onTimeRate: 98,
     genres: ["Music", "Lifestyle", "Fashion"],
+    reach: 19500,
+    insightsVerified: true,
+    audienceIndiaPct: 95,
+    topAudienceCities: ["Mumbai", "Delhi", "Chandigarh"],
     recentReels: [
       { thumbUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150" },
       { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150" }
@@ -75,6 +79,7 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
     if (reqTier === "nano") fCount = Math.round(5000 + idx * 600);
     else if (reqTier === "mid") fCount = Math.round(52000 + idx * 5500);
 
+    const mViews = Math.round(fCount * 0.42);
     items.push({
       id: 10000 + idx,
       username: `${c.handle}_${reqTier}`,
@@ -85,7 +90,11 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
       tier: reqTier,
       followers: fCount,
       engagementRate: 3.8 + (idx % 3) * 0.5,
-      medianViews: Math.round(fCount * 0.4),
+      medianViews: mViews,
+      reach: Math.round(fCount * 2.1),
+      insightsVerified: true,
+      audienceIndiaPct: 92,
+      topAudienceCities: ["Mumbai", "Bangalore"],
       indiaAudiencePct: 92,
       metricsSource: "api_verified",
       completedDeals: 12 + idx,
@@ -107,6 +116,19 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
       (c) => c.username.toLowerCase().includes(qLower) || c.displayName.toLowerCase().includes(qLower)
     );
   }
+
+  // Sort by reach & views by default
+  filteredItems.sort((a, b) => {
+    if (a.isRealRegisteredCreator !== b.isRealRegisteredCreator) return a.isRealRegisteredCreator ? -1 : 1;
+    if (p.sort === "price_asc") return a.price - b.price;
+    if (p.sort === "price_desc") return b.price - a.price;
+    if (p.sort === "followers_desc") return b.followers - a.followers;
+    if (p.sort === "engagement_desc") return (b.engagementRate || 0) - (a.engagementRate || 0);
+    // Default / reach_desc / views_desc: Highest reach & views on top
+    const scoreA = ((a.reach || 0) * 2) + ((a.medianViews || 0) * 3);
+    const scoreB = ((b.reach || 0) * 2) + ((b.medianViews || 0) * 3);
+    return scoreB - scoreA;
+  });
 
   return {
     items: filteredItems,

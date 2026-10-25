@@ -27,6 +27,10 @@ export interface CreatorCard {
   onTimeRate: number | null; // percent
   genres: string[];
   recentReels: { thumbUrl?: string | null; permalink?: string | null }[]; // up to 3
+  reach?: number | null; // 30-day account reach from Instagram Insights
+  insightsVerified?: boolean; // Real Meta Instagram insights verified
+  audienceIndiaPct?: number | null;
+  topAudienceCities?: string[];
   price: number; // creator's rate for the chosen deliverable (rupees)
   pricePer1kViews: number | null; // informational only
   isRealRegisteredCreator?: boolean;
@@ -39,7 +43,7 @@ export interface CreatorSearchParams {
   q?: string;
   minEngagement?: number; // percent
   genres?: string[];
-  sort?: "relevance" | "price_asc" | "price_desc" | "views_desc" | "followers_desc";
+  sort?: "relevance" | "reach_desc" | "views_desc" | "engagement_desc" | "followers_desc" | "price_asc" | "price_desc";
   cursor?: string | null;
 }
 

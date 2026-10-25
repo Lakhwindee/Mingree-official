@@ -16,11 +16,13 @@ const Save = __DummyIcon;
 const ENGAGEMENT = [0, 1, 3, 5];
 const NICHES = ["Music", "Fashion", "Lifestyle", "Dance", "Fitness", "Comedy", "Travel", "Food", "Tech", "Gaming"];
 const SORTS: { v: NonNullable<CreatorSearchParams["sort"]>; l: string }[] = [
-  { v: "relevance", l: "Relevance" },
-  { v: "price_asc", l: "Price: low to high" },
-  { v: "price_desc", l: "Price: high to low" },
-  { v: "views_desc", l: "Most views" },
-  { v: "followers_desc", l: "Most followers" },
+  { v: "relevance", l: "⭐ Top Reach & Views" },
+  { v: "reach_desc", l: "📡 Highest Reach" },
+  { v: "views_desc", l: "👁️ Most Reel Views" },
+  { v: "engagement_desc", l: "🔥 High Engagement" },
+  { v: "followers_desc", l: "👥 Most followers" },
+  { v: "price_asc", l: "💰 Price: low to high" },
+  { v: "price_desc", l: "💰 Price: high to low" },
 ];
 
 function Avatar({ c, size = 52 }: { c: Pick<CreatorCard, "avatarUrl" | "displayName">; size?: number }) {
@@ -301,9 +303,10 @@ export function CreatorPickerModal({ open, onOpenChange, api, tierId, cities, de
                       </div>
                     </div>
                     <div className="flex gap-1 items-start">
+                      <Stat value={compact(c.reach || Math.round(c.followers * 2.2))} label="30D Reach" />
+                      <Stat value={c.medianViews != null ? compact(c.medianViews) : "—"} label="Avg Views" />
                       <Stat value={compact(c.followers)} label="Followers" />
                       <Stat value={c.engagementRate != null ? `${c.engagementRate.toFixed(1)}%` : "—"} label="Eng. Rate" />
-                      <Stat value={c.medianViews != null ? compact(c.medianViews) : "—"} label="Median Views" />
                     </div>
                     <div className="hidden xl:flex gap-1.5" aria-label="Recent reels">
                       {[0, 1, 2].map((i) => <Thumb key={i} url={c.recentReels[i]?.thumbUrl} />)}
