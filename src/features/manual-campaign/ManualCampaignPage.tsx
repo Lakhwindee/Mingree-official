@@ -212,9 +212,11 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       !d.songUrl.trim() && "Add the song link",
       !d.description.trim() && "Add a short description",
       !d.deadline && "Pick a deadline",
-      d.cityIds.length === 0 && "Choose at least one city",
     ].filter(Boolean) as string[],
-    [creatorIds.length === 0 && "Select at least one creator"].filter(Boolean) as string[],
+    [
+      d.cityIds.length === 0 && "Choose at least one target city",
+      creatorIds.length === 0 && "Select at least one creator",
+    ].filter(Boolean) as string[],
     [!d.captionNote.trim() && "Add a caption note with the disclosure"].filter(Boolean) as string[],
     [!bill && "Waiting for the bill", bill && bill.shortfall > 0 && "Wallet balance is lower than the total"].filter(Boolean) as string[],
   ];
@@ -338,29 +340,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               ))}
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="text-sm font-semibold">Cities <span className="text-primary">*</span></div>
-            <p className="text-xs text-muted-foreground">Only creators who live in these cities will be shown. You can pick more than one.</p>
-            {citiesErr && <p className="text-sm text-destructive">{citiesErr}</p>}
-            <Input id="cityq" value={cityQ} onChange={(e) => setCityQ(e.target.value)} placeholder="Search city or state" aria-label="Search cities" />
-            {selectedCities.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {selectedCities.map((c) => (
-                  <button key={c.id} type="button" onClick={() => toggleCity(c.id)} className="inline-flex items-center gap-1 rounded-full bg-primary text-primary-foreground px-3 py-1 text-xs">
-                     {c.name} 
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="max-h-44 overflow-y-auto rounded-xl border p-2 flex flex-wrap gap-2">
-              {visibleCities.filter((c) => !d.cityIds.includes(c.id)).slice(0, 80).map((c) => (
-                <button key={c.id} type="button" onClick={() => toggleCity(c.id)} className="rounded-full border px-3 py-1 text-xs hover:border-primary hover:text-primary">
-                  {c.name}<span className="text-muted-foreground">, {c.state}</span>
-                </button>
-              ))}
-              {cities.length > 0 && visibleCities.length === 0 && <span className="text-xs text-muted-foreground p-2">No city matches “{cityQ}”.</span>}
-            </div>
-          </div>
         </section>
       )}
 
@@ -374,8 +353,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             </p>
           </header>
 
-          {/* Big Google-style Search Box in the Upper Center */}
-          <div className="w-full max-w-2xl mx-auto space-y-2">
+          {/* Big Google-style Search Box in the Upper Center with Floating Auto-Suggest Dropdown */}
+          <div className="w-full max-w-2xl mx-auto space-y-2 relative">
             <div className="relative flex items-center group">
               <span className="absolute left-5 text-muted-foreground text-xl pointer-events-none group-focus-within:text-primary transition-colors">
                 🔍
@@ -385,7 +364,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                 type="text"
                 value={globalSearchQ}
                 onChange={(e) => setGlobalSearchQ(e.target.value)}
-                placeholder="Search creator by name or @handle... (e.g. juge, thatbohogirl, aisha)"
+                placeholder="Search creator by name or @handle... (e.g. m, judge, thatbohogirl)"
                 className="w-full h-14 pl-14 pr-12 rounded-full border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary focus:ring-4 focus:ring-primary/10 text-sm sm:text-base transition-all outline-none"
               />
               {globalSearchQ && (
@@ -399,10 +378,153 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                 </button>
               )}
             </div>
-            <div className="flex items-center justify-between text-xs text-muted-foreground px-3">
-              <span>Cities: {selectedCities.map((c) => c.name).join(", ") || "All selected"}</span>
-              <span>Content: {DELIVERABLES.find((x) => x.id === d.deliverable)?.label}</span>
+
+            {/* Google-Style Floating Live Suggestion Dropdown */}
+            {globalSearchQ.trim().length > 0 && (
+              <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-card border rounded-2xl shadow-2xl overflow-hidden divide-y divide-border/40 max-h-[380px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="px-4 py-2 bg-muted/40 text-[11px] font-bold tracking-wider text-muted-foreground flex items-center justify-between uppercase">
+                  <span>
+                    Results in {selectedCities.map((c) => c.name).join(", ") || "Selected Cities"}
+                  </span>
+                  <span>{searchResults.length} match{searchResults.length === 1 ? "" : "es"}</span>
+                </div>
+
+                {searchLoading && (
+                  <div className="p-4 text-center text-xs text-muted-foreground animate-pulse">
+                    Searching creators in {selectedCities.map((c) => c.name).join(", ") || "selected cities"}...
+                  </div>
+                )}
+
+                {!searchLoading && searchResults.length === 0 && (
+                  <div className="p-5 text-center text-xs text-muted-foreground space-y-1">
+                    <p className="font-semibold text-foreground">No creator found matching “{globalSearchQ}”</p>
+                    <p className="text-[11px]">in {selectedCities.map((c) => c.name).join(", ") || "selected cities"}. Try adding more cities below.</p>
+                  </div>
+                )}
+
+                {!searchLoading && searchResults.map((c) => {
+                  const isChosen = selected.has(c.id);
+                  return (
+                    <div
+                      key={c.id}
+                      className="p-3 flex items-center justify-between gap-3 hover:bg-muted/30 transition cursor-pointer"
+                      onClick={() => toggleCreator(c)}
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        {c.avatarUrl ? (
+                          <img src={c.avatarUrl} alt={c.displayName} className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-border" />
+                        ) : (
+                          <div className="h-10 w-10 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 text-white font-bold flex items-center justify-center shrink-0 text-xs">
+                            {c.displayName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="font-bold text-sm text-foreground truncate">@{c.username}</span>
+                            {c.isRealRegisteredCreator && (
+                              <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 px-1 py-0.2 rounded shrink-0">
+                                Registered
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {c.displayName} · <span className="font-semibold text-foreground">{c.city?.name}</span> · {compact(c.followers)} followers
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <div className="text-sm font-bold tabular-nums text-foreground">{inr(c.price)}</div>
+                          <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={isChosen ? "default" : "outline"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCreator(c);
+                          }}
+                          className={cn(
+                            "h-8 px-3 text-xs font-semibold rounded-xl transition-all",
+                            isChosen
+                              ? "bg-primary text-primary-foreground shadow-xs"
+                              : "border-primary text-primary hover:bg-primary/10"
+                          )}
+                        >
+                          {isChosen ? "✓ Added" : "+ Add"}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* City Selection directly inside Creator Selection */}
+          <div className="space-y-2.5 rounded-2xl border bg-muted/20 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wider">
+                <span>📍 Target Cities</span>
+                <span className="text-muted-foreground font-normal lowercase">({selectedCities.length} selected)</span>
+              </span>
+              <div className="flex items-center gap-2 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => set("cityIds", cities.map((c) => c.id))}
+                  className="text-primary hover:underline"
+                >
+                  Select All
+                </button>
+                <span className="text-muted-foreground">•</span>
+                <button
+                  type="button"
+                  onClick={() => set("cityIds", [])}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  Clear All
+                </button>
+              </div>
             </div>
+
+            {/* Selected City Pills */}
+            {selectedCities.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {selectedCities.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleCity(c.id)}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold hover:bg-primary/90 transition shadow-xs cursor-pointer"
+                    title={`Click to remove ${c.name}`}
+                  >
+                    <span>{c.name}</span>
+                    <span className="text-[10px] opacity-80">✕</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-destructive font-medium">Please select at least one city to see available creators.</p>
+            )}
+
+            {/* Unselected Cities Quick-Add Bar */}
+            {cities.filter((c) => !d.cityIds.includes(c.id)).length > 0 && (
+              <div className="pt-1 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                <span className="text-[11px] text-muted-foreground shrink-0 font-medium">Add city:</span>
+                {cities.filter((c) => !d.cityIds.includes(c.id)).slice(0, 15).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleCity(c.id)}
+                    className="inline-flex items-center gap-1 rounded-full border bg-background hover:border-primary/60 px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground shrink-0 transition cursor-pointer"
+                  >
+                    <span>+ {c.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Tier Selector Pills */}
