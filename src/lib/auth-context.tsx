@@ -21,6 +21,7 @@ interface AuthContextType {
   login: (userData: Partial<AuthUser>) => void;
   logout: () => Promise<void>;
   updateUserSession: (userData: Partial<AuthUser>) => void;
+  updateUser: (userData: Partial<AuthUser>) => void;
 }
 
 const AUTH_STORAGE_KEY = "mingree_auth_session_v1";
@@ -122,6 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         updateUserSession,
+        updateUser: updateUserSession,
       }}
     >
       {children}
