@@ -272,8 +272,13 @@ export function CreatorPickerModal({ open, onOpenChange, api, tierId, cities, de
                     />
                     <Avatar c={c} />
                     <div className="min-w-0 flex-1 basis-40">
-                      <div className="font-semibold text-sm truncate">
-                        @{c.username}
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="font-semibold text-sm truncate">@{c.username}</span>
+                        {c.isRealRegisteredCreator && (
+                          <span className="text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded shrink-0">
+                            Registered
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground truncate">{c.displayName}</div>
                       <div className="text-xs text-muted-foreground truncate">

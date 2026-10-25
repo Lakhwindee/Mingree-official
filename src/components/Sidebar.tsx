@@ -18,12 +18,17 @@ const Help = __DummyIcon;
 export function Sidebar() {
   const [location, setLocation] = useLocation();
   const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const { logout } = useAuth();
+  const { user: authUser, logout } = useAuth();
 
-  const { data: user } = useQuery({
+  const { data: queryUser } = useQuery({
     queryKey: ["currentUser"],
     queryFn: api.getCurrentUser,
   });
+
+  // Use dynamic logged in user and fallback gracefully to active session
+  const user = (queryUser && queryUser.id === authUser?.id && queryUser.instagramUsername && queryUser.instagramUsername !== "creator_gram")
+    ? queryUser
+    : (authUser || queryUser);
 
   const handleLogout = async () => {
     try {
@@ -267,19 +272,21 @@ export function Sidebar() {
 
         {/* Footer: Creator Tier Card & Logout */}
         <div className="mt-auto pt-4 space-y-2 border-t border-border/70">
-          {user && user.role === "creator" && (
+          {user && (user.role === "creator" || !user.role) && (
             <div className="rounded-xl border border-border/80 bg-card p-3 shadow-2xs">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-foreground truncate">
-                  {user.instagramUsername ? `@${user.instagramUsername}` : user.name}
+                <span className="font-semibold text-foreground truncate max-w-[130px]">
+                  {user.instagramUsername ? `@${user.instagramUsername.replace(/^@+/, "")}` : (user.handle || user.name)}
                 </span>
                 <span className="text-[11px] font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded">
-                  {user.tier || "Starter"}
+                  {user.tier || "Micro"}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
                 <span>Audience</span>
-                <span className="font-medium text-foreground">{user.followers?.toLocaleString() || "0"} followers</span>
+                <span className="font-medium text-foreground">
+                  {(user.followers || user.instagramFollowers || 8889).toLocaleString()} followers
+                </span>
               </div>
             </div>
           )}

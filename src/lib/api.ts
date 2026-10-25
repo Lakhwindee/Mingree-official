@@ -622,14 +622,13 @@ export const api = {
       const res = await fetch(`${API_BASE}/users/current`, { credentials: "include" });
       if (res.ok) {
         const u = await res.json();
-        const followers = u.followers || u.instagramFollowers || 15000;
-        const tierObj = getTierByFollowers(followers);
-        const tier = tierObj ? tierObj.name : (u.tier || "Small");
+        const followers = u.followers || u.instagramFollowers || 8889;
+        const tier = u.tier || (getTierByFollowers(followers)?.name ?? "Micro");
         return {
           ...u,
           followers,
           tier,
-          instagramUsername: u.instagramUsername || "creator_gram",
+          instagramUsername: u.instagramUsername || (u.handle ? u.handle.replace(/^@/, "") : "judgesaab"),
           instagramFollowers: u.instagramFollowers || followers,
           isInstagramVerified: true,
           instagramVerificationStatus: u.instagramVerificationStatus || "verified",
@@ -638,6 +637,21 @@ export const api = {
     } catch {
       // Fallback
     }
+    try {
+      const saved = localStorage.getItem("mingree_auth_session_v1");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.role === "creator" || !parsed.role)) {
+          return {
+            ...fallbackCreatorUser,
+            ...parsed,
+            tier: parsed.tier || "Micro",
+            followers: parsed.followers || parsed.instagramFollowers || 8889,
+            instagramUsername: parsed.instagramUsername || (parsed.handle ? parsed.handle.replace(/^@/, "") : "judgesaab"),
+          };
+        }
+      }
+    } catch {}
     return fallbackCreatorUser;
   },
 
