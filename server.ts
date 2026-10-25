@@ -3838,7 +3838,7 @@ app.get("/api/instagram/login", (req: express.Request, res: express.Response) =>
 
                   setTimeout(function() {
                     try { window.close(); } catch(e) {}
-                    window.location.href = '/dashboard?instagram_connected=true&username=' + encodeURIComponent(data.username);
+                    window.location.href = '/profile?instagram_connected=true&username=' + encodeURIComponent(data.username);
                   }, 1200);
                 } else {
                   throw new Error(data.error || 'Connection failed');
@@ -3866,7 +3866,15 @@ app.get("/api/instagram/login", (req: express.Request, res: express.Response) =>
 // POST /api/instagram/complete-oauth - Completes authentic Instagram OAuth & Insights sync
 app.post("/api/instagram/complete-oauth", async (req: express.Request, res: express.Response) => {
   try {
-    const userId = Number(req.body.userId) || 1;
+    let userId = Number(req.body.userId);
+    const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
+        if (decoded?.id && !userId) userId = decoded.id;
+      } catch {}
+    }
+    if (!userId) userId = 1;
     const cleanUsername = String(req.body.username || "").trim().replace(/^@+/, "") || "creator_pro";
     const targetUser = registeredUsers.find((u) => u.id === userId) || registeredUsers[0];
     const followers = Math.max(500, Number(req.body.followers) || targetUser?.instagramFollowers || targetUser?.followers || 28500);

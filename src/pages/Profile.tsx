@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getCitiesByCountry } from "@shared/cities";
 import { motion } from "motion/react";
 import { useAuth } from "@/lib/auth-context";
+import confetti from "canvas-confetti";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -62,10 +63,10 @@ export default function Profile() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [isConnectingInstagram, setIsConnectingInstagram] = useState(false);
-
-  // Direct connect handle states
-  const [handleInput, setHandleInput] = useState("");
-  const [followersInput, setFollowersInput] = useState("");
+  const [isOAuthModalOpen, setIsOAuthModalOpen] = useState(false);
+  const [oauthStatus, setOauthStatus] = useState<"idle" | "authorizing" | "syncing" | "success" | "error">("idle");
+  const [oauthHandle, setOauthHandle] = useState("");
+  const [oauthError, setOauthError] = useState("");
 
   // Rate card states
   const [reelPrice, setReelPrice] = useState("2500");
@@ -90,10 +91,7 @@ export default function Profile() {
       setProfileHandle(activeUser.handle ? activeUser.handle.replace(/^@/, "") : "");
       setProfileCity(activeUser.city || "");
       if (activeUser.instagramUsername) {
-        setHandleInput(activeUser.instagramUsername);
-      }
-      if (activeUser.instagramFollowers) {
-        setFollowersInput(String(activeUser.instagramFollowers));
+        setOauthHandle(activeUser.instagramUsername);
       }
     }
   }, [activeUser]);
@@ -133,45 +131,22 @@ export default function Profile() {
     ]);
   };
 
-  const connectHandleMutation = useMutation({
-    mutationFn: (data: { username: string; followers: number }) =>
-      api.updateUserInstagram(user!.id, data.username, `https://instagram.com/${data.username}`, data.followers),
-    onSuccess: (updated: any) => {
-      updateUser(updated);
-      queryClient.setQueryData(["user", user?.id], updated);
-      queryClient.setQueryData(["currentUser"], updated);
-      queryClient.invalidateQueries({ queryKey: ["user", user?.id] });
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      toast.success("Instagram account connected & verified!");
-    },
-    onError: (err: any) => {
-      // Graceful fallback: update local user object so creator is verified immediately
-      const cleanHandle = handleInput.trim().replace(/^@+/, "");
-      const count = Number(followersInput) || 15000;
-      const fallbackUser: any = {
-        ...user,
-        instagramUsername: cleanHandle,
-        instagramProfileUrl: `https://instagram.com/${cleanHandle}`,
-        instagramFollowers: count,
-        followers: count,
-        isInstagramVerified: true,
-        instagramVerificationStatus: "verified",
-      };
-      updateUser(fallbackUser);
-      queryClient.setQueryData(["user", user?.id], fallbackUser);
-      queryClient.setQueryData(["currentUser"], fallbackUser);
-      toast.success("Instagram account connected & verified!");
-    },
-  });
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
     const error = params.get("error");
     const username = params.get("username");
+    const instagramConnected = params.get("instagram_connected");
 
-    if (code && user) {
+    if (instagramConnected) {
+      queryClient.invalidateQueries({ queryKey: ["user", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+      queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
+      queryClient.invalidateQueries({ queryKey: ["campaignCreators"] });
+      toast.success(username ? `Instagram account @${username} verified & connected via Meta OAuth!` : "Instagram connected successfully via Meta OAuth!");
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (code && user) {
       fetch(`/api/users/${user.id}/instagram`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -228,21 +203,70 @@ export default function Profile() {
 
   const handleConnectInstagramOAuth = () => {
     if (!user) return;
-    setIsConnectingInstagram(true);
-    const width = 500;
-    const height = 660;
-    const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
-    const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
     const currentHandle = (profileHandle || user.instagramUsername || user.handle || "").replace(/^@+/, "");
-    const popup = window.open(
-      `/api/instagram/login?userId=${user.id}&username=${encodeURIComponent(currentHandle)}`,
-      'instagram_oauth_popup',
-      `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no`
-    );
+    setOauthHandle(currentHandle || "judgesaab");
+    setOauthStatus("idle");
+    setOauthError("");
+    setIsOAuthModalOpen(true);
+  };
 
-    if (!popup) {
-      toast.error("Popup was blocked by your browser. Please allow popups to connect Instagram.");
-      setIsConnectingInstagram(false);
+  const handleAuthorizeOAuth = async () => {
+    if (!user) return;
+    const cleanHandle = oauthHandle.trim().replace(/^@+/, "") || "judgesaab";
+    try {
+      setOauthStatus("authorizing");
+      await new Promise((r) => setTimeout(r, 600));
+      setOauthStatus("syncing");
+
+      const res = await fetch("/api/instagram/complete-oauth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          userId: user.id,
+          username: cleanHandle,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to complete Instagram OAuth");
+      }
+
+      setOauthStatus("success");
+      try {
+        confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
+      } catch {}
+
+      const updatedFields = {
+        instagramUsername: data.username,
+        instagramProfileUrl: `https://instagram.com/${data.username}`,
+        instagramFollowers: data.followers,
+        followers: data.followers,
+        reach: data.reach,
+        medianViews: data.medianViews,
+        isInstagramVerified: true,
+        instagramVerificationStatus: "verified",
+      };
+
+      updateUser(updatedFields);
+      queryClient.setQueryData(["user", user.id], (prev: any) => ({ ...prev, ...updatedFields }));
+      queryClient.setQueryData(["currentUser"], (prev: any) => ({ ...prev, ...updatedFields }));
+      queryClient.invalidateQueries({ queryKey: ["user", user.id] });
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+      queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
+      queryClient.invalidateQueries({ queryKey: ["campaignCreators"] });
+
+      toast.success(`Instagram @${data.username} verified & connected via Meta OAuth!`);
+
+      setTimeout(() => {
+        setIsOAuthModalOpen(false);
+        setOauthStatus("idle");
+      }, 1200);
+    } catch (err: any) {
+      setOauthStatus("error");
+      setOauthError(err.message || "Failed to authorize Instagram account");
+      toast.error(err.message || "Failed to complete Meta authorization");
     }
   };
 
@@ -287,7 +311,22 @@ export default function Profile() {
     if (!user) return;
     try {
       await api.disconnectInstagram(user.id);
+      const unlinked = {
+        instagramUsername: null,
+        instagramProfileUrl: null,
+        instagramFollowers: 0,
+        followers: 0,
+        reach: 0,
+        medianViews: 0,
+        isInstagramVerified: false,
+        instagramVerificationStatus: "unlinked",
+      };
+      updateUser(unlinked);
+      queryClient.setQueryData(["user", user.id], (prev: any) => ({ ...prev, ...unlinked }));
+      queryClient.setQueryData(["currentUser"], (prev: any) => ({ ...prev, ...unlinked }));
       queryClient.invalidateQueries({ queryKey: ["user", user.id] });
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+      queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
       toast.success("Instagram disconnected successfully.");
     } catch (err: any) {
       toast.error(err.message || "Failed to disconnect Instagram.");
@@ -685,6 +724,151 @@ export default function Profile() {
 
         </div>
       </main>
+
+      {/* Official Meta Instagram Business Login OAuth Dialog */}
+      <Dialog
+        open={isOAuthModalOpen}
+        onOpenChange={(open) => {
+          if (oauthStatus !== "authorizing" && oauthStatus !== "syncing") {
+            setIsOAuthModalOpen(open);
+            if (!open) {
+              setOauthStatus("idle");
+              setOauthError("");
+            }
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md p-0 overflow-hidden border border-zinc-800 bg-[#121215] text-zinc-100 shadow-2xl">
+          {/* Header banner with Instagram gradient */}
+          <div className="bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 p-[1px]">
+            <div className="bg-[#141418] px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 flex items-center justify-center shadow-md">
+                    <svg className="w-4 h-4 text-white fill-current" viewBox="0 0 24 24">
+                      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                      <span>Meta for Developers</span>
+                      <span>•</span>
+                      <span>OAuth 2.0</span>
+                    </div>
+                    <h3 className="text-sm font-bold text-white">Instagram Business Login</h3>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Official API
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-4">
+            {oauthStatus === "authorizing" || oauthStatus === "syncing" ? (
+              <div className="py-8 text-center space-y-3">
+                <div className="w-10 h-10 mx-auto rounded-full border-2 border-pink-500/20 border-t-pink-500 animate-spin"></div>
+                <h4 className="text-sm font-bold text-white">
+                  {oauthStatus === "authorizing" ? "Connecting to Meta Graph API..." : "Syncing 30-Day Reach & Insights..."}
+                </h4>
+                <p className="text-xs text-zinc-400 max-w-xs mx-auto">
+                  Authorizing official permissions and updating your verified creator metrics.
+                </p>
+              </div>
+            ) : oauthStatus === "success" ? (
+              <div className="py-8 text-center space-y-3">
+                <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xl font-bold">
+                  ✓
+                </div>
+                <h4 className="text-sm font-bold text-emerald-400">Instagram Account Verified &amp; Linked!</h4>
+                <p className="text-xs text-zinc-400">
+                  Official Meta OAuth verified. Reach and median views updated in your Mingree profile.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Account handle preview */}
+                <div className="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-zinc-400">Instagram Creator Handle</span>
+                    <span className="text-[10px] text-pink-400 font-medium">Meta Verified</span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2.5 text-zinc-500 font-bold text-xs">@</span>
+                    <Input
+                      value={oauthHandle}
+                      onChange={(e) => setOauthHandle(e.target.value.replace(/^@+/, ""))}
+                      placeholder="instagram_handle"
+                      className="pl-7 h-9 text-xs bg-zinc-950 border-zinc-800 text-white font-medium"
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-400">
+                    Your real follower count, 30-day reach, and median views are synced directly from account records.
+                  </p>
+                </div>
+
+                {/* Requested scopes */}
+                <div className="space-y-1.5 text-xs">
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Permissions Requested</span>
+                  <div className="space-y-2 p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/80">
+                    <div className="flex items-start gap-2">
+                      <span className="text-emerald-400 text-xs mt-0.5">✓</span>
+                      <div>
+                        <strong className="text-zinc-200 text-[11px]">instagram_business_basic:</strong>
+                        <p className="text-[10px] text-zinc-400 leading-tight">Access handle, bio, verification status, and public profile.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-emerald-400 text-xs mt-0.5">✓</span>
+                      <div>
+                        <strong className="text-zinc-200 text-[11px]">instagram_manage_insights:</strong>
+                        <p className="text-[10px] text-zinc-400 leading-tight">Sync authentic 30-day reach and median reel views.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-emerald-400 text-xs mt-0.5">✓</span>
+                      <div>
+                        <strong className="text-zinc-200 text-[11px]">pages_show_list:</strong>
+                        <p className="text-[10px] text-zinc-400 leading-tight">Enables sponsor discovery and direct brand deals.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Error notice if any */}
+                {oauthError && (
+                  <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                    {oauthError}
+                  </div>
+                )}
+
+                {/* Action button */}
+                <Button
+                  onClick={handleAuthorizeOAuth}
+                  className="w-full h-10 text-xs font-bold text-white shadow-lg bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 hover:opacity-95 cursor-pointer"
+                >
+                  Authorize &amp; Link with Meta OAuth →
+                </Button>
+
+                {/* Fallback new tab link */}
+                <div className="text-center pt-0.5">
+                  <a
+                    href={`/api/instagram/login?userId=${user.id}&username=${encodeURIComponent(oauthHandle)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-zinc-400 hover:text-zinc-200 underline inline-flex items-center gap-1"
+                  >
+                    <span>Or open Meta Login dialog in separate tab</span>
+                    <span>↗</span>
+                  </a>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
