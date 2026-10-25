@@ -1087,8 +1087,8 @@ export const api = {
     else if (followers >= 250000) tierName = "Macro";
     else if (followers >= 100000) tierName = "Upper-Mid";
     else if (followers >= 50000) tierName = "Mid";
-    else if (followers >= 10000) tierName = "Small";
-    else if (followers >= 5000) tierName = "Micro";
+    else if (followers >= 10000) tierName = "Micro";
+    else if (followers >= 5000) tierName = "Nano";
 
     let localUser: any = {
       id: userId,

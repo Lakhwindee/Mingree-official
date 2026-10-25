@@ -838,14 +838,15 @@ const defaultAccounts = [
     id: 1,
     email: "manindersinghjudge@gmail.com",
     passwordHash: bcrypt.hashSync("123456", 10),
-    name: "Creator",
+    name: "juge",
     role: "creator",
-    handle: "@creator",
+    handle: "@judgeproductionmusic",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    tier: "New Creator",
-    instagramUsername: "creator_pro",
-    instagramProfileUrl: "https://instagram.com/creator_pro",
-    instagramFollowers: 15000,
+    tier: "Micro",
+    instagramUsername: "ijudgesaab",
+    instagramProfileUrl: "https://instagram.com/ijudgesaab",
+    instagramFollowers: 25000,
+    followers: 25000,
     isInstagramVerified: true,
     isEmailVerified: true,
   },
@@ -857,10 +858,11 @@ const defaultAccounts = [
     role: "creator",
     handle: "@priyareels",
     avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-    tier: "Rising",
+    tier: "Micro",
     instagramUsername: "priyareels",
     instagramProfileUrl: "https://instagram.com/priyareels",
     instagramFollowers: 28000,
+    followers: 28000,
     isInstagramVerified: true,
     isEmailVerified: true,
   },
@@ -1276,8 +1278,8 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
   else if (followersCount >= 250000) tierName = "Macro";
   else if (followersCount >= 100000) tierName = "Upper-Mid";
   else if (followersCount >= 50000) tierName = "Mid";
-  else if (followersCount >= 10000) tierName = "Small";
-  else if (followersCount >= 5000) tierName = "Micro";
+  else if (followersCount >= 10000) tierName = "Micro";
+  else if (followersCount >= 5000) tierName = "Nano";
 
   user.instagramUsername = cleanHandle;
   user.instagramProfileUrl = profileUrl;
@@ -2077,8 +2079,11 @@ app.post("/api/campaigns/estimate", requireAuth, (req: AuthRequest, res) => {
 });
 
 // GET /api/campaigns/:id - Public/basic campaign details
-app.get("/api/campaigns/:id", (req, res) => {
+app.get("/api/campaigns/:id", (req, res, next) => {
   const campaignId = Number(req.params.id);
+  if (isNaN(campaignId)) {
+    return next();
+  }
   const workspace = getWorkspaceById(campaignId);
   if (workspace) {
     return res.json(workspace);
@@ -4941,9 +4946,10 @@ app.get("/api/cities", (req, res) => {
 
 app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { cities, tier, q, sort } = req.query;
+    const { cities, tier, q, sort, deliverable, minEngagement, genres } = req.query;
 
-    const requestedTier = (tier as string || "").toLowerCase();
+    const requestedTier = (tier as string || "").toLowerCase().trim();
+    const requestedDeliverable = (deliverable as string || "reel").toLowerCase().trim();
     const cityIds = cities ? (cities as string).split(",").map(Number).filter(n => !isNaN(n)) : [];
 
     const allTiers = [
@@ -4956,6 +4962,127 @@ app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, re
       { id: "mega", minFollowers: 1000000, maxFollowers: 2500000, basePrice: 125000 },
       { id: "elite", minFollowers: 2500000, maxFollowers: 10000000, basePrice: 250000 },
     ];
+
+    let deliverableMultiplier = 1.0;
+    if (requestedDeliverable === "story") deliverableMultiplier = 0.5;
+    else if (requestedDeliverable === "collab_post") deliverableMultiplier = 1.4;
+
+    const resolveTierId = (followers: number, tierLabel?: string): string => {
+      const f = Number(followers) || 0;
+      if (f >= 2500000) return "elite";
+      if (f >= 1000000) return "mega";
+      if (f >= 500000) return "large";
+      if (f >= 250000) return "macro";
+      if (f >= 100000) return "upper_mid";
+      if (f >= 50000) return "mid";
+      if (f >= 10000) return "micro";
+      if (f >= 5000) return "nano";
+
+      const t = (tierLabel || "").toLowerCase().trim();
+      if (t === "micro" || t === "small") return "micro";
+      if (t === "nano") return "nano";
+      if (t === "mid") return "mid";
+      if (t.includes("upper")) return "upper_mid";
+      if (t === "macro") return "macro";
+      if (t === "large") return "large";
+      if (t === "mega") return "mega";
+      if (t === "elite") return "elite";
+      return "micro";
+    };
+
+    // 1. Collect all real registered creators from memory and database
+    const realCreatorsMap = new Map<number, any>();
+
+    for (const u of registeredUsers) {
+      if (u.role === "creator") {
+        realCreatorsMap.set(u.id, { ...u });
+      }
+    }
+
+    try {
+      const dbRes = await pool.query(`
+        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.tier, u.city, u.company_name, u.status,
+               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate
+        FROM users u
+        LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+        WHERE u.role = 'creator'
+      `);
+      for (const row of dbRes.rows) {
+        const id = Number(row.id);
+        const existing = realCreatorsMap.get(id);
+        if (!existing) {
+          realCreatorsMap.set(id, {
+            id,
+            email: row.email,
+            name: row.name,
+            role: "creator",
+            handle: row.handle,
+            avatar: row.avatar,
+            tier: row.tier || row.tier_label,
+            city: row.city,
+            instagramUsername: row.instagram_username,
+            instagramFollowers: Number(row.cp_followers || 0),
+            followers: Number(row.cp_followers || 0),
+            isInstagramVerified: true,
+          });
+        } else {
+          if (row.instagram_username && !existing.instagramUsername) existing.instagramUsername = row.instagram_username;
+          if (row.cp_followers && !existing.instagramFollowers) {
+            existing.instagramFollowers = Number(row.cp_followers);
+            existing.followers = Number(row.cp_followers);
+          }
+          if (row.city && !existing.city) existing.city = row.city;
+        }
+      }
+    } catch {
+      // Memory fallback handles state
+    }
+
+    const realCreatorCards: any[] = [];
+    for (const u of realCreatorsMap.values()) {
+      const followers = Number(u.instagramFollowers || u.followers) || 25000;
+      const tierId = resolveTierId(followers, u.tier);
+      const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
+      const price = Math.round(tierObj.basePrice * deliverableMultiplier);
+
+      let creatorCity = CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase());
+      if (!creatorCity) {
+        if (cityIds.length > 0) {
+          creatorCity = CITIES_LIST.find((c) => cityIds.includes(c.id)) || CITIES_LIST[0];
+        } else {
+          creatorCity = CITIES_LIST[0]; // Mumbai default
+        }
+      }
+
+      const cleanHandle = (u.instagramUsername || u.handle?.replace(/^@/, "") || `creator_${u.id}`).trim();
+      const displayName = u.name || cleanHandle;
+      const avatarUrl = u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+
+      realCreatorCards.push({
+        id: Number(u.id),
+        username: cleanHandle,
+        displayName: displayName,
+        avatarUrl: avatarUrl,
+        igVerifiedBadge: Boolean(u.isInstagramVerified || followers >= 50000),
+        city: creatorCity,
+        tier: tierId,
+        followers,
+        engagementRate: u.engagementRate ? Number(u.engagementRate) : 4.8,
+        medianViews: u.medianViews ? Number(u.medianViews) : Math.round(followers * 0.4),
+        indiaAudiencePct: 95,
+        metricsSource: u.isInstagramVerified ? "api_verified" : "creator_reported",
+        completedDeals: 16,
+        onTimeRate: 98,
+        genres: ["Music", "Lifestyle", "Fashion", "Entertainment"],
+        recentReels: [
+          { thumbUrl: avatarUrl },
+          { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150" }
+        ],
+        price,
+        pricePer1kViews: Math.round((price / (followers * 0.4)) * 1000 * 100) / 100,
+        isRealRegisteredCreator: true,
+      });
+    }
 
     const names = [
       "Aisha Khan", "Riya Sharma", "Ankit Verma", "Meera Nair", "Arjun Malhotra",
@@ -4983,14 +5110,14 @@ app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, re
     ];
 
     const generatedCreators: any[] = [];
-    let creatorIdCounter = 1;
+    let creatorIdCounter = 10001;
 
     allTiers.forEach((tierObj) => {
       CITIES_LIST.forEach((cityObj) => {
         for (let i = 0; i < 2; i++) {
           const idx = (creatorIdCounter - 1) % names.length;
           const followers = Math.round(tierObj.minFollowers + (tierObj.maxFollowers - tierObj.minFollowers) * (0.2 + (i * 0.4)));
-          const price = Math.round(tierObj.basePrice * (0.9 + Math.random() * 0.2));
+          const price = Math.round(tierObj.basePrice * deliverableMultiplier * (0.95 + (i * 0.1)));
 
           generatedCreators.push({
             id: creatorIdCounter,
@@ -5014,13 +5141,15 @@ app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, re
             ],
             price,
             pricePer1kViews: Math.round((price / (followers * 0.3)) * 1000 * 100) / 100,
+            isRealRegisteredCreator: false,
           });
           creatorIdCounter++;
         }
       });
     });
 
-    let items = generatedCreators;
+    // Merge: Real registered creators first, followed by generated creators
+    let items = [...realCreatorCards, ...generatedCreators];
 
     // Filter by tier
     if (requestedTier && requestedTier !== "all") {
@@ -5029,7 +5158,12 @@ app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, re
 
     // Filter by cities
     if (cityIds.length > 0) {
-      items = items.filter((c) => cityIds.includes(c.city.id));
+      items = items.filter((c) => {
+        if (c.isRealRegisteredCreator && (!c.city || cityIds.includes(c.city.id))) {
+          return true;
+        }
+        return cityIds.includes(c.city.id);
+      });
     }
 
     // Filter by search query q
@@ -5042,7 +5176,21 @@ app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, re
       );
     }
 
-    // Sort
+    // Filter by minEngagement
+    if (minEngagement) {
+      const minEngNum = Number(minEngagement);
+      if (!isNaN(minEngNum) && minEngNum > 0) {
+        items = items.filter((c) => (c.engagementRate || 0) >= minEngNum);
+      }
+    }
+
+    // Filter by genres
+    if (genres) {
+      const reqGenres = (genres as string).split(",").map((g) => g.trim().toLowerCase());
+      items = items.filter((c) => c.genres.some((g: string) => reqGenres.includes(g.toLowerCase())));
+    }
+
+    // Sort: real registered creators stay at the top unless explicit sort order requested
     if (sort === "price_asc") {
       items.sort((a, b) => a.price - b.price);
     } else if (sort === "price_desc") {
@@ -5051,6 +5199,13 @@ app.get("/api/campaigns/creator-panel", requireAuth, async (req: AuthRequest, re
       items.sort((a, b) => b.followers - a.followers);
     } else if (sort === "views_desc") {
       items.sort((a, b) => b.medianViews - a.medianViews);
+    } else {
+      // Relevance sort: prioritize real registered creators first
+      items.sort((a, b) => {
+        if (a.isRealRegisteredCreator && !b.isRealRegisteredCreator) return -1;
+        if (!a.isRealRegisteredCreator && b.isRealRegisteredCreator) return 1;
+        return 0;
+      });
     }
 
     res.json({
@@ -5070,8 +5225,38 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
       return res.status(400).json({ error: "Select at least one creator" });
     }
 
+    const tierPrices: Record<string, number> = {
+      nano: 1200,
+      micro: 2800,
+      mid: 6500,
+      upper_mid: 15000,
+      macro: 32000,
+      large: 65000,
+      mega: 125000,
+      elite: 250000,
+    };
+
+    let multiplier = 1.0;
+    const reqDeliv = (deliverable || "reel").toLowerCase();
+    if (reqDeliv === "story") multiplier = 0.5;
+    else if (reqDeliv === "collab_post") multiplier = 1.4;
+
     const lines = creatorIds.map((id: number) => {
-      const price = 1200 + (id * 150) % 3000;
+      const creator = registeredUsers.find((u) => u.id === id);
+      let tierKey = "micro";
+      if (creator) {
+        const f = Number(creator.instagramFollowers || creator.followers) || 25000;
+        if (f >= 2500000) tierKey = "elite";
+        else if (f >= 1000000) tierKey = "mega";
+        else if (f >= 500000) tierKey = "large";
+        else if (f >= 250000) tierKey = "macro";
+        else if (f >= 100000) tierKey = "upper_mid";
+        else if (f >= 50000) tierKey = "mid";
+        else if (f >= 10000) tierKey = "micro";
+        else tierKey = "nano";
+      }
+      const basePrice = tierPrices[tierKey] || 2800;
+      const price = Math.round(basePrice * multiplier);
       const feeArtist = Math.round(price * 0.075 * 100) / 100;
       const gstInFee = Math.round(feeArtist * 0.18 * 100) / 100;
       const artistCost = price + feeArtist;
