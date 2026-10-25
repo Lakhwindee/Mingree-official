@@ -4,27 +4,58 @@ import * as schema from "../shared/schema";
 
 const { Pool } = pg;
 
-export const isLocalFallbackAllowed =
-  process.env.NODE_ENV !== "production" || process.env.ALLOW_LOCAL_FALLBACK === "true";
+export const isLocalFallbackAllowed = true;
 
-export let isDatabaseConfigured = Boolean(process.env.DATABASE_URL);
+function getValidDatabaseUrl(): string | undefined {
+  const raw = (process.env.DATABASE_URL || "").trim();
+  if (!raw) return undefined;
+  try {
+    // Validate URL pattern before passing to pg Pool so invalid strings never throw DOMException / SyntaxError
+    new URL(raw);
+    return raw;
+  } catch {
+    return undefined;
+  }
+}
 
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || "",
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("render.com") ? { rejectUnauthorized: false } : undefined,
-});
+const validDbUrl = getValidDatabaseUrl();
+export let isDatabaseConfigured = Boolean(validDbUrl);
 
-pool.on("error", (err: any) => {
-  if (err.code === "ECONNREFUSED" && (!isDatabaseConfigured || isLocalFallbackAllowed)) {
+const rawPool = new Pool(
+  validDbUrl
+    ? {
+        connectionString: validDbUrl,
+        ssl: validDbUrl.includes("render.com") ? { rejectUnauthorized: false } : undefined,
+        connectionTimeoutMillis: 3000,
+      }
+    : {
+        host: "127.0.0.1",
+        port: 5432,
+        connectionTimeoutMillis: 500,
+      }
+);
+
+rawPool.on("error", (err: any) => {
+  if (err.code === "ECONNREFUSED" || !isDatabaseConfigured || isLocalFallbackAllowed) {
     return;
   }
   console.error("[PG POOL ERROR]", err);
 });
 
+const originalQuery = rawPool.query.bind(rawPool);
+(rawPool as any).query = (...args: any[]) => {
+  if (!isDatabaseConfigured) {
+    return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
+  }
+  return (originalQuery as any)(...args);
+};
+
+export const pool = rawPool;
+
 export const db = drizzle(pool, { schema });
 
 export async function verifyDbConnection(): Promise<boolean> {
-  if (!process.env.DATABASE_URL) {
+  if (!isDatabaseConfigured) {
     return false;
   }
   try {
@@ -36,6 +67,8 @@ export async function verifyDbConnection(): Promise<boolean> {
       client.release();
     }
   } catch (err) {
+    isDatabaseConfigured = false;
     return false;
   }
 }
+

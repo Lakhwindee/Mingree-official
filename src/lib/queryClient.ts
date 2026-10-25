@@ -38,7 +38,16 @@ export const getQueryFn: <T>(options: {
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    const text = await res.text();
+    const trimmed = text ? text.trim() : "";
+    if (!trimmed || trimmed.startsWith("<")) {
+      return null as any;
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null as any;
+    }
   };
 
 export const queryClient = new QueryClient({
