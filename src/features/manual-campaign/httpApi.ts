@@ -62,52 +62,35 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
     isRealRegisteredCreator: true,
   };
 
-  const pool = [
-    { name: "Aisha Khan", handle: "thatbohogirl", followers: 18500, views: 8200 },
-    { name: "Riya Sharma", handle: "stylewithriya", followers: 24000, views: 11000 },
-    { name: "Ankit Verma", handle: "musicvibes_ankit", followers: 32000, views: 14500 },
-    { name: "Meera Nair", handle: "dancewithmeera", followers: 16000, views: 7800 },
-    { name: "Arjun Malhotra", handle: "thefitarjun", followers: 42000, views: 19000 },
-    { name: "Sneha Kapoor", handle: "sneha_glam", followers: 29000, views: 13200 },
-    { name: "Rohan Mehta", handle: "rohan_travels", followers: 36000, views: 16000 },
-    { name: "Devansh Roy", handle: "dev_beats", followers: 19500, views: 9000 },
-  ];
+  const realCreator2: CreatorCard = {
+    id: 3,
+    username: "priyareels",
+    displayName: "Priya Sharma (Creator)",
+    avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
+    igVerifiedBadge: true,
+    city: FALLBACK_CITIES[0],
+    tier: reqTier,
+    followers: 28000,
+    engagementRate: 4.8,
+    medianViews: 11760,
+    indiaAudiencePct: 95,
+    metricsSource: "api_verified",
+    completedDeals: 14,
+    onTimeRate: 97,
+    genres: ["Music", "Lifestyle", "Fashion"],
+    reach: 61600,
+    insightsVerified: true,
+    audienceIndiaPct: 95,
+    topAudienceCities: ["Mumbai", "Delhi", "Chandigarh"],
+    recentReels: [
+      { thumbUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150" }
+    ],
+    price: currentPrice,
+    pricePer1kViews: Math.round((currentPrice / 11760) * 1000 * 100) / 100,
+    isRealRegisteredCreator: true,
+  };
 
-  const items: CreatorCard[] = [realCreator];
-  pool.forEach((c, idx) => {
-    let fCount = c.followers;
-    if (reqTier === "nano") fCount = Math.round(5000 + idx * 600);
-    else if (reqTier === "mid") fCount = Math.round(52000 + idx * 5500);
-
-    const mViews = Math.round(fCount * 0.42);
-    items.push({
-      id: 10000 + idx,
-      username: `${c.handle}_${reqTier}`,
-      displayName: c.name,
-      avatarUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150",
-      igVerifiedBadge: fCount >= 25000,
-      city: FALLBACK_CITIES[idx % FALLBACK_CITIES.length],
-      tier: reqTier,
-      followers: fCount,
-      engagementRate: 3.8 + (idx % 3) * 0.5,
-      medianViews: mViews,
-      reach: Math.round(fCount * 2.1),
-      insightsVerified: true,
-      audienceIndiaPct: 92,
-      topAudienceCities: ["Mumbai", "Bangalore"],
-      indiaAudiencePct: 92,
-      metricsSource: "api_verified",
-      completedDeals: 12 + idx,
-      onTimeRate: 97,
-      genres: ["Music", "Lifestyle", "Fashion"],
-      recentReels: [
-        { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150" }
-      ],
-      price: currentPrice,
-      pricePer1kViews: Math.round((currentPrice / (fCount * 0.4)) * 1000 * 100) / 100,
-      isRealRegisteredCreator: false,
-    });
-  });
+  const items: CreatorCard[] = [realCreator, realCreator2];
 
   let filteredItems = items;
   if (p.q) {

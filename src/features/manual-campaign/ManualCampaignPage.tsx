@@ -366,7 +366,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                 type="text"
                 value={globalSearchQ}
                 onChange={(e) => setGlobalSearchQ(e.target.value)}
-                placeholder="Search creator by name or @handle... (e.g. m, judge, thatbohogirl)"
+                placeholder="Search creator by name or @handle... (e.g. judge, priya, maninder)"
                 className="w-full h-14 pl-14 pr-12 rounded-full border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary focus:ring-4 focus:ring-primary/10 text-sm sm:text-base transition-all outline-none"
               />
               {globalSearchQ && (

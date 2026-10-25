@@ -674,65 +674,6 @@ export default function Profile() {
                         </Button>
                       </div>
                     </div>
-
-                    {/* Direct Instagram Handle Connection Card (Alternative) */}
-                    <div className="rounded-lg border border-border bg-card p-4 sm:p-5 space-y-3.5">
-                      <div className="space-y-1">
-                        <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Alternative: Quick Handle Link</h4>
-                        <p className="text-xs text-muted-foreground">
-                          Enter your handle and followers manually if you prefer not to open the OAuth popup right now.
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                        <div>
-                          <label className="text-xs font-semibold text-foreground mb-1 block">Instagram Handle</label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-2.5 text-xs text-muted-foreground font-bold">@</span>
-                            <Input
-                              type="text"
-                              placeholder="username"
-                              value={handleInput}
-                              onChange={(e) => setHandleInput(e.target.value.replace(/^@+/, ""))}
-                              className="pl-7 text-xs h-9"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-xs font-semibold text-foreground mb-1 block">Follower Count</label>
-                          <Input
-                            type="number"
-                            placeholder="e.g. 5000"
-                            value={followersInput}
-                            onChange={(e) => setFollowersInput(e.target.value)}
-                            className="text-xs h-9"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 pt-1">
-                        <Button
-                          onClick={() => {
-                            if (!handleInput.trim()) {
-                              toast.error("Please enter your Instagram handle");
-                              return;
-                            }
-                            const followers = Number(followersInput) || 0;
-                            if (followers < 500) {
-                              toast.error("Minimum 500 followers required to connect an Instagram account");
-                              return;
-                            }
-                            connectHandleMutation.mutate({ username: handleInput.trim(), followers });
-                          }}
-                          disabled={connectHandleMutation.isPending}
-                          size="sm"
-                          variant="outline"
-                          className="h-8.5 px-4 rounded text-xs font-semibold"
-                        >
-                          {connectHandleMutation.isPending ? "Connecting..." : "Save Handle"}
-                        </Button>
-                      </div>
-                    </div>
                   </div>
                 )}
               </CardContent>

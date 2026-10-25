@@ -172,7 +172,7 @@ export function CreatorPickerModal({ open, onOpenChange, api, tierId, cities, de
                 id="creator-modal-search"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search creator by name or @handle... (e.g. judge, thatbohogirl, aisha)"
+                placeholder="Search creator by name or @handle... (e.g. judge, priya, maninder)"
                 className="w-full h-12 pl-12 pr-12 rounded-full border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary focus:ring-4 focus:ring-primary/10 text-sm sm:text-base transition-all outline-none"
               />
               {q && (

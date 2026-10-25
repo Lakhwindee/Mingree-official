@@ -59,9 +59,11 @@ export interface ApiCampaign {
   escrowStatus: string;
   createdAt: string;
   campaignType?: string;
+  genre?: string | null;
   productName?: string | null;
   productValue?: string | null;
   mentions?: string[] | null;
+  tags?: string[] | null;
   // Reservation status counts (added by sponsor campaigns endpoint)
   reservedCount?: number;
   submittedCount?: number;
@@ -137,7 +139,7 @@ export interface ApiReservation {
   shippedAt?: string | null;
   deliveryConfirmed?: boolean | null;
   deliveredAt?: string | null;
-  campaign?: ApiCampaign | null;
+  campaign?: (Partial<ApiCampaign> & { id: number; title: string }) | null;
 }
 
 export interface ApiTransaction {
@@ -473,6 +475,10 @@ export const api = {
       throw new Error(err.error || "Failed to acknowledge brief change");
     }
     return await res.json();
+  },
+
+  async acknowledgeBriefUpdate(campaignId: number, version: number): Promise<any> {
+    return this.acknowledgeBriefChange(campaignId, version);
   },
 
   async submitDraftPreview(campaignId: number, data: { videoUrl: string; notes?: string }): Promise<any> {
@@ -822,14 +828,19 @@ export const api = {
   },
 
   // Transactions
-  async getUserTransactions(userId: number): Promise<ApiTransaction[]> {
+  async getUserTransactions(userId?: number): Promise<ApiTransaction[]> {
     try {
-      const res = await fetch(`${API_BASE}/users/${userId}/transactions`);
+      const url = userId ? `${API_BASE}/users/${userId}/transactions` : `${API_BASE}/transactions`;
+      const res = await fetch(url, { credentials: "include" });
       if (res.ok) return await res.json();
     } catch {
       // Fallback
     }
     return fallbackTransactions;
+  },
+
+  async getTransactions(userId?: number): Promise<ApiTransaction[]> {
+    return this.getUserTransactions(userId);
   },
 
   async withdrawFunds(userId: number, amount: number) {
@@ -846,7 +857,7 @@ export const api = {
   },
 
   // Bank Accounts
-  async getBankAccounts(): Promise<ApiBankAccount[]> {
+  async getBankAccounts(_userId?: number): Promise<ApiBankAccount[]> {
     try {
       const res = await fetch(`${API_BASE}/bank-accounts`);
       if (res.ok) return await res.json();
@@ -862,6 +873,8 @@ export const api = {
     ifscCode: string;
     bankName: string;
     upiId?: string;
+    accountType?: string;
+    isDefault?: boolean;
   }): Promise<ApiBankAccount> {
     const res = await fetch(`${API_BASE}/bank-accounts`, {
       method: "POST",
@@ -898,7 +911,7 @@ export const api = {
   },
 
   // Withdrawal Requests
-  async getWithdrawalRequests(): Promise<ApiWithdrawalRequest[]> {
+  async getWithdrawalRequests(_userId?: number): Promise<ApiWithdrawalRequest[]> {
     const res = await fetch(`${API_BASE}/withdrawal-requests`);
     if (!res.ok) {
       const error = await res.json();
@@ -918,6 +931,10 @@ export const api = {
       throw new Error(error.error || "Failed to submit withdrawal request");
     }
     return res.json();
+  },
+
+  async requestWithdrawal(amount: number, bankAccountId: number) {
+    return this.createWithdrawalRequest(amount, bankAccountId);
   },
 
   // Notifications

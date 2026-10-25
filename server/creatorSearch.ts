@@ -24,15 +24,9 @@ export async function searchCreators(city: string, minFollowers: number, maxFoll
       return result.rows;
     }
   } catch (err) {
-    console.error("Database error in searchCreators, falling back to mock creators:", err);
+    console.error("Database error in searchCreators:", err);
   }
 
-  // Fallback mock creators if query fails or returns empty
-  return [
-    { id: 101, name: "Aisha Khan", handle: "@thatbohogirl", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80", instagram_followers: Math.max(minFollowers + 200, Math.floor((minFollowers + maxRange)/2)), avg_views: 320000, avg_likes: 18000, city: cleanCity || "Bangalore", gender: "Female", niche: "Fashion" },
-    { id: 102, name: "Riya Sharma", handle: "@stylewithriya", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80", instagram_followers: Math.max(minFollowers + 400, Math.floor((minFollowers + maxRange)/2) + 200), avg_views: 280000, avg_likes: 14000, city: cleanCity || "Bangalore", gender: "Female", niche: "Lifestyle" },
-    { id: 103, name: "Ankit Verma", handle: "@musicvibes_ankit", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80", instagram_followers: Math.max(minFollowers + 150, Math.floor((minFollowers + maxRange)/2) - 300), avg_views: 410000, avg_likes: 22000, city: cleanCity || "Bangalore", gender: "Male", niche: "Music" },
-    { id: 104, name: "Meera Nair", handle: "@dancewithmeera", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150&auto=format&fit=crop&q=80", instagram_followers: Math.max(minFollowers + 250, Math.floor((minFollowers + maxRange)/2) - 100), avg_views: 290000, avg_likes: 12000, city: cleanCity || "Bangalore", gender: "Female", niche: "Dance" },
-    { id: 105, name: "Arjun Malhotra", handle: "@thefitarjun", avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80", instagram_followers: Math.max(minFollowers + 350, Math.floor((minFollowers + maxRange)/2) + 100), avg_views: 350000, avg_likes: 16000, city: cleanCity || "Bangalore", gender: "Male", niche: "Fitness" }
-  ];
+  // No mock or fake creators: return empty array if no matching real creators found
+  return [];
 }

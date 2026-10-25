@@ -2,11 +2,7 @@ import React, { useState, useMemo } from 'react';
 
 import { Campaign, CATEGORIES, TIERS } from '../../types';
 
-// Dummy icon fallbacks for removed icons
-const __DummyIcon = () => null;
-const Instagram = __DummyIcon;
-const X = __DummyIcon;
-const Star = __DummyIcon;
+import { Globe as Globe2, Instagram, X, Star } from 'lucide-react';
 
 
 

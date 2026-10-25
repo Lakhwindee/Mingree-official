@@ -2,11 +2,7 @@ import React from 'react';
 
 import { Campaign, CampaignSubmission, CreatorProfile } from '../../types';
 
-// Dummy icon fallbacks for removed icons
-const __DummyIcon = () => null;
-const Wallet = __DummyIcon;
-const X = __DummyIcon;
-const Star = __DummyIcon;
+import { Award, ArrowUpRight, Flame, Wallet, X, Star } from 'lucide-react';
 
 
 

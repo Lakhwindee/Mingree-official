@@ -3,11 +3,7 @@ import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
 import { CampaignSubmission } from '../../types';
 
-// Dummy icon fallbacks for removed icons
-const __DummyIcon = () => null;
-const Instagram = __DummyIcon;
-const Upload = __DummyIcon;
-const Info = __DummyIcon;
+import { Instagram, Upload, Info, Link2 } from 'lucide-react';
 
 
 

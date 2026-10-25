@@ -3,9 +3,7 @@ import React, { useState } from 'react';
 import confetti from 'canvas-confetti';
 import { CreatorProfile, WithdrawalTransaction } from '../../types';
 
-// Dummy icon fallbacks for removed icons
-const __DummyIcon = () => null;
-const Wallet = __DummyIcon;
+import { Wallet, ArrowUpRight } from 'lucide-react';
 
 
 
