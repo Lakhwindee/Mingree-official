@@ -139,6 +139,57 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   }, [api, creatorIds, d.deliverable]);
   useEffect(() => { const t = setTimeout(refreshBill, 250); return () => clearTimeout(t); }, [refreshBill]);
 
+  // Live Google-style search & tier creator browser state
+  const [globalSearchQ, setGlobalSearchQ] = useState("");
+  const [activeTierFilter, setActiveTierFilter] = useState<string>("all");
+  const [searchResults, setSearchResults] = useState<CreatorCard[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (step !== 1) return;
+    let active = true;
+    setSearchLoading(true);
+    setSearchErr(null);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.searchCreators({
+          cityIds: d.cityIds,
+          tierId: activeTierFilter === "all" ? "all" : activeTierFilter,
+          deliverable: d.deliverable,
+          q: globalSearchQ.trim() || undefined,
+        });
+        if (active) {
+          setSearchResults(res.items || []);
+        }
+      } catch (e: any) {
+        if (active) {
+          setSearchErr(e?.message || "Could not load creators");
+        }
+      } finally {
+        if (active) setSearchLoading(false);
+      }
+    }, 200);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [step, globalSearchQ, activeTierFilter, d.cityIds, d.deliverable, api]);
+
+  const toggleCreator = (creator: CreatorCard) => {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(creator.id)) {
+        next.delete(creator.id);
+      } else {
+        next.set(creator.id, creator);
+      }
+      return next;
+    });
+  };
+
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<{ kind: "warn" | "error"; text: string } | null>(null);
   const launch = async () => {
@@ -315,43 +366,296 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
       {/* Step 2 */}
       {step === 1 && (
-        <section className="rounded-2xl border bg-card p-5 sm:p-6 space-y-5">
-          <header>
-            <h2 className="text-xl font-bold">Select Tiers &amp; Creators</h2>
-            <p className="text-sm text-muted-foreground">
-              Pick a tier to see creators from {selectedCities.map((c) => c.name).join(", ") || "your cities"}. A creator’s tier is set by their Instagram followers.
+        <section className="rounded-2xl border bg-card p-5 sm:p-7 space-y-6">
+          <header className="text-center space-y-1.5 max-w-2xl mx-auto">
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Select Tiers &amp; Creators</h2>
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Search any creator directly by name or @handle, or pick a follower tier below. Verified creator rate cards are locked in.
             </p>
           </header>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {TIERS.map((t) => {
-              const n = [...selected.values()].filter((c) => c.tier === t.id).length;
-              return (
-                <button key={t.id} type="button" onClick={() => setPickerTier(t.id)}
-                  className={cn("rounded-xl border p-3 text-left transition hover:border-primary/60", n > 0 && "border-primary bg-primary/5")}>
-                  <div className="font-semibold">{t.label}</div>
-                  <div className="text-xs text-muted-foreground">{tierRange(t)} followers</div>
-                  <div className={cn("mt-2 text-xs font-medium", n > 0 ? "text-primary" : "text-muted-foreground")}>
-                    {n > 0 ? `${n} selected` : "Choose creators"}
-                  </div>
+
+          {/* Big Google-style Search Box in the Upper Center */}
+          <div className="w-full max-w-2xl mx-auto space-y-2">
+            <div className="relative flex items-center group">
+              <span className="absolute left-5 text-muted-foreground text-xl pointer-events-none group-focus-within:text-primary transition-colors">
+                🔍
+              </span>
+              <input
+                id="global-creator-search"
+                type="text"
+                value={globalSearchQ}
+                onChange={(e) => setGlobalSearchQ(e.target.value)}
+                placeholder="Search creator by name or @handle... (e.g. juge, thatbohogirl, aisha)"
+                className="w-full h-14 pl-14 pr-12 rounded-full border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary focus:ring-4 focus:ring-primary/10 text-sm sm:text-base transition-all outline-none"
+              />
+              {globalSearchQ && (
+                <button
+                  type="button"
+                  onClick={() => setGlobalSearchQ("")}
+                  className="absolute right-4 h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs text-muted-foreground hover:text-foreground hover:bg-muted-foreground/20 cursor-pointer transition"
+                  title="Clear search"
+                >
+                  ✕
                 </button>
-              );
-            })}
+              )}
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground px-3">
+              <span>Cities: {selectedCities.map((c) => c.name).join(", ") || "All selected"}</span>
+              <span>Content: {DELIVERABLES.find((x) => x.id === d.deliverable)?.label}</span>
+            </div>
           </div>
 
+          {/* Tier Selector Pills */}
           <div className="space-y-2">
-            <h3 className="font-semibold flex items-center gap-2"> Your selection ({selected.size})</h3>
-            {selected.size === 0 && <p className="text-sm text-muted-foreground rounded-xl border border-dashed p-6 text-center">No creators yet. Open a tier above and tick the creators you want.</p>}
-            <div className="divide-y rounded-xl border">
-              {[...selected.values()].map((c) => (
-                <div key={c.id} className="flex items-center gap-3 p-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold truncate">@{c.username} <span className="text-xs font-normal text-muted-foreground">· {TIERS.find((t) => t.id === c.tier)?.label} · {c.city.name} · {compact(c.followers)}</span></div>
-                  </div>
-                  <div className="text-sm font-semibold tabular-nums">{inr(c.price)}</div>
-                  <button type="button" aria-label={`Remove ${c.username}`} onClick={() => remove(c.id)} className="text-muted-foreground hover:text-destructive"></button>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Follower Tiers</span>
+              <div className="flex items-center gap-3">
+                {activeTierFilter !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTierFilter("all")}
+                    className="text-xs text-primary hover:underline font-medium"
+                  >
+                    View All Tiers
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPickerTier(activeTierFilter === "all" ? "nano" : activeTierFilter)}
+                  className="text-xs text-primary hover:underline font-medium"
+                >
+                  Open Advanced Filters
+                </button>
+              </div>
             </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
+              <button
+                type="button"
+                onClick={() => setActiveTierFilter("all")}
+                className={cn(
+                  "px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all border shrink-0",
+                  activeTierFilter === "all"
+                    ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                    : "bg-background hover:bg-muted/60 text-muted-foreground hover:text-foreground border-border"
+                )}
+              >
+                All Tiers ({searchResults.length})
+              </button>
+              {TIERS.map((t) => {
+                const countInSelected = [...selected.values()].filter((c) => c.tier === t.id).length;
+                const isCurrent = activeTierFilter === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setActiveTierFilter(isCurrent ? "all" : t.id)}
+                    className={cn(
+                      "px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border shrink-0 flex items-center gap-1.5",
+                      isCurrent
+                        ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
+                        : "bg-background hover:bg-muted/60 text-foreground border-border"
+                    )}
+                  >
+                    <span>{t.label}</span>
+                    <span className="text-[10px] opacity-75">({tierRange(t)})</span>
+                    {countInSelected > 0 && (
+                      <span className={cn(
+                        "h-4 min-w-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center",
+                        isCurrent ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
+                      )}>
+                        {countInSelected}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Creators Drawer / Live Results for Search or Tier */}
+          <div className="space-y-3 rounded-2xl border bg-muted/10 p-4 sm:p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <span>
+                  {globalSearchQ.trim()
+                    ? `Matching Creators for “${globalSearchQ.trim()}”`
+                    : activeTierFilter === "all"
+                    ? "Available Creators"
+                    : `${TIERS.find((t) => t.id === activeTierFilter)?.label} Tier Creators`}
+                </span>
+                <span className="text-xs text-muted-foreground font-normal">
+                  ({searchResults.length} {searchResults.length === 1 ? "creator" : "creators"})
+                </span>
+              </h3>
+              {searchLoading && <span className="text-xs text-muted-foreground animate-pulse">Searching creators...</span>}
+            </div>
+
+            {searchErr && <p className="text-sm text-destructive">{searchErr}</p>}
+
+            {!searchLoading && searchResults.length === 0 && (
+              <div className="p-8 text-center text-sm text-muted-foreground space-y-2">
+                <p>No creators match “{globalSearchQ}”.</p>
+                <Button variant="outline" size="sm" onClick={() => { setGlobalSearchQ(""); setActiveTierFilter("all"); }}>
+                  Show All Creators
+                </Button>
+              </div>
+            )}
+
+            {/* Grid of Creators */}
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 max-h-[460px] overflow-y-auto p-1">
+              {searchResults.map((c) => {
+                const isChosen = selected.has(c.id);
+                const tierObj = TIERS.find((t) => t.id === c.tier);
+                return (
+                  <div
+                    key={c.id}
+                    className={cn(
+                      "rounded-xl border p-3.5 flex flex-col justify-between transition-all bg-card hover:shadow-sm",
+                      isChosen ? "border-primary ring-2 ring-primary/20 bg-primary/[0.02]" : "border-border hover:border-primary/50"
+                    )}
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-start gap-3">
+                        {c.avatarUrl ? (
+                          <img src={c.avatarUrl} alt={c.displayName} className="h-12 w-12 rounded-full object-cover shrink-0 ring-1 ring-border" />
+                        ) : (
+                          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 text-white font-bold flex items-center justify-center shrink-0">
+                            {c.displayName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-sm truncate">@{c.username}</span>
+                            {c.isRealRegisteredCreator && (
+                              <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 px-1 py-0.2 rounded shrink-0">
+                                Registered
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">{c.displayName}</div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                              {tierObj?.label || c.tier}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground truncate">· {c.city?.name}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted/30 p-1.5 text-center text-xs">
+                        <div>
+                          <div className="font-semibold tabular-nums">{compact(c.followers)}</div>
+                          <div className="text-[10px] text-muted-foreground">Followers</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold tabular-nums">{c.engagementRate != null ? `${c.engagementRate}%` : "—"}</div>
+                          <div className="text-[10px] text-muted-foreground">Eng. Rate</div>
+                        </div>
+                        <div>
+                          <div className="font-semibold tabular-nums">{c.medianViews != null ? compact(c.medianViews) : "—"}</div>
+                          <div className="text-[10px] text-muted-foreground">Views</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2.5 border-t flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-sm tabular-nums text-foreground">{inr(c.price)}</div>
+                        <div className="text-[10px] text-muted-foreground">per {d.deliverable === "collab_post" ? "collab" : d.deliverable}</div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={isChosen ? "default" : "outline"}
+                        onClick={() => toggleCreator(c)}
+                        className={cn(
+                          "h-8 px-3 text-xs font-semibold rounded-lg transition-all",
+                          isChosen
+                            ? "bg-primary text-primary-foreground shadow-xs"
+                            : "border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+                        )}
+                      >
+                        {isChosen ? "✓ Added" : "+ Add"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Selected Creators Stack - Right below as requested */}
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-base flex items-center gap-2">
+                <span>Selected Creators</span>
+                <span className="inline-flex items-center justify-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-primary text-primary-foreground">
+                  {selected.size}
+                </span>
+              </h3>
+              {selected.size > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetSelection}
+                  className="text-xs text-muted-foreground hover:text-destructive h-8"
+                >
+                  Clear all
+                </Button>
+              )}
+            </div>
+
+            {selected.size === 0 ? (
+              <div className="text-center rounded-2xl border-2 border-dashed p-7 bg-muted/5 space-y-1">
+                <p className="text-sm font-medium">No creators selected yet</p>
+                <p className="text-xs text-muted-foreground">
+                  Use the search bar above or click any tier to pick creators for your campaign.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y rounded-xl border bg-card overflow-hidden">
+                {[...selected.values()].map((c) => (
+                  <div key={c.id} className="flex items-center gap-3 p-3.5 hover:bg-muted/10 transition">
+                    {c.avatarUrl ? (
+                      <img src={c.avatarUrl} alt={c.displayName} className="h-9 w-9 rounded-full object-cover shrink-0" />
+                    ) : (
+                      <div className="h-9 w-9 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0 text-xs">
+                        {c.displayName.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold truncate flex items-center gap-1.5">
+                        <span>@{c.username}</span>
+                        {c.isRealRegisteredCreator && (
+                          <span className="text-[9px] font-semibold bg-emerald-500/10 text-emerald-600 px-1 py-0.2 rounded shrink-0">
+                            Registered
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {c.displayName} · {TIERS.find((t) => t.id === c.tier)?.label || c.tier} · {c.city?.name} · {compact(c.followers)} followers
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-bold tabular-nums">{inr(c.price)}</div>
+                      <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${c.username}`}
+                      onClick={() => remove(c.id)}
+                      className="h-8 w-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition cursor-pointer"
+                      title="Remove creator"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Bill summary right underneath selected creators */}
             <BillCard bill={bill} loading={billLoading} error={billErr} count={selected.size} />
           </div>
         </section>

@@ -29,6 +29,7 @@ export interface CreatorCard {
   recentReels: { thumbUrl?: string | null; permalink?: string | null }[]; // up to 3
   price: number; // creator's rate for the chosen deliverable (rupees)
   pricePer1kViews: number | null; // informational only
+  isRealRegisteredCreator?: boolean;
 }
 
 export interface CreatorSearchParams {

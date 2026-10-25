@@ -100,9 +100,17 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
     });
   });
 
+  let filteredItems = items;
+  if (p.q) {
+    const qLower = p.q.toLowerCase().trim();
+    filteredItems = filteredItems.filter(
+      (c) => c.username.toLowerCase().includes(qLower) || c.displayName.toLowerCase().includes(qLower)
+    );
+  }
+
   return {
-    items,
-    total: items.length,
+    items: filteredItems,
+    total: filteredItems.length,
     nextCursor: null,
   };
 }
@@ -133,7 +141,7 @@ export function createHttpApi(base = ""): ManualCampaignApi {
       try {
         const qs = new URLSearchParams();
         if (p.cityIds?.length) qs.set("cities", p.cityIds.join(","));
-        if (p.tierId) qs.set("tier", p.tierId);
+        if (p.tierId && p.tierId !== "all") qs.set("tier", p.tierId);
         if (p.deliverable) qs.set("deliverable", p.deliverable);
         if (p.q) qs.set("q", p.q);
         if (p.minEngagement) qs.set("minEngagement", String(p.minEngagement));

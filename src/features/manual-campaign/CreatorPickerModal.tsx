@@ -147,17 +147,43 @@ export function CreatorPickerModal({ open, onOpenChange, api, tierId, cities, de
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl w-[96vw] h-[90vh] p-0 gap-0 flex flex-col overflow-hidden sm:rounded-2xl">
-        <div className="px-6 pt-5 pb-4 border-b flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-            
+        <div className="px-6 pt-5 pb-4 border-b space-y-4 bg-background">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <DialogTitle className="text-lg sm:text-xl font-bold truncate">
+                Select Creators – {tier.label} Tier ({tierRange(tier)})
+              </DialogTitle>
+              <DialogDescription className="text-xs sm:text-sm text-muted-foreground">
+                Creators from your selected cities with verified rate cards. Search any creator below.
+              </DialogDescription>
+            </div>
+            <button type="button" onClick={clearAll} className="text-xs text-primary hover:underline font-medium self-start sm:self-center">
+              Clear All Filters
+            </button>
           </div>
-          <div className="min-w-0">
-            <DialogTitle className="text-lg sm:text-xl font-bold truncate">
-              Select Creators – {tier.label} Tier ({tierRange(tier)})
-            </DialogTitle>
-            <DialogDescription className="text-sm">
-              Creators from your selected cities, with their own rate. Tick to add.
-            </DialogDescription>
+
+          {/* Big Google-style Search Box in the Upper Center */}
+          <div className="w-full max-w-2xl mx-auto">
+            <div className="relative flex items-center group">
+              <span className="absolute left-4.5 text-muted-foreground text-lg pointer-events-none">🔍</span>
+              <input
+                id="creator-modal-search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search creator by name or @handle... (e.g. judge, thatbohogirl, aisha)"
+                className="w-full h-12 pl-12 pr-12 rounded-full border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary focus:ring-4 focus:ring-primary/10 text-sm sm:text-base transition-all outline-none"
+              />
+              {q && (
+                <button
+                  type="button"
+                  onClick={() => setQ("")}
+                  className="absolute right-3.5 h-6 w-6 rounded-full bg-muted flex items-center justify-center text-xs text-muted-foreground hover:text-foreground hover:bg-muted-foreground/20 cursor-pointer"
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -165,18 +191,7 @@ export function CreatorPickerModal({ open, onOpenChange, api, tierId, cities, de
           {/* Filters */}
           <aside className="md:w-64 shrink-0 border-b md:border-b-0 md:border-r p-4 md:overflow-y-auto space-y-5 bg-muted/20">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-sm">Filter Creators</h3>
-              <button type="button" onClick={clearAll} className="text-xs text-primary hover:underline">Clear All</button>
-            </div>
-            <div className="relative">
-              
-              <input
-                id="creator-search"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search username or name…"
-                className="w-full h-9 rounded-lg border bg-background pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
+              <h3 className="font-semibold text-sm">Refine Filters</h3>
             </div>
 
             <div className="space-y-1.5">
