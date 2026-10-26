@@ -1,0 +1,5 @@
+{
+  "instagram_app_id": "4687935271490407",
+  "instagram_app_secret": "d2ae8e75813fc256823c7b16ba4430b8",
+  "instagram_redirect_uri": "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback"
+}
