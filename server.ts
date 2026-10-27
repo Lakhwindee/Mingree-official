@@ -609,8 +609,10 @@ function getInstagramRedirectUri(req?: express.Request): string {
       if (host.includes("mingree.com")) {
         return "https://mingree.com/api/instagram/callback";
       }
-      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
-      return `${protocol}://${host}/api/instagram/callback`;
+      if (host.includes("localhost") || host.includes("127.0.0.1")) {
+        const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+        return `${protocol}://${host}/api/instagram/callback`;
+      }
     }
   }
   return "https://mingree.com/api/instagram/callback";
