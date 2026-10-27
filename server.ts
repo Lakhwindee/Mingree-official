@@ -4040,18 +4040,12 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
   });
 
   // Official Instagram Login Authorization URL for App ID 3167123270152518
-  const instagramOAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_basic,instagram_manage_insights")}&state=${encodeURIComponent(state)}`;
-  // Meta Facebook Login alternative
-  const facebookOAuthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_basic,instagram_manage_insights,pages_show_list")}&state=${encodeURIComponent(state)}`;
+  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_basic,instagram_manage_insights")}&state=${encodeURIComponent(state)}`;
 
-  const provider = (req.query.provider as string) || "facebook";
-  const authUrl = provider === "instagram" ? instagramOAuthUrl : facebookOAuthUrl;
-
-  console.log(`[INSTAGRAM OAUTH] Real ${provider === "facebook" ? "Facebook" : "Instagram"} auth-url generated for client: ${appId}`);
+  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated for client: ${appId}`);
   res.json({
     authUrl,
-    instagramOAuthUrl,
-    facebookOAuthUrl,
+    instagramOAuthUrl: authUrl,
     redirectUri,
     devRedirectUri,
     sharedRedirectUri,
@@ -4299,11 +4293,10 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     console.log(`[INSTAGRAM OAUTH] Code Length: ${cleanCode.length}`);
     console.log(`[INSTAGRAM OAUTH] ========================================================`);
     
-    // 3. Exchange authorization code for access token server-side (supports both pure Instagram & Meta FB)
+    // 3. Exchange authorization code for access token server-side via official Instagram endpoint
     let shortLivedAccessToken = "";
     let igUserId = "";
 
-    // Attempt 1: Direct Instagram OAuth token endpoint (for code from www.instagram.com)
     try {
       const igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
         method: "POST",
@@ -4317,44 +4310,25 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
         }),
       });
 
-      console.log(`[INSTAGRAM OAUTH] Direct Instagram Token Status: ${igTokenRes.status} ${igTokenRes.statusText}`);
+      console.log(`[INSTAGRAM OAUTH] Official Instagram Token Status: ${igTokenRes.status} ${igTokenRes.statusText}`);
       if (igTokenRes.ok) {
         const tokenData = await igTokenRes.json();
         shortLivedAccessToken = tokenData.access_token || "";
         igUserId = String(tokenData.user_id || "");
-        console.log(`[INSTAGRAM OAUTH] ✓ Direct Instagram token exchange successful! ID: ${igUserId}`);
+        console.log(`[INSTAGRAM OAUTH] ✓ Official Instagram token exchange successful! ID: ${igUserId}`);
       } else {
         const igErr = await igTokenRes.text();
-        console.warn(`[INSTAGRAM OAUTH] Direct Instagram token attempt notice:`, igErr);
+        console.error(`[INSTAGRAM OAUTH] Official Instagram token exchange failed:`, igErr);
       }
-    } catch (igErr) {
-      console.warn("[INSTAGRAM OAUTH] Direct Instagram token network error:", igErr);
-    }
-
-    // Attempt 2: Facebook Graph Token endpoint (if user authenticated via Facebook dialog)
-    if (!shortLivedAccessToken) {
-      try {
-        const fbTokenUrl = `https://graph.facebook.com/v21.0/oauth/access_token?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(effectiveRedirectUri)}&client_secret=${encodeURIComponent(appSecret)}&code=${encodeURIComponent(cleanCode)}`;
-        const fbRes = await fetch(fbTokenUrl);
-        if (fbRes.ok) {
-          const fbData = await fbRes.json();
-          shortLivedAccessToken = fbData.access_token || "";
-          igUserId = String(fbData.user_id || fbData.id || "");
-          console.log(`[INSTAGRAM OAUTH] ✓ Facebook Graph token exchange successful! ID: ${igUserId}`);
-        } else {
-          const fbErrBody = await fbRes.text();
-          console.warn("[INSTAGRAM OAUTH] Facebook Graph token attempt notice:", fbErrBody);
-        }
-      } catch (fbErr) {
-        console.warn("[INSTAGRAM OAUTH] Facebook Graph token attempt error:", fbErr);
-      }
+    } catch (igErr: any) {
+      console.error("[INSTAGRAM OAUTH] Official Instagram token network error:", igErr?.message || igErr);
     }
 
     if (!shortLivedAccessToken) {
       recordFailedAttempt(clientIp, stateRecord.userId);
       return res.status(400).send(renderOAuthResult({
         success: false,
-        error: "Failed to exchange authorization code for access token with Instagram/Meta. Please check app configuration.",
+        error: "Failed to exchange authorization code for access token with official Instagram endpoint. Please verify app credentials and redirect URI in Meta Developers.",
         returnTo: clientReturnTo,
       }));
     }

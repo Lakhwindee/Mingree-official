@@ -242,7 +242,7 @@ export default function Profile() {
     try {
       let urlToOpen = "";
       try {
-        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}&provider=facebook`, { credentials: "include" });
+        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" });
         if (res.ok) {
           const data = await res.json();
           urlToOpen = data.instagramOAuthUrl || data.authUrl;
