@@ -886,6 +886,20 @@ export default function Profile() {
                     Copy App ID
                   </button>
                 </div>
+
+                <div className="mt-3 pt-3 border-t border-border/60 text-xs space-y-1.5 text-muted-foreground bg-primary/5 p-3 rounded-lg border border-primary/20">
+                  <p className="font-semibold text-foreground flex items-center gap-1.5">
+                    <span>💡</span> Switching to Live Mode (Public Creators):
+                  </p>
+                  <p className="leading-relaxed">
+                    You are completely right—for public creators and live production apps, you cannot add millions of users to Meta App Roles.
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 pl-1 pt-1 text-foreground">
+                    <li><strong>Switch App to Live Mode:</strong> In Meta Developers (<a href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer" className="text-primary underline">developers.facebook.com/apps</a>), toggle your app status from <em>Development</em> to <em>Live</em> in the top bar.</li>
+                    <li><strong>App Review:</strong> Meta requires submitting your app for App Review (<code className="text-xs">instagram_business_basic</code>) so any public creator can connect without tester roles.</li>
+                    <li><strong>Instant Alternative ("Verify via Handle"):</strong> Creators can also click <strong className="text-foreground">"Verify via Handle"</strong> above to instantly link their Instagram profile and sync audience metrics without waiting for Meta App Review!</li>
+                  </ul>
+                </div>
               </CardContent>
             </Card>
           )}
