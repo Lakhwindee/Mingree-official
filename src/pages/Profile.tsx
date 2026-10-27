@@ -236,18 +236,18 @@ export default function Profile() {
     try {
       let urlToOpen = "";
       try {
-        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}&provider=facebook`, { credentials: "include" });
+        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}&provider=instagram`, { credentials: "include" });
         if (res.ok) {
           const data = await res.json();
-          urlToOpen = data.authUrl || data.facebookOAuthUrl;
+          urlToOpen = data.instagramOAuthUrl || data.authUrl;
         }
       } catch {}
 
       if (!urlToOpen) {
         const clientId = "2188824758367055";
         const redirectUri = "https://mingree.com/api/instagram/callback";
-        const scope = "instagram_basic,instagram_manage_insights,pages_show_list";
-        urlToOpen = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
+        const scope = "instagram_business_basic,instagram_business_manage_insights";
+        urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
       }
 
       toast.info("Opening official Instagram authorization...");
