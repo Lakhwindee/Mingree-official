@@ -244,10 +244,10 @@ export default function Profile() {
       } catch {}
 
       if (!urlToOpen) {
-        const clientId = "2188824758367055";
+        const clientId = "3167123270152518";
         const redirectUri = window.location.origin + "/api/instagram/callback";
-        const scope = "instagram_business_basic,instagram_business_manage_insights";
-        urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
+        const scope = "instagram_basic,instagram_manage_insights,pages_show_list";
+        urlToOpen = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
       }
 
       toast.info("Opening official Instagram Login authorization...");
