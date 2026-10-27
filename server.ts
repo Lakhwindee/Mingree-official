@@ -3425,8 +3425,10 @@ app.get("/api/instagram/config", (req, res) => {
 app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
   const { appId, appSecret, redirectUri } = req.body || {};
   const settings = loadSettings();
-  if (typeof appId === "string") settings.instagram_app_id = appId.trim();
-  if (typeof appSecret === "string") settings.instagram_app_secret = appSecret.trim();
+  if (typeof appId === "string" && appId.trim()) settings.instagram_app_id = appId.trim();
+  if (typeof appSecret === "string" && appSecret.trim() && !appSecret.startsWith("•") && !appSecret.startsWith("••••")) {
+    settings.instagram_app_secret = appSecret.trim();
+  }
   if (typeof redirectUri === "string" && redirectUri.trim()) settings.instagram_redirect_uri = redirectUri.trim();
   saveSettings(settings);
 
@@ -4047,9 +4049,9 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
   });
 
   // Pure Instagram OAuth Authorization URL (opens instagram.com with official Instagram logo & login)
-  const instagramOAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=instagram_business_basic,instagram_business_manage_insights&state=${encodeURIComponent(state)}`;
+  const instagramOAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
   // Meta Facebook Login alternative
-  const facebookOAuthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=instagram_basic,instagram_manage_insights,pages_show_list&state=${encodeURIComponent(state)}`;
+  const facebookOAuthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_basic,instagram_manage_insights,pages_show_list")}&state=${encodeURIComponent(state)}`;
 
   const provider = (req.query.provider as string) || "instagram";
   const authUrl = provider === "facebook" ? facebookOAuthUrl : instagramOAuthUrl;

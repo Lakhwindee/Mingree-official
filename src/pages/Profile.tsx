@@ -227,6 +227,28 @@ export default function Profile() {
     },
   });
 
+  const safeOpenPopup = (url: string) => {
+    try {
+      const popup = window.open(url, "instagram_oauth_popup", "width=600,height=750");
+      if (!popup || popup.closed || typeof popup.closed === "undefined") {
+        const tab = window.open(url, "_blank");
+        if (!tab) {
+          toast.info("Opening Instagram authorization window...");
+          window.location.href = url;
+        }
+      }
+      return true;
+    } catch {
+      try {
+        window.open(url, "_blank");
+        return true;
+      } catch {
+        window.location.href = url;
+        return true;
+      }
+    }
+  };
+
   const handleConnectInstagramOAuth = async (provider?: "instagram" | "facebook" | unknown) => {
     if (!user) return;
     const chosenProvider = provider === "instagram" ? "instagram" : "facebook";
@@ -245,16 +267,8 @@ export default function Profile() {
         : (data.instagramOAuthUrl || data.authUrl);
 
       if (data.configured && urlToOpen) {
-        // Real Meta OAuth popup per AI Studio oauth-integration skill
-        const popup = window.open(
-          urlToOpen,
-          "instagram_oauth_popup",
-          "width=600,height=750,left=250,top=100,resizable=yes,scrollbars=yes"
-        );
-        if (!popup || popup.closed || typeof popup.closed === "undefined") {
-          toast.error("Popup was blocked by your browser. Please allow popups to connect Instagram.");
-          setIsOAuthModalOpen(true);
-        }
+        safeOpenPopup(urlToOpen);
+        setIsOAuthModalOpen(false);
       } else {
         setIsOAuthModalOpen(true);
       }
@@ -272,30 +286,26 @@ export default function Profile() {
     }
     setIsSavingMetaConfig(true);
     try {
-      await fetch("/api/instagram/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          appId: metaAppId.trim(),
-          appSecret: metaAppSecret.trim(),
-        }),
-      });
+      // Only send secret if user entered a real new secret (not masked bullets)
+      if (metaAppSecret.trim() && !metaAppSecret.startsWith("•")) {
+        await fetch("/api/instagram/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            appId: metaAppId.trim(),
+            appSecret: metaAppSecret.trim(),
+          }),
+        });
+      }
 
-      const authRes = await fetch(`/api/instagram/auth-url?userId=${user?.id || 1}`);
+      const authRes = await fetch(`/api/instagram/auth-url?userId=${user?.id || 1}&provider=instagram`);
       const authData = await authRes.json();
 
-      if (authData.authUrl) {
-        const popup = window.open(
-          authData.authUrl,
-          "instagram_oauth_popup",
-          "width=600,height=750,left=250,top=100,resizable=yes,scrollbars=yes"
-        );
-        if (!popup || popup.closed || typeof popup.closed === "undefined") {
-          toast.error("Popup was blocked by your browser. Please allow popups to connect Instagram.");
-        } else {
-          toast.success("Opening live Instagram / Meta authorization window...");
-          setIsOAuthModalOpen(false);
-        }
+      const authUrl = authData.instagramOAuthUrl || authData.authUrl;
+      if (authUrl) {
+        toast.success("Opening live Instagram authorization window...");
+        safeOpenPopup(authUrl);
+        setIsOAuthModalOpen(false);
       } else {
         throw new Error(authData.error || "Failed to generate authorization URL");
       }
