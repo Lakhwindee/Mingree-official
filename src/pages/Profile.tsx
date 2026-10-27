@@ -809,6 +809,86 @@ export default function Profile() {
             </Card>
           )}
 
+          {/* Meta Developer Setup & Redirect URIs Guide Card */}
+          {user.role !== "admin" && (
+            <Card className="border-border/80 bg-card/50">
+              <CardHeader className="p-4 sm:p-5 pb-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center font-bold text-xs">
+                      Meta
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-sm">Meta Developer & Redirect URI Configuration</h4>
+                      <p className="text-xs text-muted-foreground">Add these exact redirect URIs in Meta Developer Console to fix any Invalid redirect_uri errors.</p>
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4 sm:p-5 pt-2 space-y-3">
+                <div className="text-xs space-y-1.5 text-muted-foreground bg-muted/30 p-3 rounded-lg border border-border/60">
+                  <p className="font-medium text-foreground">Where to add these in Meta Developers:</p>
+                  <ol className="list-decimal list-inside space-y-1 pl-1">
+                    <li>Go to <a href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer" className="text-primary underline">developers.facebook.com/apps</a> and open your Mingree app.</li>
+                    <li>Navigate to <strong className="text-foreground">Facebook Login</strong> (or Instagram Basic Display) &gt; <strong className="text-foreground">Settings</strong>.</li>
+                    <li>Paste both redirect URIs below into <strong className="text-foreground">Valid OAuth Redirect URIs</strong> and click <strong className="text-foreground">Save Changes</strong>.</li>
+                  </ol>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between bg-muted/40 p-2 rounded border border-border text-xs">
+                    <div className="min-w-0 pr-2">
+                      <span className="font-semibold text-foreground block text-[11px] mb-0.5">Primary Custom Domain URI (mingree.com)</span>
+                      <code className="text-primary font-mono text-[11px] select-all truncate block">https://mingree.com/api/instagram/callback</code>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-7 text-[11px] shrink-0"
+                      onClick={() => {
+                        navigator.clipboard.writeText("https://mingree.com/api/instagram/callback");
+                        toast.success("Copied mingree.com callback URI!");
+                      }}
+                    >
+                      Copy URI
+                    </Button>
+                  </div>
+
+                  <div className="flex items-center justify-between bg-muted/40 p-2 rounded border border-border text-xs">
+                    <div className="min-w-0 pr-2">
+                      <span className="font-semibold text-foreground block text-[11px] mb-0.5">Preview Environment URI</span>
+                      <code className="text-primary font-mono text-[11px] select-all truncate block">https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback</code>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-7 text-[11px] shrink-0"
+                      onClick={() => {
+                        navigator.clipboard.writeText("https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback");
+                        toast.success("Copied preview environment callback URI!");
+                      }}
+                    >
+                      Copy URI
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 px-1">
+                  <span>Meta App ID: <strong className="text-foreground font-mono">4687935271490407</strong></span>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText("4687935271490407");
+                      toast.success("Copied App ID!");
+                    }}
+                    className="text-primary hover:underline cursor-pointer"
+                  >
+                    Copy App ID
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Account Settings */}
           <SettingsCard user={user} onNavigate={setLocation} />
 
