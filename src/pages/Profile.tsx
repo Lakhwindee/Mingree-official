@@ -244,7 +244,7 @@ export default function Profile() {
       } catch {}
 
       if (!urlToOpen) {
-        const clientId = "4687935271490407";
+        const clientId = "2188824758367055";
         const redirectUri = "https://mingree.com/api/instagram/callback";
         const scope = "instagram_business_basic,instagram_business_manage_insights";
         urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
@@ -873,10 +873,10 @@ export default function Profile() {
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 px-1">
-                  <span>Meta App ID: <strong className="text-foreground font-mono">4687935271490407</strong></span>
+                  <span>Meta App ID: <strong className="text-foreground font-mono">2188824758367055</strong></span>
                   <button 
                     onClick={() => {
-                      navigator.clipboard.writeText("4687935271490407");
+                      navigator.clipboard.writeText("2188824758367055");
                       toast.success("Copied App ID!");
                     }}
                     className="text-primary hover:underline cursor-pointer"
