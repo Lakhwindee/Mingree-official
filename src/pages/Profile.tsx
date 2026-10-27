@@ -245,7 +245,8 @@ export default function Profile() {
 
       if (!urlToOpen) {
         const clientId = "4687935271490407";
-        const redirectUri = `${window.location.origin}/api/instagram/callback`;
+        const isLocal = window.location.hostname.includes("localhost") || window.location.hostname.includes("127.0.0.1");
+        const redirectUri = isLocal ? `${window.location.origin}/api/instagram/callback` : "https://mingree.com/api/instagram/callback";
         const scope = "instagram_business_basic,instagram_business_manage_insights";
         urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
       }

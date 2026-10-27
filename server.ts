@@ -599,20 +599,16 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
   return { appId, appSecret };
 }
 
-// Compute official Meta OAuth Redirect / Callback URI dynamically per AI Studio OAuth skill
+// Compute official Meta OAuth Redirect / Callback URI strictly for mingree.com
 function getInstagramRedirectUri(req?: express.Request): string {
-  const envAppUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
-  if (envAppUrl) {
-    return `${envAppUrl}/api/instagram/callback`;
-  }
   if (req) {
-    const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
     const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
-    if (host && !host.includes("localhost")) {
+    if (host.includes("localhost") || host.includes("127.0.0.1")) {
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
       return `${protocol}://${host}/api/instagram/callback`;
     }
   }
-  return "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback";
+  return "https://mingree.com/api/instagram/callback";
 }
 
 const INTERNAL_SESSION_SECRET = crypto.randomBytes(32).toString("hex");
