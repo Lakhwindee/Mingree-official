@@ -231,8 +231,33 @@ export default function Profile() {
 
   const handleConnectInstagramOAuth = async () => {
     if (!user) return;
-    setIsConnectingInstagram(false);
-    setIsHandleModalOpen(true);
+    setIsConnectingInstagram(true);
+
+    try {
+      let urlToOpen = "";
+      try {
+        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}&provider=instagram`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          urlToOpen = data.instagramOAuthUrl || data.authUrl;
+        }
+      } catch {}
+
+      if (!urlToOpen) {
+        const clientId = "2188824758367055";
+        const redirectUri = window.location.origin + "/api/instagram/callback";
+        const scope = "instagram_business_basic,instagram_business_manage_insights";
+        urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
+      }
+
+      toast.info("Opening official Instagram Login authorization...");
+      safeOpenPopup(urlToOpen);
+    } catch (err: any) {
+      console.warn("[Instagram OAuth Notice]", err);
+      toast.error("Failed to launch Instagram login.");
+    } finally {
+      setIsConnectingInstagram(false);
+    }
   };
 
   const handleVerifyHandleDirectly = async (targetHandle?: string) => {
