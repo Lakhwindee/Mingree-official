@@ -233,6 +233,12 @@ export default function Profile() {
     if (!user) return;
     setIsConnectingInstagram(true);
 
+    // Synchronously open popup window immediately on user click to bypass Safari popup blocker
+    let popup: Window | null = null;
+    try {
+      popup = window.open("about:blank", "instagram_oauth_popup", "width=600,height=750");
+    } catch {}
+
     try {
       let urlToOpen = "";
       try {
@@ -251,10 +257,20 @@ export default function Profile() {
       }
 
       toast.info("Opening official Instagram Login authorization...");
-      safeOpenPopup(urlToOpen);
+      if (popup && !popup.closed) {
+        popup.location.href = urlToOpen;
+      } else {
+        const newTab = window.open(urlToOpen, "_blank");
+        if (!newTab) {
+          window.location.href = urlToOpen;
+        }
+      }
     } catch (err: any) {
       console.warn("[Instagram OAuth Notice]", err);
       toast.error("Failed to launch Instagram login.");
+      if (popup && !popup.closed) {
+        try { popup.close(); } catch {}
+      }
     } finally {
       setIsConnectingInstagram(false);
     }
