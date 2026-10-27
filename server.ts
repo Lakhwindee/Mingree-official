@@ -600,21 +600,14 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
 
 // Compute official Meta OAuth Redirect / Callback URI
 function getInstagramRedirectUri(req?: express.Request): string {
-  if (process.env.NODE_ENV === "production") {
-    return "https://mingree.com/api/instagram/callback";
-  }
   if (req) {
     const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
-    if (host) {
-      if (host.includes("mingree.com")) {
-        return "https://mingree.com/api/instagram/callback";
-      }
-      if (host.includes("localhost") || host.includes("127.0.0.1")) {
-        const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
-        return `${protocol}://${host}/api/instagram/callback`;
-      }
+    if (host && (host.includes("localhost") || host.includes("127.0.0.1"))) {
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+      return `${protocol}://${host}/api/instagram/callback`;
     }
   }
+  // Strictly enforce canonical production redirect URI
   return "https://mingree.com/api/instagram/callback";
 }
 
