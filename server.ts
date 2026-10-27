@@ -593,8 +593,8 @@ app.post("/api/auth/reset-password", (req, res) => {
 // Helper to get Instagram Meta OAuth credentials securely from process.env or settings
 function getInstagramCredentials(): { appId: string; appSecret: string } {
   const settings = typeof loadSettings === "function" ? loadSettings() : ({} as any);
-  const appId = (settings?.instagram_app_id || "2188824758367055" || process.env.INSTAGRAM_APP_ID || "").trim();
-  const appSecret = (settings?.instagram_app_secret || "ce7b9b5d22b5c61a8798496f4cdf834b" || process.env.INSTAGRAM_APP_SECRET || "").trim();
+  const appId = (settings?.instagram_app_id || process.env.INSTAGRAM_APP_ID || "3167123270152518").trim();
+  const appSecret = (settings?.instagram_app_secret || process.env.INSTAGRAM_APP_SECRET || "ce7b9b5d22b5c61a8798496f4cdf834b").trim();
   return { appId, appSecret };
 }
 
