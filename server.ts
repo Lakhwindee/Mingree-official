@@ -598,11 +598,17 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
   return { appId, appSecret };
 }
 
-// Compute official Meta OAuth Redirect / Callback URI dynamically matching current request host
+// Compute official Meta OAuth Redirect / Callback URI
 function getInstagramRedirectUri(req?: express.Request): string {
+  if (process.env.NODE_ENV === "production") {
+    return "https://mingree.com/api/instagram/callback";
+  }
   if (req) {
     const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
     if (host) {
+      if (host.includes("mingree.com")) {
+        return "https://mingree.com/api/instagram/callback";
+      }
       const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
       return `${protocol}://${host}/api/instagram/callback`;
     }

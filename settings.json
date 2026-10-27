@@ -1,5 +1,5 @@
 {
   "instagram_app_id": "3167123270152518",
   "instagram_app_secret": "ce7b9b5d22b5c61a8798496f4cdf834b",
-  "instagram_redirect_uri": "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback"
+  "instagram_redirect_uri": "https://mingree.com/api/instagram/callback"
 }
