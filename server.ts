@@ -4044,10 +4044,10 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
   // Meta Facebook Login alternative
   const facebookOAuthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_basic,instagram_manage_insights,pages_show_list")}&state=${encodeURIComponent(state)}`;
 
-  const provider = (req.query.provider as string) || "instagram";
-  const authUrl = provider === "facebook" ? facebookOAuthUrl : instagramOAuthUrl;
+  const provider = (req.query.provider as string) || "facebook";
+  const authUrl = provider === "instagram" ? instagramOAuthUrl : facebookOAuthUrl;
 
-  console.log(`[INSTAGRAM OAUTH] Real ${provider === "instagram" ? "Instagram" : "Facebook"} auth-url generated for client: ${appId}`);
+  console.log(`[INSTAGRAM OAUTH] Real ${provider === "facebook" ? "Facebook" : "Instagram"} auth-url generated for client: ${appId}`);
   res.json({
     authUrl,
     instagramOAuthUrl,
