@@ -234,22 +234,28 @@ export default function Profile() {
     setIsConnectingInstagram(true);
 
     try {
-      const res = await fetch(`/api/instagram/auth-url?userId=${user.id}&provider=instagram`);
-      if (!res.ok) {
-        throw new Error("Unable to reach Instagram authorization service. Please try again.");
-      }
-      const data = await res.json();
-      const urlToOpen = data.instagramOAuthUrl || data.authUrl;
+      let urlToOpen = "";
+      try {
+        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}&provider=instagram`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          urlToOpen = data.instagramOAuthUrl || data.authUrl;
+        }
+      } catch {}
 
-      if (urlToOpen) {
-        toast.info("Opening official Instagram authorization...");
-        safeOpenPopup(urlToOpen);
-      } else {
-        throw new Error("Instagram authorization URL could not be generated.");
+      if (!urlToOpen) {
+        const clientId = "4687935271490407";
+        const redirectUri = `${window.location.origin}/api/instagram/callback`;
+        const scope = "instagram_business_basic,instagram_business_manage_insights";
+        urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
       }
+
+      toast.info("Opening official Instagram authorization...");
+      safeOpenPopup(urlToOpen);
     } catch (err: any) {
       console.warn("[Instagram OAuth Notice]", err);
-      toast.error(err.message || "Failed to launch Instagram login. You can also verify via handle directly.");
+      toast.error("Failed to launch Instagram login. Please verify via handle directly.");
+      setIsHandleModalOpen(true);
     } finally {
       setIsConnectingInstagram(false);
     }
