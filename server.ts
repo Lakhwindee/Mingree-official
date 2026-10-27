@@ -854,12 +854,12 @@ const defaultAccounts = [
     role: "creator",
     handle: "@judgeproductionmusic",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    tier: "Micro",
-    instagramUsername: "judgesaab",
-    instagramProfileUrl: "https://instagram.com/judgesaab",
-    instagramFollowers: 8889,
-    followers: 8889,
-    isInstagramVerified: true,
+    tier: "Nano",
+    instagramUsername: null,
+    instagramProfileUrl: null,
+    instagramFollowers: 0,
+    followers: 0,
+    isInstagramVerified: false,
     isEmailVerified: true,
   },
   {
@@ -870,12 +870,12 @@ const defaultAccounts = [
     role: "creator",
     handle: "@priyareels",
     avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-    tier: "Micro",
-    instagramUsername: "priyareels",
-    instagramProfileUrl: "https://instagram.com/priyareels",
-    instagramFollowers: 28000,
-    followers: 28000,
-    isInstagramVerified: true,
+    tier: "Nano",
+    instagramUsername: null,
+    instagramProfileUrl: null,
+    instagramFollowers: 0,
+    followers: 0,
+    isInstagramVerified: false,
     isEmailVerified: true,
   },
   {
@@ -937,14 +937,9 @@ function loadRegisteredUsers() {
       registeredUsers.push({ ...acc });
     } else {
       if (acc.id === 1) {
-        existing.instagramUsername = acc.instagramUsername;
-        existing.instagramProfileUrl = acc.instagramProfileUrl;
-        existing.instagramFollowers = acc.instagramFollowers;
-        existing.followers = acc.followers;
         existing.tier = acc.tier;
         existing.name = acc.name;
         existing.handle = acc.handle;
-        existing.isInstagramVerified = true;
       }
     }
   }
