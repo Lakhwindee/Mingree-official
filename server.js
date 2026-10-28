@@ -4996,24 +4996,28 @@ async function requireAuth(req, res, next) {
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = Number(row.followers || row.instagram_followers || 0);
-        let medianViews = Math.round(followers * 0.45);
-        let reach = Math.round(followers * 2.2);
+        let medianViews = null;
+        let reach = null;
         let instagramUsername = row.instagram_username || null;
-        let isInstagramVerified = Boolean(row.is_instagram_verified || instagramUsername);
+        let isInstagramVerified = Boolean(row.is_instagram_verified && instagramUsername);
         if (row.role === "creator") {
           try {
             const cpRes = await pool.query("SELECT username, followers, median_views, encrypted_access_token, instagram_user_id, status FROM creator_profiles WHERE user_id = $1", [row.id]);
             if (cpRes.rows.length > 0) {
               const cp = cpRes.rows[0];
               if (cp.username) instagramUsername = cp.username;
-              if (cp.followers) followers = Number(cp.followers);
-              if (cp.median_views) medianViews = Number(cp.median_views);
-              if (cp.encrypted_access_token || cp.instagram_user_id || cp.status === "active") {
+              if (cp.followers !== null && cp.followers !== void 0) followers = Number(cp.followers);
+              if (cp.median_views !== null && cp.median_views !== void 0) medianViews = Number(cp.median_views);
+              if (cp.status === "active" && (cp.encrypted_access_token || cp.instagram_user_id)) {
                 isInstagramVerified = true;
               }
             }
           } catch {
           }
+        }
+        if (followers > 0) {
+          reach = Math.round(followers * 2.2);
+          if (medianViews === null) medianViews = Math.round(followers * 0.45);
         }
         user = {
           id: Number(row.id),
@@ -5032,8 +5036,8 @@ async function requireAuth(req, res, next) {
           instagramUsername,
           instagramProfileUrl: instagramUsername ? `https://instagram.com/${instagramUsername}` : null,
           instagramFollowers: followers,
-          isInstagramVerified,
-          instagramVerificationStatus: isInstagramVerified ? "verified" : "unlinked",
+          isInstagramVerified: Boolean(isInstagramVerified && instagramUsername),
+          instagramVerificationStatus: isInstagramVerified && instagramUsername ? "verified" : "unlinked",
           isEmailVerified: Boolean(row.email_verified),
           createdAt: row.created_at
         };
@@ -5084,15 +5088,15 @@ var defaultAccounts = [
     handle: "@judgeproductionmusic",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
     tier: "Nano",
-    instagramUsername: "ijudgesaab",
-    instagramProfileUrl: "https://instagram.com/ijudgesaab",
-    instagramFollowers: 8889,
-    followers: 8889,
-    reach: 19556,
-    medianViews: 4e3,
-    engagementRate: 4.8,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
+    instagramUsername: null,
+    instagramProfileUrl: null,
+    instagramFollowers: 0,
+    followers: 0,
+    reach: null,
+    medianViews: null,
+    engagementRate: null,
+    isInstagramVerified: false,
+    instagramVerificationStatus: "unlinked",
     isEmailVerified: true
   },
   {
@@ -5401,14 +5405,80 @@ app.get("/api/sponsors/:id", requireAuth, (req, res) => {
   const targetUser = registeredUsers.find((u) => u.id === targetId) || req.user;
   return res.json(sanitizeUser(targetUser));
 });
-app.get("/api/users/:id", requireAuth, (req, res) => {
+app.get("/api/users/:id", requireAuth, async (req, res) => {
   const targetId = Number(req.params.id);
-  if (req.user.id !== targetId && req.user.role !== "admin") {
-    return res.status(403).json({ error: "Access denied" });
+  if (isNaN(targetId) || req.user.id !== targetId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Access denied: cannot access another user's data" });
   }
-  const memUser = registeredUsers.find((u) => u.id === targetId);
-  const targetUser = req.user.id === targetId ? { ...memUser, ...req.user } : memUser || req.user;
-  return res.json(sanitizeUser(targetUser));
+  let authoritativeUser = null;
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query("SELECT * FROM users WHERE id = $1", [targetId]);
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        let followers = Number(row.followers || row.instagram_followers || 0);
+        let medianViews = null;
+        let reach = null;
+        let engagementRate = null;
+        let instagramUsername = row.instagram_username || null;
+        let isInstagramVerified = Boolean(row.is_instagram_verified && instagramUsername);
+        try {
+          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, encrypted_access_token, instagram_user_id, status FROM creator_profiles WHERE user_id = $1", [targetId]);
+          if (cpRes.rows.length > 0) {
+            const cp = cpRes.rows[0];
+            if (cp.username) instagramUsername = cp.username;
+            if (cp.followers !== null && cp.followers !== void 0) followers = Number(cp.followers);
+            if (cp.median_views !== null && cp.median_views !== void 0) medianViews = Number(cp.median_views);
+            if (cp.engagement_rate !== null && cp.engagement_rate !== void 0) engagementRate = Number(cp.engagement_rate);
+            if (cp.status === "active" && (cp.encrypted_access_token || cp.instagram_user_id)) {
+              isInstagramVerified = true;
+            }
+          }
+        } catch {
+        }
+        if (followers > 0) {
+          reach = Math.round(followers * 2.2);
+          if (medianViews === null) medianViews = Math.round(followers * 0.45);
+        }
+        authoritativeUser = {
+          id: Number(row.id),
+          email: row.email,
+          name: row.name,
+          role: row.role,
+          handle: row.handle || `@${row.email.split("@")[0]}`,
+          avatar: row.avatar,
+          tier: row.tier || "Nano",
+          city: row.city || "",
+          companyName: row.company_name,
+          status: row.status,
+          followers,
+          medianViews,
+          reach,
+          engagementRate,
+          instagramUsername,
+          instagramProfileUrl: instagramUsername ? `https://instagram.com/${instagramUsername}` : null,
+          instagramFollowers: followers,
+          isInstagramVerified: Boolean(isInstagramVerified && instagramUsername),
+          instagramVerificationStatus: isInstagramVerified && instagramUsername ? "verified" : "unlinked",
+          isEmailVerified: Boolean(row.email_verified),
+          createdAt: row.created_at
+        };
+      }
+    } catch (err) {
+      console.warn("[DB USER FETCH WARNING]", err?.message || err);
+    }
+  }
+  if (!authoritativeUser) {
+    if (req.user.id === targetId) {
+      authoritativeUser = req.user;
+    } else {
+      authoritativeUser = registeredUsers.find((u) => u.id === targetId);
+    }
+  }
+  if (!authoritativeUser) {
+    return res.status(404).json({ error: "User not found" });
+  }
+  return res.json(sanitizeUser(authoritativeUser));
 });
 app.put("/api/users/:id/profile", requireAuth, (req, res) => {
   const targetId = Number(req.params.id);
@@ -7767,113 +7837,10 @@ app.get("/api/instagram/login", (req, res) => {
     </html>
   `);
 });
-app.post("/api/instagram/complete-oauth", async (req, res) => {
-  try {
-    let userId = Number(req.body.userId);
-    const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded?.id && !userId) userId = decoded.id;
-      } catch {
-      }
-    }
-    if (!userId) userId = 1;
-    const cleanUsername = String(req.body.username || "").trim().replace(/^@+/, "") || "creator_pro";
-    const targetUser = registeredUsers.find((u) => u.id === userId) || registeredUsers[0];
-    const followers = Math.max(500, Number(req.body.followers) || targetUser?.instagramFollowers || targetUser?.followers || 28500);
-    const reach = Math.round(followers * 2.2);
-    const medianViews = Math.round(followers * 0.45);
-    const engagementRate = 4.8;
-    const clientIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
-    const userAgent = String(req.headers["user-agent"] || "unknown");
-    if (targetUser) {
-      targetUser.instagramUsername = cleanUsername;
-      targetUser.instagramProfileUrl = `https://instagram.com/${cleanUsername}`;
-      targetUser.instagramFollowers = followers;
-      targetUser.followers = followers;
-      targetUser.reach = reach;
-      targetUser.medianViews = medianViews;
-      targetUser.engagementRate = engagementRate;
-      targetUser.isInstagramVerified = true;
-      targetUser.instagramVerificationStatus = "verified";
-      targetUser.insightsVerified = true;
-      targetUser.instagramUserId = `ig_${userId}_${Date.now()}`;
-      targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1e3).toISOString();
-      saveRegisteredUsers();
-    }
-    try {
-      await pool.query(
-        `UPDATE users SET
-          instagram_username = $1,
-          instagram_profile_url = $2,
-          instagram_followers = $3,
-          followers = $4,
-          is_instagram_verified = true,
-          instagram_verification_status = 'verified'
-         WHERE id = $5`,
-        [cleanUsername, `https://instagram.com/${cleanUsername}`, followers, followers, userId]
-      );
-      const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [userId]);
-      if (cpCheck.rows.length > 0) {
-        await pool.query(
-          `UPDATE creator_profiles 
-           SET instagram_user_id = $2, username = $3, followers = $4, median_views = $5, engagement_rate = $6, status = 'active'
-           WHERE user_id = $1`,
-          [userId, `ig_${userId}`, cleanUsername, followers, medianViews, engagementRate]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, median_views, engagement_rate)
-           VALUES ($1, $2, $3, $4, 5, 'active', $5, $6)`,
-          [userId, `ig_${userId}`, cleanUsername, followers, medianViews, engagementRate]
-        );
-      }
-    } catch (dbErr) {
-      console.warn("[OAUTH DB UPDATE NOTICE]", dbErr);
-    }
-    try {
-      bindIdentityToUser({
-        instagramUserId: `ig_${userId}`,
-        instagramUsername: cleanUsername,
-        mingreeUserId: userId,
-        followers,
-        mediaCount: 18,
-        riskScore: 5,
-        riskFactors: []
-      });
-    } catch {
-    }
-    recordSecurityEvent({
-      event: "LINK_APPROVED",
-      mingreeUserId: userId,
-      instagramUsername: cleanUsername,
-      instagramUserId: `ig_${userId}`,
-      riskScore: 5,
-      riskLevel: "LOW",
-      riskFactors: [],
-      followers,
-      mediaCount: 18,
-      ipAddress: clientIp,
-      userAgent,
-      decision: "ALLOW",
-      details: `Instagram account @${cleanUsername} (${followers.toLocaleString()} followers, ${reach.toLocaleString()} reach, ${medianViews.toLocaleString()} views) verified via Meta OAuth.`
-    });
-    console.log(`[INSTAGRAM OAUTH] \u2713 Account @${cleanUsername} successfully verified for User #${userId}. Reach: ${reach}, Views: ${medianViews}`);
-    return res.json({
-      success: true,
-      username: cleanUsername,
-      followers,
-      reach,
-      medianViews,
-      engagementRate,
-      insightsVerified: true,
-      user: targetUser ? sanitizeUser(targetUser) : null
-    });
-  } catch (err) {
-    console.error("[COMPLETE OAUTH ERROR]", err);
-    return res.status(500).json({ error: err.message || "Failed to complete Instagram OAuth" });
-  }
+app.post("/api/instagram/complete-oauth", (_req, res) => {
+  return res.status(400).json({
+    error: "Direct handle completion is disabled. Official Meta Instagram OAuth authorization is required to verify identity and obtain valid access tokens."
+  });
 });
 app.get("/api/instagram/auth-url", (req, res) => {
   let userId = Number(req.query.userId);
@@ -8267,8 +8234,8 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     }
     if (!followersCount || followersCount === 0) {
       const existingUser = registeredUsers.find((u) => u.id === stateRecord.userId);
-      followersCount = existingUser?.followers || existingUser?.instagramFollowers || 8889;
-      console.log(`[INSTAGRAM OAUTH] Meta API did not provide followers_count field; adopting profile followers: ${followersCount}`);
+      followersCount = existingUser?.instagramFollowers || existingUser?.followers || 0;
+      console.log(`[INSTAGRAM OAUTH] Meta API did not provide followers_count field; adopting known profile followers: ${followersCount}`);
     }
     const minRequiredFollowers = 500;
     if (followersCount > 0 && followersCount < minRequiredFollowers) {
@@ -8382,9 +8349,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       decision: riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
       details: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers, ${mediaCount} posts) linked successfully to User #${stateRecord.userId}. Risk level: ${riskEval.riskLevel} (${riskEval.riskScore}/100).`
     });
-    const reach = Math.round(followersCount * 2.2);
-    const medianViews = Math.round(followersCount * 0.45);
-    const engagementRate = 4.8;
+    const reach = followersCount > 0 ? Math.round(followersCount * 2.2) : null;
+    const medianViews = followersCount > 0 ? Math.round(followersCount * 0.45) : null;
+    const engagementRate = followersCount > 0 ? 4.8 : null;
     const targetUser = registeredUsers.find((u) => u.id === stateRecord.userId);
     if (targetUser) {
       targetUser.instagramUsername = igUsername;
