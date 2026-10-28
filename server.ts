@@ -745,7 +745,17 @@ const COOKIE_NAME = "auth_token";
 
 function setAuthTokenCookie(res: express.Response, user: any) {
   const token = jwt.sign(
-    { id: user.id, email: user.email, role: user.role },
+    {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      instagramUsername: user.instagramUsername || null,
+      isInstagramVerified: Boolean(user.isInstagramVerified),
+      instagramFollowers: user.instagramFollowers || user.followers || 0,
+      instagramProfileUrl: user.instagramProfileUrl || (user.instagramUsername ? `https://instagram.com/${user.instagramUsername}` : null),
+      reach: user.reach || (user.instagramFollowers ? Math.round(user.instagramFollowers * 2.2) : null),
+      medianViews: user.medianViews || (user.instagramFollowers ? Math.round(user.instagramFollowers * 0.45) : null),
+    },
     JWT_SECRET,
     { expiresIn: "7d" }
   );
@@ -783,7 +793,17 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: number; email: string; role: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as {
+      id: number;
+      email: string;
+      role: string;
+      instagramUsername?: string | null;
+      isInstagramVerified?: boolean;
+      instagramFollowers?: number;
+      instagramProfileUrl?: string | null;
+      reach?: number | null;
+      medianViews?: number | null;
+    };
     let user: any = null;
     try {
       const dbRes = await pool.query("SELECT * FROM users WHERE id = $1", [decoded.id]);
@@ -841,6 +861,30 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
 
     if (!user) {
       user = registeredUsers.find((u) => u.id === decoded.id || u.email.toLowerCase() === decoded.email?.toLowerCase());
+    }
+
+    // Hydrate user with verified JWT claims if session cookie contains signed connection state
+    if (decoded.instagramUsername && decoded.isInstagramVerified) {
+      if (!user) {
+        user = {
+          id: decoded.id,
+          email: decoded.email,
+          role: decoded.role || "creator",
+          handle: `@${(decoded.email || "user").split("@")[0]}`,
+        };
+      }
+      if (!user.instagramUsername || !user.isInstagramVerified) {
+        user.instagramUsername = decoded.instagramUsername;
+        user.isInstagramVerified = true;
+        user.instagramVerificationStatus = "verified";
+        user.instagramFollowers = decoded.instagramFollowers || user.followers || 0;
+        user.followers = user.instagramFollowers;
+        user.instagramProfileUrl = decoded.instagramProfileUrl || `https://instagram.com/${decoded.instagramUsername}`;
+        if (user.followers > 0) {
+          user.reach = decoded.reach ?? Math.round(user.followers * 2.2);
+          user.medianViews = decoded.medianViews ?? Math.round(user.followers * 0.45);
+        }
+      }
     }
 
     if (!user) {
@@ -1337,6 +1381,21 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
       authoritativeUser = req.user;
     } else {
       authoritativeUser = registeredUsers.find((u) => u.id === targetId);
+    }
+  }
+
+  if (authoritativeUser && req.user!.id === targetId && req.user!.isInstagramVerified && req.user!.instagramUsername) {
+    if (!authoritativeUser.isInstagramVerified || !authoritativeUser.instagramUsername) {
+      authoritativeUser.instagramUsername = req.user!.instagramUsername;
+      authoritativeUser.isInstagramVerified = true;
+      authoritativeUser.instagramVerificationStatus = "verified";
+      authoritativeUser.instagramFollowers = req.user!.instagramFollowers || authoritativeUser.followers || 0;
+      authoritativeUser.followers = authoritativeUser.instagramFollowers;
+      authoritativeUser.instagramProfileUrl = req.user!.instagramProfileUrl || `https://instagram.com/${req.user!.instagramUsername}`;
+      if (authoritativeUser.followers > 0) {
+        authoritativeUser.reach = req.user!.reach ?? Math.round(authoritativeUser.followers * 2.2);
+        authoritativeUser.medianViews = req.user!.medianViews ?? Math.round(authoritativeUser.followers * 0.45);
+      }
     }
   }
 
