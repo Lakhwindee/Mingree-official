@@ -137,34 +137,70 @@ export default function Profile() {
     ]);
   };
 
+  const refreshAccountFromServer = async (showSuccessFeedback: boolean = false) => {
+    if (!user?.id) return;
+    setIsConnectingInstagram(true);
+    try {
+      const res = await fetch(`/api/users/${user.id}`, { credentials: "include" });
+      if (res.ok) {
+        const freshUser = await res.json();
+        if (freshUser && freshUser.id === user.id) {
+          updateUser(freshUser);
+          queryClient.setQueryData(["user", user.id], freshUser);
+          queryClient.setQueryData(["currentUser"], freshUser);
+          queryClient.invalidateQueries({ queryKey: ["user", user.id] });
+          queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+          queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
+          queryClient.invalidateQueries({ queryKey: ["campaignCreators"] });
+
+          if (freshUser.isInstagramVerified && freshUser.instagramUsername) {
+            try {
+              confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+            } catch {}
+            if (showSuccessFeedback) {
+              toast.success(`Instagram account @${freshUser.instagramUsername} verified and linked!`);
+            }
+          } else if (showSuccessFeedback) {
+            toast.info("Instagram authorization completed. Account connection is pending server verification.");
+          }
+        }
+      } else {
+        if (showSuccessFeedback) {
+          toast.error("Failed to verify connection with server.");
+        }
+      }
+    } catch {
+      if (showSuccessFeedback) {
+        toast.error("Network error checking connection status with server.");
+      }
+    } finally {
+      setIsConnectingInstagram(false);
+      try {
+        localStorage.removeItem("mingree_instagram_oauth_result");
+      } catch {}
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
-    const state = params.get("state");
     const error = params.get("error");
-    const username = params.get("username");
     const instagramConnected = params.get("instagram_connected");
 
-    if (instagramConnected) {
-      queryClient.invalidateQueries({ queryKey: ["user", user?.id] });
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
-      queryClient.invalidateQueries({ queryKey: ["campaignCreators"] });
-      toast.success(username ? `Instagram account @${username} verified & connected via Meta OAuth!` : "Instagram connected successfully via Meta OAuth!");
+    if (instagramConnected === "true" || instagramConnected === "1") {
       window.history.replaceState({}, document.title, window.location.pathname);
+      refreshAccountFromServer(true);
     } else if (code && user) {
+      window.history.replaceState({}, document.title, window.location.pathname);
       fetch(`/api/users/${user.id}/instagram`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ code }),
       }).then(() => {
-        queryClient.invalidateQueries({ queryKey: ["user", user.id] });
-        toast.success(username ? `Instagram @${username} connected successfully!` : "Instagram connected successfully!");
-        window.history.replaceState({}, document.title, window.location.pathname);
+        refreshAccountFromServer(true);
       }).catch((err) => {
         toast.error(err.message || "Failed to complete Instagram connection.");
-        window.history.replaceState({}, document.title, window.location.pathname);
       });
     } else if (error) {
       toast.error(`Instagram connection error: ${error.replace(/_/g, " ")}`);
@@ -173,25 +209,73 @@ export default function Profile() {
   }, [user, queryClient]);
 
   useEffect(() => {
+    // 1. BroadcastChannel listener (signal only, validates on server)
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        bc = new BroadcastChannel("mingree_oauth_channel");
+        bc.onmessage = (event) => {
+          if (event.data?.type === "INSTAGRAM_OAUTH_SUCCESS") {
+            refreshAccountFromServer(true);
+          } else if (event.data?.type === "INSTAGRAM_OAUTH_ERROR") {
+            setIsConnectingInstagram(false);
+            toast.error(event.data?.error || "Instagram connection failed.");
+          }
+        };
+      }
+    } catch {}
+
+    // 2. Storage event listener (signal only, validates on server)
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "mingree_instagram_oauth_result" && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed.type === "INSTAGRAM_OAUTH_SUCCESS") {
+            refreshAccountFromServer(true);
+          } else if (parsed.type === "INSTAGRAM_OAUTH_ERROR") {
+            setIsConnectingInstagram(false);
+            toast.error(parsed.error || "Instagram connection failed.");
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+
+    // 3. postMessage listener (origin validated, signal only)
     const handleAuthMessage = (event: MessageEvent) => {
       const trustedOrigins = ["https://mingree.com", window.location.origin];
-      if (!trustedOrigins.includes(event.origin)) return;
+      if (event.origin && !trustedOrigins.includes(event.origin) && !event.origin.includes("mingree.com")) return;
       if (event.data?.type === "INSTAGRAM_AUTH_SUCCESS" || event.data?.type === "INSTAGRAM_OAUTH_SUCCESS") {
-        queryClient.invalidateQueries({ queryKey: ["user", user?.id] });
-        queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-        queryClient.invalidateQueries({ queryKey: ["campaignCreators"] });
-        queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
-        setIsConnectingInstagram(false);
-        const username = event.data?.username;
-        toast.success(username ? `Instagram account @${username} verified & connected via Meta OAuth!` : "Instagram connected successfully!");
+        refreshAccountFromServer(true);
       } else if (event.data?.type === "INSTAGRAM_AUTH_ERROR" || event.data?.type === "INSTAGRAM_OAUTH_ERROR") {
         setIsConnectingInstagram(false);
         toast.error(event.data.error || "Instagram connection failed.");
       }
     };
-
     window.addEventListener("message", handleAuthMessage);
-    return () => window.removeEventListener("message", handleAuthMessage);
+
+    // 4. Focus check: when window re-gains focus, check status with server
+    const handleWindowFocus = () => {
+      const savedResult = localStorage.getItem("mingree_instagram_oauth_result");
+      if (savedResult) {
+        try {
+          const parsed = JSON.parse(savedResult);
+          if (parsed.type === "INSTAGRAM_OAUTH_SUCCESS") {
+            refreshAccountFromServer(true);
+            return;
+          }
+        } catch {}
+      }
+      refreshAccountFromServer(false);
+    };
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      if (bc) bc.close();
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("message", handleAuthMessage);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
   }, [user?.id, queryClient]);
 
   const updateProfileMutation = useMutation({
@@ -278,72 +362,10 @@ export default function Profile() {
     }
   };
 
-  const handleVerifyHandleDirectly = async (targetHandle?: string) => {
-    if (!user) return;
-    const clean = (targetHandle || handleToVerify || user.instagramUsername || user.handle || "creator").trim().replace(/^@+/, "");
-    if (!clean) {
-      toast.error("Please enter a valid Instagram handle");
-      return;
-    }
-
-    setIsVerifyingHandle(true);
-    try {
-      const res = await fetch("/api/instagram/complete-oauth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({
-          userId: user.id,
-          username: clean,
-          followers: user.instagramFollowers || user.followers || 28000,
-        }),
-      });
-
-      let serverData: any = null;
-      if (res.ok) {
-        try {
-          serverData = await res.json();
-        } catch {}
-      }
-
-      const followers = Number(serverData?.followers) || Number(user.instagramFollowers) || Number(user.followers) || 28000;
-      const reach = Number(serverData?.reach) || Math.round(followers * 2.2);
-      const medianViews = Number(serverData?.medianViews) || Math.round(followers * 0.45);
-      const username = serverData?.username || clean;
-
-      const updatedFields = {
-        instagramUsername: username,
-        instagramProfileUrl: `https://instagram.com/${username}`,
-        instagramFollowers: followers,
-        followers: followers,
-        reach: reach,
-        medianViews: medianViews,
-        isInstagramVerified: true,
-        instagramVerificationStatus: "verified",
-      };
-
-      try {
-        await api.updateUserInstagram(user.id, username, `https://instagram.com/${username}`, followers);
-      } catch {}
-
-      updateUser(updatedFields);
-      queryClient.setQueryData(["user", user.id], (prev: any) => ({ ...prev, ...updatedFields }));
-      queryClient.setQueryData(["currentUser"], (prev: any) => ({ ...prev, ...updatedFields }));
-      queryClient.invalidateQueries({ queryKey: ["user", user.id] });
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-      queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
-      queryClient.invalidateQueries({ queryKey: ["campaignCreators"] });
-
-      try {
-        confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
-      } catch {}
-
-      toast.success(`Instagram @${username} verified & connected!`);
-      setIsHandleModalOpen(false);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to verify Instagram handle.");
-    } finally {
-      setIsVerifyingHandle(false);
-    }
+  const handleVerifyHandleDirectly = async (_targetHandle?: string) => {
+    setIsHandleModalOpen(false);
+    toast.info("Launching official Meta Instagram Login OAuth flow...");
+    handleConnectInstagramOAuth();
   };
 
   const avatarMutation = useMutation({
@@ -674,15 +696,15 @@ export default function Profile() {
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5">
                         <div className="flex items-center gap-3 min-w-0">
                           <Avatar className="h-12 w-12 border border-border shrink-0">
-                            <AvatarImage src={user.avatar || undefined} className="object-cover" />
+                            <AvatarImage src={activeUser.avatar || undefined} className="object-cover" />
                             <AvatarFallback className="font-bold bg-muted text-foreground">
-                              {user.instagramUsername ? user.instagramUsername.charAt(0).toUpperCase() : "IG"}
+                              {activeUser.instagramUsername ? activeUser.instagramUsername.charAt(0).toUpperCase() : "IG"}
                             </AvatarFallback>
                           </Avatar>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <h3 className="font-bold text-base text-foreground truncate">
-                                @{user.instagramUsername}
+                                @{activeUser.instagramUsername}
                               </h3>
                               <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-500 text-white text-[10px]" title="Meta Verified">
                                 ✓
@@ -709,7 +731,7 @@ export default function Profile() {
 
                           <Button variant="outline" size="sm" asChild className="h-8 text-xs rounded border-border">
                             <a 
-                              href={user.instagramProfileUrl || `https://instagram.com/${user.instagramUsername}`} 
+                              href={activeUser.instagramProfileUrl || `https://instagram.com/${activeUser.instagramUsername}`} 
                               target="_blank" 
                               rel="noopener noreferrer"
                               data-testid="link-instagram-profile"
@@ -735,28 +757,36 @@ export default function Profile() {
                         <div className="p-3 rounded-lg bg-background border border-border/60">
                           <span className="text-[11px] text-muted-foreground block font-medium">Followers</span>
                           <span className="text-lg font-bold text-foreground mt-0.5 block">
-                            {(user.instagramFollowers || user.followers || 28000).toLocaleString()}
+                            {typeof activeUser.instagramFollowers === "number" && activeUser.instagramFollowers > 0
+                              ? activeUser.instagramFollowers.toLocaleString()
+                              : (typeof activeUser.followers === "number" && activeUser.followers > 0
+                                  ? activeUser.followers.toLocaleString()
+                                  : "Unavailable")}
                           </span>
                           <span className="text-[10px] text-muted-foreground mt-0.5 block">Audience count</span>
                         </div>
                         <div className="p-3 rounded-lg bg-background border border-border/60">
                           <span className="text-[11px] text-muted-foreground block font-medium">30-Day Reach</span>
                           <span className="text-lg font-bold text-foreground mt-0.5 block">
-                            {(user.reach || Math.round((user.instagramFollowers || user.followers || 28000) * 2.2)).toLocaleString()}
+                            {typeof activeUser.reach === "number" && activeUser.reach > 0
+                              ? activeUser.reach.toLocaleString()
+                              : "Unavailable"}
                           </span>
                           <span className="text-[10px] text-pink-500 font-medium mt-0.5 block">Meta Verified</span>
                         </div>
                         <div className="p-3 rounded-lg bg-background border border-border/60">
                           <span className="text-[11px] text-muted-foreground block font-medium">Median Reel Views</span>
                           <span className="text-lg font-bold text-foreground mt-0.5 block">
-                            {(user.medianViews || Math.round((user.instagramFollowers || user.followers || 28000) * 0.45)).toLocaleString()}
+                            {typeof activeUser.medianViews === "number" && activeUser.medianViews > 0
+                              ? activeUser.medianViews.toLocaleString()
+                              : "Unavailable"}
                           </span>
                           <span className="text-[10px] text-sky-500 font-medium mt-0.5 block">Past 10 reels</span>
                         </div>
                         <div className="p-3 rounded-lg bg-background border border-border/60">
                           <span className="text-[11px] text-muted-foreground block font-medium">Audience Quality</span>
                           <span className="text-lg font-bold text-emerald-500 mt-0.5 block">
-                            95% India
+                            {(activeUser as any).audienceGeoQuality || "Unavailable"}
                           </span>
                           <span className="text-[10px] text-muted-foreground mt-0.5 block">Verified geo-distribution</span>
                         </div>

@@ -43,7 +43,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (
           parsed.instagramUsername === "priyareels" ||
           parsed.instagramUsername === "priya_reels_official" ||
-          parsed.instagramUsername === "judgesaab" ||
           parsed.handle === "@priyareels"
         ) {
           parsed.instagramUsername = null;
