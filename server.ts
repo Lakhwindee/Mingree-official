@@ -1396,6 +1396,33 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, 
   res.json(sanitizeUser(user));
 });
 
+// POST /api/instagram/reset-all - Clears all fake/test connected Instagram accounts and resets state to fresh
+app.post("/api/instagram/reset-all", async (req, res) => {
+  for (const u of registeredUsers) {
+    u.instagramUsername = null;
+    u.instagramProfileUrl = null;
+    u.instagramFollowers = 0;
+    u.followers = 0;
+    u.isInstagramVerified = false;
+    u.instagramVerificationCode = null;
+    u.instagramVerificationStatus = "unlinked";
+    u.instagramAccessToken = null;
+    u.instagramUserId = null;
+    u.instagramTokenExpiresAt = null;
+  }
+  saveRegisteredUsers();
+  try {
+    await pool.query(
+      `UPDATE creator_profiles
+       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL`
+    );
+  } catch (err: any) {
+    console.error("[RESET ALL ERROR]", err.message);
+  }
+  console.log("[INSTAGRAM] All fake/test Instagram connections reset successfully.");
+  res.json({ success: true, message: "All Instagram connections cleared. Ready for fresh official login." });
+});
+
 // POST /api/users/:id/instagram/refresh
 app.post("/api/users/:id/instagram/refresh", requireAuth, (req: AuthRequest, res) => {
   return res.json(sanitizeUser(req.user));
@@ -6044,12 +6071,19 @@ async function startServer() {
         );
         await pool.query(
           `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, india_audience_pct, tier_label, risk_score, status)
-           VALUES ($1, 'priya_reels_official', 45000, 25000, 4.80, 92.00, 'Micro', 5, 'active')
+           VALUES ($1, NULL, 0, 0, 0.0, 92.00, 'Micro', 5, 'pending')
            ON CONFLICT (user_id) DO NOTHING`,
           [inserted.rows[0].id]
         );
         console.log(`[SEED] Creator account seeded: ${creatorEmail}`);
       }
+
+      // Clear any pre-seeded fake Instagram connections across all profiles
+      await pool.query(
+        `UPDATE creator_profiles
+         SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL
+         WHERE username = 'priya_reels_official'`
+      ).catch(() => {});
     } catch (seedErr: any) {
       console.log("[SEED] Skipped database seeding:", seedErr.message);
     }
