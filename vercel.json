@@ -2,7 +2,16 @@
   "version": 2,
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/instagram/callback",
+      "destination": "/api/instagram/callback.ts"
+    },
     {
       "source": "/api/:path*",
       "destination": "/api/index.ts"

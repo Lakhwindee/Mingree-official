@@ -199,15 +199,20 @@ app.use(express.urlencoded({ extended: true, limit: "100kb" }));
 // Robust URL normalizer for Vercel Serverless Function rewrites
 app.use((req, res, next) => {
   const matchedPath = (req.headers["x-matched-path"] as string) || (req.headers["x-vercel-matched-path"] as string);
-  if (matchedPath && matchedPath.startsWith("/api")) {
+  const invokePath = (req.headers["x-invoke-path"] as string) || (req.headers["x-forwarded-uri"] as string);
+  const original = req.originalUrl || req.url;
+
+  if (req.url && (req.url.startsWith("/api/index.ts") || req.url.startsWith("/api/index") || req.url.startsWith("/api/[...all]"))) {
+    const target = (invokePath && invokePath.startsWith("/api") && !invokePath.includes("index.ts") && !invokePath.includes("[...all]"))
+      ? invokePath
+      : (original.startsWith("/api") && !original.includes("index.ts") && !original.includes("[...all]") ? original : null);
+    if (target) {
+      req.url = target;
+    }
+  } else if (matchedPath && matchedPath.startsWith("/api") && !matchedPath.includes("index.ts") && !matchedPath.includes("[...all]")) {
     const qIdx = req.url.indexOf("?");
     const queryString = qIdx !== -1 ? req.url.slice(qIdx) : "";
     req.url = `${matchedPath}${queryString}`;
-  } else if (req.url && (req.url.startsWith("/api/index.ts") || req.url.startsWith("/api/index") || req.url.startsWith("/api/[...all]"))) {
-    const originalPath = req.originalUrl || req.url;
-    if (originalPath.startsWith("/api") && !originalPath.includes("index.ts")) {
-      req.url = originalPath;
-    }
   }
   next();
 });
@@ -4241,9 +4246,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
                 window.opener.postMessage({
                   type: '${isSuccess ? "INSTAGRAM_OAUTH_SUCCESS" : "INSTAGRAM_OAUTH_ERROR"}',
                   status: '${isSuccess ? "success" : "error"}',
-                  username: '${result.username || ""}',
+                  username: ${JSON.stringify(result.username || "")},
                   followers: ${result.followers || 0},
-                  error: '${(result.error || "").replace(/'/g, "\\'")}'
+                  error: ${JSON.stringify(result.error || "")}
                 }, '*');
                 setTimeout(() => {
                   try { window.close(); } catch(e) {}
@@ -4497,7 +4502,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
         details: `Account @${igUsername} has ${followersCount} followers. Minimum required is ${minRequiredFollowers}.`,
       });
 
-      return res.send(renderOAuthResult({
+      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
         success: false,
         username: igUsername,
         followers: followersCount,
@@ -4529,7 +4534,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
         details: bindingCheck.reason || "One-to-One Instagram Identity restriction",
       });
 
-      return res.send(renderOAuthResult({
+      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
         success: false,
         username: igUsername,
         followers: followersCount,
@@ -4568,7 +4573,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
         details: riskEval.blockReason || "High risk bot signals detected",
       });
 
-      return res.send(renderOAuthResult({
+      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
         success: false,
         username: igUsername,
         followers: followersCount,
@@ -4686,7 +4691,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
 
     console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
 
-    return res.status(200).send(renderOAuthResult({
+    return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
       success: true,
       username: igUsername,
       followers: targetUser ? targetUser.instagramFollowers : followersCount,
@@ -4696,7 +4701,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     const errorStr = err instanceof Error ? err.message : String(err);
     const errorStack = err instanceof Error ? err.stack : "";
     console.error("[INSTAGRAM OAUTH] Unexpected error caught in callback:", errorStr, errorStack);
-    return res.status(200).send(renderOAuthResult({ success: false, error: `Authentication error: ${errorStr}`, returnTo: clientReturnTo }));
+    return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({ success: false, error: `Authentication error: ${errorStr}`, returnTo: clientReturnTo }));
   }
 });
 
