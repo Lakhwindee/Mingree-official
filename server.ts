@@ -1089,12 +1089,16 @@ app.post("/api/auth/signup", async (req, res) => {
 
     // Create creator profile if creator
     if (requestedRole === "creator") {
-      await pool.query(
-        `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
-         VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending')
-         ON CONFLICT (user_id) DO NOTHING`,
-        [newUser.id, cleanEmail.split("@")[0]]
-      );
+      try {
+        const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [newUser.id]);
+        if (cpCheck.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
+             VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending')`,
+            [newUser.id, cleanEmail.split("@")[0]]
+          );
+        }
+      } catch {}
     }
   } catch (err: any) {
     console.error("[SIGNUP INSERT ERROR]", err.message);
@@ -1329,12 +1333,19 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
       `UPDATE users SET handle = COALESCE(handle, $1), followers = $2, tier = $3 WHERE id = $4`,
       [`@${cleanHandle}`, followersCount, tierName, targetId]
     );
-    await pool.query(
-      `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
-       VALUES ($1, $2, $3, $4, 4.5, $5, 'active')
-       ON CONFLICT (user_id) DO UPDATE SET username = $2, followers = $3, tier_label = $5, status = 'active'`,
-      [targetId, cleanHandle, followersCount, Math.round(followersCount * 0.4), tierName]
-    );
+    const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [targetId]);
+    if (cpCheck.rows.length > 0) {
+      await pool.query(
+        `UPDATE creator_profiles SET username = $2, followers = $3, tier_label = $4, status = 'active' WHERE user_id = $1`,
+        [targetId, cleanHandle, followersCount, tierName]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
+         VALUES ($1, $2, $3, $4, 4.5, $5, 'active')`,
+        [targetId, cleanHandle, followersCount, Math.round(followersCount * 0.4), tierName]
+      );
+    }
   } catch (dbErr: any) {
     // Memory fallback handles the state
   }
@@ -3967,18 +3978,21 @@ app.post("/api/instagram/complete-oauth", async (req: express.Request, res: expr
         [cleanUsername, `https://instagram.com/${cleanUsername}`, followers, followers, userId]
       );
 
-      await pool.query(
-        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, median_views, engagement_rate)
-         VALUES ($1, $2, $3, $4, 5, 'active', $5, $6)
-         ON CONFLICT (user_id) DO UPDATE SET
-           instagram_user_id = EXCLUDED.instagram_user_id,
-           username = EXCLUDED.username,
-           followers = EXCLUDED.followers,
-           median_views = EXCLUDED.median_views,
-           engagement_rate = EXCLUDED.engagement_rate,
-           status = 'active'`,
-        [userId, `ig_${userId}`, cleanUsername, followers, medianViews, engagementRate]
-      );
+      const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [userId]);
+      if (cpCheck.rows.length > 0) {
+        await pool.query(
+          `UPDATE creator_profiles 
+           SET instagram_user_id = $2, username = $3, followers = $4, median_views = $5, engagement_rate = $6, status = 'active'
+           WHERE user_id = $1`,
+          [userId, `ig_${userId}`, cleanUsername, followers, medianViews, engagementRate]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, median_views, engagement_rate)
+           VALUES ($1, $2, $3, $4, 5, 'active', $5, $6)`,
+          [userId, `ig_${userId}`, cleanUsername, followers, medianViews, engagementRate]
+        );
+      }
     } catch (dbErr) {
       console.warn("[OAUTH DB UPDATE NOTICE]", dbErr);
     }
@@ -4568,28 +4582,39 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
 
     try {
       console.log(`[INSTAGRAM OAUTH DB] Saving creator profile for user ${stateRecord.userId}, username: @${igUsername}, followers: ${followersCount}`);
-      await pool.query(
-        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, encrypted_access_token, token_expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (user_id) DO UPDATE SET
-           instagram_user_id = EXCLUDED.instagram_user_id,
-           username = EXCLUDED.username,
-           followers = EXCLUDED.followers,
-           risk_score = EXCLUDED.risk_score,
-           status = EXCLUDED.status,
-           encrypted_access_token = EXCLUDED.encrypted_access_token,
-           token_expires_at = EXCLUDED.token_expires_at`,
-        [
-          stateRecord.userId,
-          igUserId,
-          igUsername,
-          followersCount,
-          riskEval.riskScore,
-          riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
-          finalAccessToken,
-          new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-        ]
-      );
+      const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [stateRecord.userId]);
+      if (cpCheck.rows.length > 0) {
+        await pool.query(
+          `UPDATE creator_profiles 
+           SET instagram_user_id = $2, username = $3, followers = $4, risk_score = $5, status = $6, encrypted_access_token = $7, token_expires_at = $8
+           WHERE user_id = $1`,
+          [
+            stateRecord.userId,
+            igUserId,
+            igUsername,
+            followersCount,
+            riskEval.riskScore,
+            riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+            finalAccessToken,
+            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+          ]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, encrypted_access_token, token_expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            stateRecord.userId,
+            igUserId,
+            igUsername,
+            followersCount,
+            riskEval.riskScore,
+            riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+            finalAccessToken,
+            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+          ]
+        );
+      }
       console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile for user ${stateRecord.userId}`);
     } catch (pgErr: any) {
       console.error("[PG CREATOR PROFILE UPDATE ERROR]", pgErr.message);
