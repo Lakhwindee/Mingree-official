@@ -774,10 +774,10 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
         let medianViews = 0;
         let instagramUsername = null;
         if (row.role === "creator") {
-          const cpRes = await pool.query("SELECT username, followers, median_views, access_token_enc, instagram_user_id FROM creator_profiles WHERE user_id = $1", [row.id]);
+          const cpRes = await pool.query("SELECT username, followers, median_views, encrypted_access_token, instagram_user_id FROM creator_profiles WHERE user_id = $1", [row.id]);
           if (cpRes.rows.length > 0) {
             const cp = cpRes.rows[0];
-            if (cp.access_token_enc || cp.instagram_user_id) {
+            if (cp.encrypted_access_token || cp.instagram_user_id) {
               instagramUsername = cp.username || null;
               followers = Number(cp.followers || 0);
               medianViews = Number(cp.median_views || 0);
@@ -1389,7 +1389,7 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, 
   try {
     pool.query(
       `UPDATE creator_profiles
-       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL
+       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', encrypted_access_token = NULL, token_expires_at = NULL
        WHERE user_id = $1`,
       [user.id]
     ).catch((err: any) => console.error("[PG DISCONNECT ERROR]", err.message));
@@ -1417,7 +1417,7 @@ app.post("/api/instagram/reset-all", async (req, res) => {
   try {
     await pool.query(
       `UPDATE creator_profiles
-       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL`
+       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', encrypted_access_token = NULL, token_expires_at = NULL`
     );
   } catch (err: any) {
     console.error("[RESET ALL ERROR]", err.message);
@@ -3968,8 +3968,8 @@ app.post("/api/instagram/complete-oauth", async (req: express.Request, res: expr
       );
 
       await pool.query(
-        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, risk_score, status, median_views, engagement_rate)
-         VALUES ($1, $2, $3, $4, 18, 5, 'active', $5, $6)
+        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, median_views, engagement_rate)
+         VALUES ($1, $2, $3, $4, 5, 'active', $5, $6)
          ON CONFLICT (user_id) DO UPDATE SET
            instagram_user_id = EXCLUDED.instagram_user_id,
            username = EXCLUDED.username,
@@ -4567,30 +4567,30 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     }
 
     try {
+      console.log(`[INSTAGRAM OAUTH DB] Saving creator profile for user ${stateRecord.userId}, username: @${igUsername}, followers: ${followersCount}`);
       await pool.query(
-        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, risk_score, status, access_token_enc, token_expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, risk_score, status, encrypted_access_token, token_expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (user_id) DO UPDATE SET
            instagram_user_id = EXCLUDED.instagram_user_id,
            username = EXCLUDED.username,
            followers = EXCLUDED.followers,
-           media_count = EXCLUDED.media_count,
            risk_score = EXCLUDED.risk_score,
            status = EXCLUDED.status,
-           access_token_enc = EXCLUDED.access_token_enc,
+           encrypted_access_token = EXCLUDED.encrypted_access_token,
            token_expires_at = EXCLUDED.token_expires_at`,
         [
           stateRecord.userId,
           igUserId,
           igUsername,
           followersCount,
-          mediaCount,
           riskEval.riskScore,
           riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
           finalAccessToken,
           new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
         ]
       );
+      console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile for user ${stateRecord.userId}`);
     } catch (pgErr: any) {
       console.error("[PG CREATOR PROFILE UPDATE ERROR]", pgErr.message);
     }
