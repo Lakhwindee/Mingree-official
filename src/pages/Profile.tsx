@@ -174,7 +174,8 @@ export default function Profile() {
 
   useEffect(() => {
     const handleAuthMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
+      const trustedOrigins = ["https://mingree.com", window.location.origin];
+      if (!trustedOrigins.includes(event.origin)) return;
       if (event.data?.type === "INSTAGRAM_AUTH_SUCCESS" || event.data?.type === "INSTAGRAM_OAUTH_SUCCESS") {
         queryClient.invalidateQueries({ queryKey: ["user", user?.id] });
         queryClient.invalidateQueries({ queryKey: ["currentUser"] });
@@ -185,7 +186,7 @@ export default function Profile() {
         toast.success(username ? `Instagram account @${username} verified & connected via Meta OAuth!` : "Instagram connected successfully!");
       } else if (event.data?.type === "INSTAGRAM_AUTH_ERROR" || event.data?.type === "INSTAGRAM_OAUTH_ERROR") {
         setIsConnectingInstagram(false);
-        toast.error(event.data.error || "Instagram connection cancelled or failed.");
+        toast.error(event.data.error || "Instagram connection failed.");
       }
     };
 

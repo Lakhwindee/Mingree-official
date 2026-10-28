@@ -10,11 +10,11 @@
   "rewrites": [
     {
       "source": "/api/instagram/callback",
-      "destination": "/api/instagram/callback.ts"
+      "destination": "/api/instagram/callback"
     },
     {
       "source": "/api/:path*",
-      "destination": "/api/index.ts"
+      "destination": "/api/index"
     },
     {
       "source": "/((?!api(?:/|$)).*)",

@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
-import { db, pool, verifyDbConnection, isLocalFallbackAllowed } from "./server/db";
+import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured } from "./server/db";
 import { eq } from "drizzle-orm";
 
 // Prevent container crashes from unhandled rejections or exceptions
@@ -3911,8 +3911,11 @@ app.get("/api/instagram/login", (req: express.Request, res: express.Response) =>
 
                   if (window.opener && !window.opener.closed) {
                     try {
-                      window.opener.postMessage(payload, '*');
-                      window.opener.postMessage({ type: 'INSTAGRAM_AUTH_SUCCESS', ...payload }, '*');
+                      var trustedOrigin = (window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1'))
+                        ? window.location.origin
+                        : 'https://mingree.com';
+                      window.opener.postMessage(payload, trustedOrigin);
+                      window.opener.postMessage({ type: 'INSTAGRAM_AUTH_SUCCESS', ...payload }, trustedOrigin);
                     } catch(err) {}
                   }
 
@@ -4119,7 +4122,7 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
 });
 
 // 2. GET /api/instagram/callback - Receives authorization code, validates state, exchanges token server-side
-app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req, res) => {
+app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"], async (req, res) => {
   const { code, state, error, error_reason, error_description } = req.query;
   const redirectUri = getInstagramRedirectUri(req);
 
@@ -4147,6 +4150,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     const destUrl = isSuccess 
       ? `${destPath}${destPath.includes('?') ? '&' : '?'}instagram_connected=true&username=${encodeURIComponent(result.username || '')}`
       : `${destPath}${destPath.includes('?') ? '&' : '?'}instagram_error=${encodeURIComponent(result.error || 'Connection failed')}`;
+    const targetOrigin = (req.headers.host && (req.headers.host.includes("localhost") || req.headers.host.includes("127.0.0.1")))
+      ? `${(req.headers["x-forwarded-proto"] as string) || "http"}://${req.headers.host}`
+      : "https://mingree.com";
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -4240,16 +4246,17 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
               window.location.href = '${destUrl}';
             }
 
-            // Cross-window notification per AI Studio OAuth guidelines
+            // Cross-window notification with exact trusted targetOrigin
             try {
               if (window.opener) {
+                var trustedOrigin = '${targetOrigin}';
                 window.opener.postMessage({
                   type: '${isSuccess ? "INSTAGRAM_OAUTH_SUCCESS" : "INSTAGRAM_OAUTH_ERROR"}',
                   status: '${isSuccess ? "success" : "error"}',
                   username: ${JSON.stringify(result.username || "")},
                   followers: ${result.followers || 0},
                   error: ${JSON.stringify(result.error || "")}
-                }, '*');
+                }, trustedOrigin);
                 setTimeout(() => {
                   try { window.close(); } catch(e) {}
                   window.location.href = '${destUrl}';
@@ -4405,25 +4412,16 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     }
 
     if (!shortLivedAccessToken) {
-      const existingUser = registeredUsers.find(u => u.id === stateRecord.userId);
-      if (existingUser?.instagramUsername && existingUser?.isInstagramVerified) {
-        return res.status(200).send(renderOAuthResult({
-          success: true,
-          username: existingUser.instagramUsername,
-          followers: existingUser.instagramFollowers || existingUser.followers || 28000,
-          returnTo: clientReturnTo,
-        }));
-      }
       recordFailedAttempt(clientIp, stateRecord.userId);
       return res.status(200).send(renderOAuthResult({
         success: false,
-        error: "Failed to exchange authorization code with Instagram. The code may have expired or already been used. Please try connecting again from Mingree.",
+        error: "Failed to exchange authorization code with Instagram. The authorization code may have expired or already been redeemed. Please try connecting again from Mingree.",
         returnTo: clientReturnTo,
       }));
     }
 
     // 4. Fetch Instagram profile & followers & media count from Meta Graph API
-    let igUsername = `instagram_user_${igUserId}`;
+    let igUsername = "";
     let followersCount = 0;
     let mediaCount = 0;
     let accountType = "BUSINESS";
@@ -4454,8 +4452,16 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
           console.warn(`[INSTAGRAM OAUTH] Basic profile fetch returned ${basicRes.status}:`, bErr);
         }
       }
-    } catch (profileErr) {
-      console.error("[INSTAGRAM OAUTH] Profile fetch error:", profileErr);
+    } catch (profileErr: any) {
+      console.error("[INSTAGRAM OAUTH] Profile fetch error:", profileErr?.message || profileErr);
+    }
+
+    if (!igUsername) {
+      return res.status(200).send(renderOAuthResult({
+        success: false,
+        error: "Failed to retrieve your Instagram username from Meta Graph API. Please ensure your account has granted required permissions and is an Instagram Professional account.",
+        returnTo: clientReturnTo,
+      }));
     }
 
     // 5. Exchange for long-lived access token (valid 60 days) server-side
@@ -4634,59 +4640,75 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     }
 
     // Persist to PostgreSQL database
-    try {
-      await pool.query(
-        `UPDATE users SET
-           instagram_username = $1,
-           instagram_profile_url = $2,
-           instagram_followers = $3,
-           followers = $4,
-           is_instagram_verified = true,
-           instagram_verification_status = 'verified'
-         WHERE id = $5`,
-        [igUsername, `https://instagram.com/${igUsername}`, followersCount, followersCount, stateRecord.userId]
-      ).catch((e: any) => console.warn("[PG USER DB UPDATE NOTICE]", e?.message));
+    let dbPersistFailed = false;
+    let dbPersistError = "";
+    if (isDatabaseConfigured) {
+      try {
+        await pool.query(
+          `UPDATE users SET
+             instagram_username = $1,
+             instagram_profile_url = $2,
+             instagram_followers = $3,
+             followers = $4,
+             is_instagram_verified = true,
+             instagram_verification_status = 'verified'
+           WHERE id = $5`,
+          [igUsername, `https://instagram.com/${igUsername}`, followersCount, followersCount, stateRecord.userId]
+        );
 
-      const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [stateRecord.userId]);
-      if (cpCheck.rows.length > 0) {
-        await pool.query(
-          `UPDATE creator_profiles 
-           SET instagram_user_id = $2, username = $3, followers = $4, median_views = $5, engagement_rate = $6, risk_score = $7, status = $8, encrypted_access_token = $9, token_expires_at = $10
-           WHERE user_id = $1`,
-          [
-            stateRecord.userId,
-            igUserId,
-            igUsername,
-            followersCount,
-            medianViews,
-            engagementRate,
-            riskEval.riskScore,
-            riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
-            finalAccessToken,
-            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-          ]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, median_views, engagement_rate, risk_score, status, encrypted_access_token, token_expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-          [
-            stateRecord.userId,
-            igUserId,
-            igUsername,
-            followersCount,
-            medianViews,
-            engagementRate,
-            riskEval.riskScore,
-            riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
-            finalAccessToken,
-            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-          ]
-        );
+        const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [stateRecord.userId]);
+        if (cpCheck.rows.length > 0) {
+          await pool.query(
+            `UPDATE creator_profiles 
+             SET instagram_user_id = $2, username = $3, followers = $4, median_views = $5, engagement_rate = $6, risk_score = $7, status = $8, encrypted_access_token = $9, token_expires_at = $10
+             WHERE user_id = $1`,
+            [
+              stateRecord.userId,
+              igUserId,
+              igUsername,
+              followersCount,
+              medianViews,
+              engagementRate,
+              riskEval.riskScore,
+              riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+              finalAccessToken,
+              new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+            ]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, median_views, engagement_rate, risk_score, status, encrypted_access_token, token_expires_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+              stateRecord.userId,
+              igUserId,
+              igUsername,
+              followersCount,
+              medianViews,
+              engagementRate,
+              riskEval.riskScore,
+              riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+              finalAccessToken,
+              new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+            ]
+          );
+        }
+        console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile & users row for user ${stateRecord.userId}`);
+      } catch (pgErr: any) {
+        dbPersistFailed = true;
+        dbPersistError = pgErr?.message || String(pgErr);
+        console.error("[PG DB PERSISTENCE ERROR]", dbPersistError);
       }
-      console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile & users row for user ${stateRecord.userId}`);
-    } catch (pgErr: any) {
-      console.warn("[PG CREATOR PROFILE UPDATE NOTICE]", pgErr?.message);
+    }
+
+    if (isDatabaseConfigured && dbPersistFailed) {
+      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
+        success: false,
+        username: igUsername,
+        followers: followersCount,
+        error: `Database persistence failed: ${dbPersistError}. Please verify database connectivity and try again.`,
+        returnTo: clientReturnTo,
+      }));
     }
 
     console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
