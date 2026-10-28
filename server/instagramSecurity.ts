@@ -77,8 +77,11 @@ function loadIdentities(): Record<string, InstagramIdentityRecord> {
 function saveIdentities(identities: Record<string, InstagramIdentityRecord>) {
   try {
     fs.writeFileSync(IDENTITIES_FILE, JSON.stringify(identities, null, 2), "utf-8");
-  } catch (err) {
-    console.error("[SECURITY] Failed to save identities file:", err);
+  } catch (err: any) {
+    // On read-only filesystems (e.g., Vercel Serverless), ignore filesystem write errors
+    if (err?.code !== "EROFS") {
+      console.warn("[SECURITY] Ignored file write error in serverless environment:", err?.message || err);
+    }
   }
 }
 
@@ -100,8 +103,11 @@ function saveAuditLogs(logs: SecurityAuditEvent[]) {
     // Keep last 1000 logs
     const trimmed = logs.slice(0, 1000);
     fs.writeFileSync(AUDIT_LOGS_FILE, JSON.stringify(trimmed, null, 2), "utf-8");
-  } catch (err) {
-    console.error("[SECURITY] Failed to save audit logs file:", err);
+  } catch (err: any) {
+    // On read-only filesystems (e.g., Vercel Serverless), ignore filesystem write errors
+    if (err?.code !== "EROFS") {
+      console.warn("[SECURITY] Ignored file write error in serverless environment:", err?.message || err);
+    }
   }
 }
 
