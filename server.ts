@@ -12,6 +12,14 @@ import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
 import { db, pool, verifyDbConnection, isLocalFallbackAllowed } from "./server/db";
 import { eq } from "drizzle-orm";
 
+// Prevent container crashes from unhandled rejections or exceptions
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[UNCAUGHT EXCEPTION]', error);
+});
+
 // Log notice if running in production without DATABASE_URL (uses in-memory fallback instead of crashing)
 if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
   console.warn("[STARTUP] DATABASE_URL is not set in production environment. Continuing with in-memory fallback storage.");
@@ -4630,8 +4638,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback"], async (req
     }));
   } catch (err) {
     const errorStr = err instanceof Error ? err.message : String(err);
-    console.error("[INSTAGRAM OAUTH] Unexpected error:", errorStr);
-    return res.status(500).send(renderOAuthResult({ success: false, error: errorStr, returnTo: clientReturnTo }));
+    const errorStack = err instanceof Error ? err.stack : "";
+    console.error("[INSTAGRAM OAUTH] Unexpected error caught in callback:", errorStr, errorStack);
+    return res.status(200).send(renderOAuthResult({ success: false, error: `Authentication error: ${errorStr}`, returnTo: clientReturnTo }));
   }
 });
 
