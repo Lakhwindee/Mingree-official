@@ -33,64 +33,7 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
   const basePrice = tierBasePrices[reqTier] || 2800;
   const currentPrice = Math.round(basePrice * multiplier);
 
-  const realCreator: CreatorCard = {
-    id: 1,
-    username: "judgesaab",
-    displayName: "juge",
-    avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    igVerifiedBadge: true,
-    city: FALLBACK_CITIES[0],
-    tier: reqTier,
-    followers: 8889,
-    engagementRate: 4.8,
-    medianViews: 3550,
-    indiaAudiencePct: 95,
-    metricsSource: "api_verified",
-    completedDeals: 16,
-    onTimeRate: 98,
-    genres: ["Music", "Lifestyle", "Fashion"],
-    reach: 19500,
-    insightsVerified: true,
-    audienceIndiaPct: 95,
-    topAudienceCities: ["Mumbai", "Delhi", "Chandigarh"],
-    recentReels: [
-      { thumbUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150" },
-      { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150" }
-    ],
-    price: currentPrice,
-    pricePer1kViews: Math.round((currentPrice / 3550) * 1000 * 100) / 100,
-    isRealRegisteredCreator: true,
-  };
-
-  const realCreator2: CreatorCard = {
-    id: 3,
-    username: "priyareels",
-    displayName: "Priya Sharma (Creator)",
-    avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-    igVerifiedBadge: true,
-    city: FALLBACK_CITIES[0],
-    tier: reqTier,
-    followers: 28000,
-    engagementRate: 4.8,
-    medianViews: 11760,
-    indiaAudiencePct: 95,
-    metricsSource: "api_verified",
-    completedDeals: 14,
-    onTimeRate: 97,
-    genres: ["Music", "Lifestyle", "Fashion"],
-    reach: 61600,
-    insightsVerified: true,
-    audienceIndiaPct: 95,
-    topAudienceCities: ["Mumbai", "Delhi", "Chandigarh"],
-    recentReels: [
-      { thumbUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150" }
-    ],
-    price: currentPrice,
-    pricePer1kViews: Math.round((currentPrice / 11760) * 1000 * 100) / 100,
-    isRealRegisteredCreator: true,
-  };
-
-  const items: CreatorCard[] = [realCreator, realCreator2];
+  const items: CreatorCard[] = [];
 
   let filteredItems = items;
   if (p.q) {

@@ -39,7 +39,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const saved = localStorage.getItem(AUTH_STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (
+          parsed.instagramUsername === "priyareels" ||
+          parsed.instagramUsername === "priya_reels_official" ||
+          parsed.instagramUsername === "judgesaab" ||
+          parsed.handle === "@priyareels"
+        ) {
+          parsed.instagramUsername = null;
+          parsed.isInstagramVerified = false;
+          parsed.instagramFollowers = 0;
+          if (parsed.handle === "@priyareels") parsed.handle = "@creator";
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(parsed));
+        }
+        return parsed;
       }
     } catch {
       // Fallback

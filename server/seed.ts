@@ -69,7 +69,7 @@ async function seed() {
         passwordHash,
         name: "Priya Sharma (Creator)",
         role: "creator",
-        handle: "@priyareels",
+        handle: "@creator",
         avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
         tier: "Rising",
         isEmailVerified: true,
@@ -95,16 +95,21 @@ async function seed() {
     if (existingProfile.length === 0) {
       await db.insert(creatorProfiles).values({
         userId: creatorId,
-        username: "priya_reels_official",
-        followers: 45000,
-        medianViews: 25000,
-        engagementRate: "4.8",
+        username: null,
+        followers: 0,
+        medianViews: 0,
+        engagementRate: "0.0",
         indiaAudiencePct: "92",
         tierLabel: "Micro",
         riskScore: 5,
-        status: "active",
+        status: "pending",
       } as any);
     }
+
+    // Clear any pre-seeded fake Instagram connections across all profiles
+    await db.execute(
+      sql`UPDATE creator_profiles SET instagram_user_id = NULL, username = NULL, followers = 0, median_views = 0, engagement_rate = '0.0', status = 'pending', access_token_enc = NULL, token_expires_at = NULL WHERE access_token_enc IS NULL OR username IN ('priyareels', 'priya_reels_official', 'judgesaab')`
+    ).catch(() => {});
 
     // 4. Seed 10 Dummy Campaigns / Ads in Marketplace
     const existingCampaigns = await db.select({ count: sql<number>`count(*)` }).from(campaigns);

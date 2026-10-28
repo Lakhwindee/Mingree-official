@@ -770,15 +770,18 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
       const dbRes = await pool.query("SELECT * FROM users WHERE id = $1", [decoded.id]);
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
-        let followers = 45000;
-        let medianViews = 25000;
-        let instagramUsername = "";
+        let followers = 0;
+        let medianViews = 0;
+        let instagramUsername = null;
         if (row.role === "creator") {
-          const cpRes = await pool.query("SELECT username, followers, median_views FROM creator_profiles WHERE user_id = $1", [row.id]);
+          const cpRes = await pool.query("SELECT username, followers, median_views, access_token_enc, instagram_user_id FROM creator_profiles WHERE user_id = $1", [row.id]);
           if (cpRes.rows.length > 0) {
-            instagramUsername = cpRes.rows[0].username || "";
-            followers = Number(cpRes.rows[0].followers || 45000);
-            medianViews = Number(cpRes.rows[0].median_views || 25000);
+            const cp = cpRes.rows[0];
+            if (cp.access_token_enc || cp.instagram_user_id) {
+              instagramUsername = cp.username || null;
+              followers = Number(cp.followers || 0);
+              medianViews = Number(cp.median_views || 0);
+            }
           }
         }
         user = {
@@ -869,7 +872,7 @@ const defaultAccounts = [
     passwordHash: bcrypt.hashSync("password123", 10),
     name: "Priya Sharma (Creator)",
     role: "creator",
-    handle: "@priyareels",
+    handle: "@creator",
     avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
     tier: "Nano",
     instagramUsername: null,
@@ -6059,7 +6062,7 @@ async function startServer() {
         const hash = bcrypt.hashSync("password123", 10);
         const inserted = await pool.query(
           `INSERT INTO users (email, password_hash, name, role, email_verified, status, handle, tier, avatar)
-           VALUES ($1, $2, 'Priya Sharma (Creator)', 'creator', true, 'active', '@priyareels', 'Rising', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150')
+           VALUES ($1, $2, 'Priya Sharma (Creator)', 'creator', true, 'active', '@creator', 'Rising', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150')
            RETURNING id`,
           [creatorEmail, hash]
         );
@@ -6082,7 +6085,7 @@ async function startServer() {
       await pool.query(
         `UPDATE creator_profiles
          SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL
-         WHERE username = 'priya_reels_official'`
+         WHERE access_token_enc IS NULL OR username IN ('priyareels', 'priya_reels_official', 'judgesaab')`
       ).catch(() => {});
     } catch (seedErr: any) {
       console.log("[SEED] Skipped database seeding:", seedErr.message);

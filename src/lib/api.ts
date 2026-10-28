@@ -628,16 +628,16 @@ export const api = {
       const res = await fetch(`${API_BASE}/users/current`, { credentials: "include" });
       if (res.ok) {
         const u = await res.json();
-        const followers = u.followers || u.instagramFollowers || 8889;
-        const tier = u.tier || (getTierByFollowers(followers)?.name ?? "Micro");
+        const followers = u.followers || u.instagramFollowers || 0;
+        const tier = u.tier || (getTierByFollowers(followers)?.name ?? "Nano");
         return {
           ...u,
           followers,
           tier,
-          instagramUsername: u.instagramUsername || (u.handle ? u.handle.replace(/^@/, "") : "judgesaab"),
+          instagramUsername: u.instagramUsername || null,
           instagramFollowers: u.instagramFollowers || followers,
-          isInstagramVerified: true,
-          instagramVerificationStatus: u.instagramVerificationStatus || "verified",
+          isInstagramVerified: Boolean(u.isInstagramVerified || u.instagramUsername),
+          instagramVerificationStatus: u.instagramVerificationStatus || (u.instagramUsername ? "verified" : "unlinked"),
         };
       }
     } catch {
@@ -651,9 +651,9 @@ export const api = {
           return {
             ...fallbackCreatorUser,
             ...parsed,
-            tier: parsed.tier || "Micro",
-            followers: parsed.followers || parsed.instagramFollowers || 8889,
-            instagramUsername: parsed.instagramUsername || (parsed.handle ? parsed.handle.replace(/^@/, "") : "judgesaab"),
+            tier: parsed.tier || "Nano",
+            followers: parsed.followers || parsed.instagramFollowers || 0,
+            instagramUsername: parsed.instagramUsername || null,
           };
         }
       }

@@ -55,14 +55,14 @@ export default function Login() {
         email: demoEmail,
         handle:
           data.handle ||
-          (fallbackRole === "admin" ? "@admin" : fallbackRole === "sponsor" ? "@brandpartner" : "@priyareels"),
+          (fallbackRole === "admin" ? "@admin" : fallbackRole === "sponsor" ? "@brandpartner" : "@creator"),
         role: fallbackRole,
         avatar: data.avatar,
-        followers: data.followers || 28000,
-        instagramFollowers: data.instagramFollowers || 28000,
+        followers: data.followers || 0,
+        instagramFollowers: data.instagramFollowers || 0,
         tier: data.tier || (fallbackRole === "sponsor" ? "Brand Partner" : "Rising"),
-        instagramUsername: data.instagramUsername || "priyareels",
-        isInstagramVerified: true,
+        instagramUsername: data.instagramUsername || null,
+        isInstagramVerified: Boolean(data.isInstagramVerified),
         balance: data.balance || "0.00",
         stars: data.stars ?? 0,
       };
