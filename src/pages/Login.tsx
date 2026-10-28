@@ -205,7 +205,12 @@ export default function Login() {
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-background flex flex-col justify-between p-4 sm:p-6">
       {/* Top bar */}
       <div className="flex items-center justify-between max-w-md w-full mx-auto pt-2">
-        <span className="text-lg font-bold text-foreground tracking-tight">Mingree</span>
+        <Link href="/">
+          <div className="flex items-center gap-2.5 cursor-pointer">
+            <img src="/assets/aistudio/Glossy_Mingree_Ribbon_App_Icon_847ced8d.png" alt="Mingree Logo" className="w-8 h-8 rounded-xl object-cover shadow-sm" />
+            <span className="text-lg font-bold text-foreground tracking-tight">Mingree</span>
+          </div>
+        </Link>
         <Link href="/about">
           <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground h-8">
             How It Works

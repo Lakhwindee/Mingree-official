@@ -177,9 +177,12 @@ export function Sidebar() {
         {/* Brand Header */}
         <div className="mb-6 flex items-center justify-between px-1">
           <Link href="/dashboard">
-            <div className="flex flex-col cursor-pointer group">
-              <span className="text-base font-bold tracking-tight text-foreground leading-tight">Mingree</span>
-              <span className="text-[10px] text-muted-foreground font-medium tracking-wide">Creator Network</span>
+            <div className="flex items-center gap-2.5 cursor-pointer group">
+              <img src="/assets/aistudio/Glossy_Mingree_Ribbon_App_Icon_847ced8d.png" alt="Mingree Logo" className="w-8 h-8 rounded-xl object-cover shadow-sm group-hover:scale-105 transition-transform" />
+              <div className="flex flex-col">
+                <span className="text-base font-extrabold tracking-tight text-foreground leading-tight">Mingree</span>
+                <span className="text-[10px] text-muted-foreground font-semibold tracking-wide">Creator Hub</span>
+              </div>
             </div>
           </Link>
           {user && <NotificationDropdown userId={user.id} />}

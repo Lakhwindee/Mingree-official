@@ -4040,7 +4040,7 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
   });
 
   // Official Instagram Login Authorization URL for App ID 3167123270152518
-  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_basic,instagram_manage_insights")}&state=${encodeURIComponent(state)}`;
+  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
 
   console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated for client: ${appId}`);
   res.json({

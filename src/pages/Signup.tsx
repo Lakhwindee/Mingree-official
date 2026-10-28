@@ -340,13 +340,19 @@ export default function Signup() {
   return (
     <div className="min-h-screen bg-background flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <button
-          onClick={() => step === "form" ? setLocation("/login") : setStep("form")}
-          className="mb-4 text-xs text-muted-foreground hover:text-foreground font-medium"
-          data-testid="button-back"
-        >
-          {step === "form" ? "Back to Login" : "Back"}
-        </button>
+        <div className="flex items-center justify-between mb-4 px-1">
+          <button
+            onClick={() => step === "form" ? setLocation("/login") : setStep("form")}
+            className="text-xs text-muted-foreground hover:text-foreground font-medium"
+            data-testid="button-back"
+          >
+            {step === "form" ? "Back to Login" : "Back"}
+          </button>
+          <div className="flex items-center gap-2">
+            <img src="/assets/aistudio/Glossy_Mingree_Ribbon_App_Icon_847ced8d.png" alt="Mingree Logo" className="w-7 h-7 rounded-lg object-cover shadow-xs" />
+            <span className="text-sm font-extrabold text-foreground tracking-tight">Mingree</span>
+          </div>
+        </div>
         
         <Card className="border-border">
           <CardHeader className="text-center pt-6 pb-4">
