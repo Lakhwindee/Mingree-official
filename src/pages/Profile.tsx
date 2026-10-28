@@ -541,20 +541,24 @@ export default function Profile() {
 
                 {/* Status Badges Row */}
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
-                  {user.role === "creator" && (
+                  {activeUser.role === "creator" && (
                     <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded bg-muted text-foreground border border-border">
-                      {user.tier || "New Creator"}
+                      {activeUser.isInstagramVerified && activeUser.instagramUsername ? (activeUser.tier || "Creator") : "Unlinked"}
                     </span>
                   )}
                   
-                  {user.followers ? (
+                  {activeUser.isInstagramVerified && activeUser.instagramUsername && activeUser.followers ? (
                     <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded bg-muted text-foreground border border-border">
-                      {user.followers.toLocaleString()} followers
+                      {activeUser.followers.toLocaleString()} followers
                     </span>
-                  ) : null}
+                  ) : (
+                    <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded bg-muted text-muted-foreground border border-border">
+                      Not Connected
+                    </span>
+                  )}
 
                   <span className="inline-flex items-center text-[11px] font-medium px-2.5 py-1 rounded bg-muted text-muted-foreground border border-border">
-                    {user.city || "No city set"}
+                    {activeUser.city || "No city set"}
                   </span>
                 </div>
 

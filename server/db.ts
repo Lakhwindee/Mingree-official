@@ -7,7 +7,16 @@ const { Pool } = pg;
 export const isLocalFallbackAllowed = true;
 
 function getValidDatabaseUrl(): string | undefined {
-  const raw = (process.env.DATABASE_URL || "").trim();
+  const raw = (
+    process.env.DATABASE_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    process.env.POSTGRES_URL ||
+    process.env.STORAGE_URL ||
+    process.env.STORAGE_POSTGRES_URL ||
+    process.env.NEON_DATABASE_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    ""
+  ).trim();
   if (!raw) return undefined;
   try {
     // Validate URL pattern before passing to pg Pool so invalid strings never throw DOMException / SyntaxError

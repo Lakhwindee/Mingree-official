@@ -828,10 +828,16 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
             }
           } catch {}
         }
-        if (followers > 0) {
+        const isVerifiedConnection = Boolean(isInstagramVerified && instagramUsername);
+        if (isVerifiedConnection && followers > 0) {
           reach = Math.round(followers * 2.2);
           if (medianViews === null) medianViews = Math.round(followers * 0.45);
+        } else {
+          followers = 0;
+          reach = 0;
+          medianViews = 0;
         }
+
         user = {
           id: Number(row.id),
           email: row.email,
@@ -840,17 +846,17 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
           role: row.role,
           handle: row.handle || `@${row.email.split("@")[0]}`,
           avatar: row.avatar,
-          tier: row.tier || "Nano",
+          tier: isVerifiedConnection ? (row.tier || "Nano") : "Unlinked",
           companyName: row.company_name,
           status: row.status,
-          followers,
-          medianViews,
-          reach,
-          instagramUsername,
-          instagramProfileUrl: instagramUsername ? `https://instagram.com/${instagramUsername}` : null,
-          instagramFollowers: followers,
-          isInstagramVerified: Boolean(isInstagramVerified && instagramUsername),
-          instagramVerificationStatus: (isInstagramVerified && instagramUsername) ? "verified" : "unlinked",
+          followers: isVerifiedConnection ? followers : 0,
+          medianViews: isVerifiedConnection ? medianViews : 0,
+          reach: isVerifiedConnection ? reach : 0,
+          instagramUsername: isVerifiedConnection ? instagramUsername : null,
+          instagramProfileUrl: isVerifiedConnection ? `https://instagram.com/${instagramUsername}` : null,
+          instagramFollowers: isVerifiedConnection ? followers : 0,
+          isInstagramVerified: isVerifiedConnection,
+          instagramVerificationStatus: isVerifiedConnection ? "verified" : "unlinked",
           isEmailVerified: Boolean(row.email_verified),
           createdAt: row.created_at,
         };
@@ -1342,9 +1348,14 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
           }
         } catch {}
 
-        if (followers > 0) {
+        const isVerifiedConnection = Boolean(isInstagramVerified && instagramUsername);
+        if (isVerifiedConnection && followers > 0) {
           reach = Math.round(followers * 2.2);
           if (medianViews === null) medianViews = Math.round(followers * 0.45);
+        } else {
+          followers = 0;
+          reach = 0;
+          medianViews = 0;
         }
 
         authoritativeUser = {
@@ -1354,19 +1365,19 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
           role: row.role,
           handle: row.handle || `@${row.email.split("@")[0]}`,
           avatar: row.avatar,
-          tier: row.tier || "Nano",
+          tier: isVerifiedConnection ? (row.tier || "Nano") : "Unlinked",
           city: row.city || "",
           companyName: row.company_name,
           status: row.status,
-          followers,
-          medianViews,
-          reach,
-          engagementRate,
-          instagramUsername,
-          instagramProfileUrl: instagramUsername ? `https://instagram.com/${instagramUsername}` : null,
-          instagramFollowers: followers,
-          isInstagramVerified: Boolean(isInstagramVerified && instagramUsername),
-          instagramVerificationStatus: (isInstagramVerified && instagramUsername) ? "verified" : "unlinked",
+          followers: isVerifiedConnection ? followers : 0,
+          medianViews: isVerifiedConnection ? medianViews : 0,
+          reach: isVerifiedConnection ? reach : 0,
+          engagementRate: isVerifiedConnection ? engagementRate : 0,
+          instagramUsername: isVerifiedConnection ? instagramUsername : null,
+          instagramProfileUrl: isVerifiedConnection ? `https://instagram.com/${instagramUsername}` : null,
+          instagramFollowers: isVerifiedConnection ? followers : 0,
+          isInstagramVerified: isVerifiedConnection,
+          instagramVerificationStatus: isVerifiedConnection ? "verified" : "unlinked",
           isEmailVerified: Boolean(row.email_verified),
           createdAt: row.created_at,
         };

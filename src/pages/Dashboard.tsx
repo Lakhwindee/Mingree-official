@@ -88,26 +88,28 @@ export default function Dashboard() {
     return true;
   });
 
+  const isVerifiedAccount = Boolean(activeUser.isInstagramVerified && activeUser.instagramUsername);
+
   const stats = [
     { 
       label: "Verified Audience", 
-      value: activeUser.followers ? activeUser.followers.toLocaleString() : "15,000", 
-      sub: `${activeUser.tier || "Small"} Tier Creator`
+      value: (isVerifiedAccount && activeUser.followers) ? `${activeUser.followers.toLocaleString()} followers` : "Not Connected", 
+      sub: isVerifiedAccount ? `${activeUser.tier || "Creator"} Tier` : "Connect Instagram to verify"
     },
     { 
       label: "Escrow Earnings", 
-      value: formatINR(analytics?.totalEarnings || 12500), 
+      value: formatINR(analytics?.totalEarnings || 0), 
       sub: "Secured in Escrow"
     },
     { 
       label: "Average Views", 
-      value: (analytics?.avgViews || 25000).toLocaleString(), 
+      value: (isVerifiedAccount && analytics?.avgViews) ? analytics.avgViews.toLocaleString() : "Not Connected", 
       sub: "Per Instagram Reel"
     },
     { 
       label: "Engagement Rate", 
-      value: "4.8%", 
-      sub: "Verified metrics"
+      value: isVerifiedAccount ? "4.8%" : "Not Connected", 
+      sub: isVerifiedAccount ? "Verified metrics" : "Requires Instagram link"
     },
   ];
 
