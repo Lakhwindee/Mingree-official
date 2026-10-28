@@ -1,4 +1,4 @@
-import app from "../server";
+import app from "../server.js";
 import http from "http";
 import { calculatePlatformFees } from "../shared/fees";
 
