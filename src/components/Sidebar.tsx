@@ -282,13 +282,15 @@ export function Sidebar() {
                   {user.instagramUsername ? `@${user.instagramUsername.replace(/^@+/, "")}` : (user.handle || user.name)}
                 </span>
                 <span className="text-[11px] font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded">
-                  {user.tier || "Micro"}
+                  {user.isInstagramVerified && user.instagramUsername ? (user.tier || "Creator") : "Unlinked"}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
                 <span>Audience</span>
                 <span className="font-medium text-foreground">
-                  {(user.followers || user.instagramFollowers || 8889).toLocaleString()} followers
+                  {user.isInstagramVerified && (user.followers || user.instagramFollowers)
+                    ? `${(user.followers || user.instagramFollowers || 0).toLocaleString()} followers`
+                    : "Not connected"}
                 </span>
               </div>
             </div>

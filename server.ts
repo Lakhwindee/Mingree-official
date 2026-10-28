@@ -3715,8 +3715,8 @@ app.get("/api/instagram/login", (req: express.Request, res: express.Response) =>
   // Look up user details to pre-populate authentic account information
   const targetUser = registeredUsers.find((u) => u.id === userId) || registeredUsers[0];
   const queryUsername = (typeof req.query.username === "string" ? req.query.username : "").trim().replace(/^@+/, "");
-  const defaultUsername = queryUsername || targetUser?.instagramUsername || targetUser?.handle?.replace(/^@/, "") || "creator_pro";
-  const defaultFollowers = targetUser?.instagramFollowers || targetUser?.followers || 28000;
+  const defaultUsername = queryUsername || targetUser?.instagramUsername || (targetUser?.handle ? targetUser.handle.replace(/^@/, "") : "");
+  const defaultFollowers = (targetUser?.isInstagramVerified && targetUser?.instagramUsername) ? (targetUser.instagramFollowers || targetUser.followers || 0) : 0;
   const userAvatar = targetUser?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
 
   if (wantsJson) {
@@ -4039,7 +4039,7 @@ app.get("/api/instagram/login", (req: express.Request, res: express.Response) =>
               })
               .then(function(res) { 
                 return res.text().then(function(txt) {
-                  try { return JSON.parse(txt); } catch(e) { return { success: true, username: handle, followers: 8889, reach: 19556, medianViews: 4000 }; }
+                  try { return JSON.parse(txt); } catch(e) { return { success: false, error: 'Failed to process response' }; }
                 }); 
               })
               .then(function(data) {
@@ -4054,9 +4054,9 @@ app.get("/api/instagram/login", (req: express.Request, res: express.Response) =>
                     type: 'INSTAGRAM_OAUTH_SUCCESS',
                     status: 'success',
                     username: finalUser,
-                    followers: data.followers || 8889,
-                    reach: data.reach || 19556,
-                    medianViews: data.medianViews || 4000,
+                    followers: data.followers || 0,
+                    reach: data.reach || 0,
+                    medianViews: data.medianViews || 0,
                     insightsVerified: true
                   };
 
@@ -4846,15 +4846,18 @@ app.post("/api/creator/sync-insights", requireAuth, async (req: AuthRequest, res
     const targetUser = registeredUsers.find(u => u.id === userId);
     if (!targetUser) return res.status(404).json({ error: "User not found" });
 
-    const followers = Number(targetUser.instagramFollowers || targetUser.followers) || 8889;
-    const medianViews = Math.round(followers * 0.42);
-    const reach = Math.round(followers * 2.2);
-    const engagementRate = 4.8;
+    if (!targetUser.isInstagramVerified || !targetUser.instagramUsername) {
+      return res.status(400).json({ error: "Please connect your official Instagram Creator account first via Connect Instagram." });
+    }
+
+    const followers = Number(targetUser.instagramFollowers || targetUser.followers) || 0;
+    const medianViews = targetUser.medianViews ? Number(targetUser.medianViews) : (followers > 0 ? Math.round(followers * 0.42) : 0);
+    const reach = (targetUser as any).reach ? Number((targetUser as any).reach) : (followers > 0 ? Math.round(followers * 2.2) : 0);
+    const engagementRate = targetUser.engagementRate ? Number(targetUser.engagementRate) : (followers > 0 ? 4.8 : 0);
 
     targetUser.medianViews = medianViews;
     (targetUser as any).reach = reach;
     targetUser.engagementRate = engagementRate;
-    targetUser.isInstagramVerified = true;
     (targetUser as any).insightsSyncedAt = new Date().toISOString();
     saveRegisteredUsers();
 
@@ -4889,20 +4892,21 @@ app.get("/api/creator/insights", requireAuth, (req: AuthRequest, res) => {
   const targetUser = registeredUsers.find(u => u.id === userId);
   if (!targetUser) return res.status(404).json({ error: "User not found" });
 
-  const followers = Number(targetUser.instagramFollowers || targetUser.followers) || 8889;
-  const medianViews = Number(targetUser.medianViews) || Math.round(followers * 0.42);
-  const reach = Number((targetUser as any).reach) || Math.round(followers * 2.2);
-  const engagementRate = Number(targetUser.engagementRate) || 4.8;
+  const isVerified = Boolean(targetUser.isInstagramVerified && targetUser.instagramUsername);
+  const followers = isVerified ? (Number(targetUser.instagramFollowers || targetUser.followers) || 0) : 0;
+  const medianViews = isVerified ? (Number(targetUser.medianViews) || Math.round(followers * 0.42)) : 0;
+  const reach = isVerified ? (Number((targetUser as any).reach) || Math.round(followers * 2.2)) : 0;
+  const engagementRate = isVerified ? (Number(targetUser.engagementRate) || 4.8) : 0;
 
   res.json({
     followers,
     reach,
     medianViews,
     engagementRate,
-    audienceIndiaPct: 95,
-    topCities: ["Mumbai", "Delhi", "Chandigarh"],
-    verified: Boolean(targetUser.isInstagramVerified),
-    syncedAt: (targetUser as any).insightsSyncedAt || new Date().toISOString(),
+    audienceIndiaPct: isVerified ? 95 : 0,
+    topCities: isVerified ? ["Mumbai", "Delhi", "Chandigarh"] : [],
+    verified: isVerified,
+    syncedAt: (targetUser as any).insightsSyncedAt || (isVerified ? new Date().toISOString() : null),
   });
 });
 
@@ -5566,7 +5570,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
 
     const realCreatorCards: any[] = [];
     for (const u of realCreatorsMap.values()) {
-      const followers = Number(u.instagramFollowers || u.followers) || 8889;
+      const followers = Number(u.instagramFollowers || u.followers) || 0;
       const tierId = resolveTierId(followers, u.tier);
       const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
       const price = Math.round(tierObj.basePrice * deliverableMultiplier);
@@ -5584,36 +5588,35 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       const displayName = u.name || cleanHandle;
       const avatarUrl = u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
 
-      const mViews = u.medianViews ? Number(u.medianViews) : Math.round(followers * 0.42);
-      const mReach = Number(u.reach || u.instagramReach) || Math.round(followers * 2.2);
+      const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.42) : 0);
+      const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : 0);
 
       realCreatorCards.push({
         id: Number(u.id),
         username: cleanHandle,
         displayName: displayName,
         avatarUrl: avatarUrl,
-        igVerifiedBadge: Boolean(u.isInstagramVerified || followers >= 5000),
+        igVerifiedBadge: Boolean(u.isInstagramVerified && followers >= 500),
         city: creatorCity,
         tier: tierId,
         rawTier: u.tier,
         followers,
-        engagementRate: u.engagementRate ? Number(u.engagementRate) : 4.8,
+        engagementRate: u.engagementRate ? Number(u.engagementRate) : (followers > 0 ? 4.8 : 0),
         medianViews: mViews,
         reach: mReach,
-        insightsVerified: true,
-        audienceIndiaPct: 95,
-        topAudienceCities: ["Mumbai", "Delhi", "Chandigarh"],
-        indiaAudiencePct: 95,
-        metricsSource: "api_verified",
-        completedDeals: 16,
-        onTimeRate: 98,
+        insightsVerified: Boolean(u.isInstagramVerified),
+        audienceIndiaPct: followers > 0 ? 95 : 0,
+        topAudienceCities: followers > 0 ? ["Mumbai", "Delhi", "Chandigarh"] : [],
+        indiaAudiencePct: followers > 0 ? 95 : 0,
+        metricsSource: u.isInstagramVerified ? "api_verified" : "unlinked",
+        completedDeals: 0,
+        onTimeRate: 100,
         genres: ["Music", "Lifestyle", "Fashion", "Entertainment"],
         recentReels: [
-          { thumbUrl: avatarUrl },
-          { thumbUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150" }
+          { thumbUrl: avatarUrl }
         ],
         price,
-        pricePer1kViews: Math.round((price / (followers * 0.4)) * 1000 * 100) / 100,
+        pricePer1kViews: followers > 0 ? Math.round((price / (followers * 0.4)) * 1000 * 100) / 100 : 0,
         isRealRegisteredCreator: true,
       });
     }
@@ -5705,8 +5708,6 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         return (b.medianViews || 0) - (a.medianViews || 0);
       });
     } else {
-      // Default / Relevance: HIGH VIEWS & HIGH REACH ACCOUNTS RANKED ON TOP
-      // Real verified registered creators are pinned at the top, ranked by reach & views
       items.sort((a, b) => {
         if (a.isRealRegisteredCreator !== b.isRealRegisteredCreator) {
           return a.isRealRegisteredCreator ? -1 : 1;
@@ -5725,32 +5726,8 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
   } catch (err: any) {
     console.error("[CREATOR PANEL ERROR]", err);
     res.json({
-      items: [
-        {
-          id: 1,
-          username: "judgesaab",
-          displayName: "juge",
-          avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-          igVerifiedBadge: true,
-          city: CITIES_LIST[0],
-          tier: (req.query.tier as string || "micro").toLowerCase(),
-          followers: 8889,
-          engagementRate: 4.8,
-          medianViews: 3550,
-          indiaAudiencePct: 95,
-          metricsSource: "api_verified" as const,
-          completedDeals: 16,
-          onTimeRate: 98,
-          genres: ["Music", "Lifestyle", "Fashion"],
-          recentReels: [
-            { thumbUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150" }
-          ],
-          price: (req.query.tier as string || "").toLowerCase() === "nano" ? 1200 : 2800,
-          pricePer1kViews: 788,
-          isRealRegisteredCreator: true,
-        }
-      ],
-      total: 1,
+      items: [],
+      total: 0,
       nextCursor: null,
     });
   }
@@ -5793,7 +5770,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
         else if (rawTier === "mega") tierKey = "mega";
         else if (rawTier === "elite") tierKey = "elite";
         else {
-          const f = Number(creator.instagramFollowers || creator.followers) || 8889;
+          const f = Number(creator.instagramFollowers || creator.followers) || 0;
           if (f >= 2500000) tierKey = "elite";
           else if (f >= 1000000) tierKey = "mega";
           else if (f >= 500000) tierKey = "large";
