@@ -25,8 +25,8 @@ const rawPool = new Pool(
   validDbUrl
     ? {
         connectionString: validDbUrl,
-        ssl: validDbUrl.includes("render.com") ? { rejectUnauthorized: false } : undefined,
-        connectionTimeoutMillis: 3000,
+        ssl: (validDbUrl.includes("localhost") || validDbUrl.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false },
+        connectionTimeoutMillis: 5000,
       }
     : {
         host: "127.0.0.1",
@@ -36,10 +36,8 @@ const rawPool = new Pool(
 );
 
 rawPool.on("error", (err: any) => {
-  if (err.code === "ECONNREFUSED" || !isDatabaseConfigured || isLocalFallbackAllowed) {
-    return;
-  }
-  console.error("[PG POOL ERROR]", err);
+  // Never crash serverless process on pool idle connection issues
+  console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
 });
 
 const originalQuery = rawPool.query.bind(rawPool);
