@@ -236,13 +236,10 @@ export default function Campaigns() {
   };
 
   const getUserTierId = (): number => {
-    if (user?.followers && user.followers >= 500) {
-      const calculatedTier = getTierByFollowers(user.followers);
-      if (calculatedTier) return calculatedTier.id;
-    }
-    if (!user?.tier) return 1;
-    const tier = TIERS.find(t => t.name === user.tier);
-    return tier?.id || 1;
+    const followers = user?.followers || user?.instagramFollowers || 0;
+    const calculatedTier = getTierByFollowers(followers);
+    if (calculatedTier) return calculatedTier.id;
+    return 0;
   };
 
   const getLowestCampaignTierId = (tierString?: string | null): number => {
@@ -432,479 +429,164 @@ export default function Campaigns() {
               className="mb-3.5 sm:mb-6"
             >
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div className="hidden md:block">
+                <div>
                   <div className="flex items-center gap-2.5">
                     <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" data-testid="text-page-title">Fixed Price Campaigns</h1>
                     <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20 font-semibold">
-                      Tier-Based Model
+                      Tier & City Matched
                     </Badge>
                   </div>
                   <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                    Join category groups matching your follower tier to unlock guaranteed fixed-payout promotional ads.
+                    Promotional ads automatically matched to your verified follower tier and home city.
                   </p>
-                </div>
-                
-                {/* Filters Row */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto">
-                  <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Select
-                        value={countryFilter}
-                        onValueChange={(val) => {
-                          setCountryFilter(val);
-                          setCityFilter("");
-                        }}
-                      >
-                        <SelectTrigger className="w-full sm:w-[140px] text-xs h-8 sm:h-9" data-testid="select-country-filter">
-                          <SelectValue placeholder="All Countries" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[300px]">
-                          <SelectItem value="all">All Countries</SelectItem>
-                          {COUNTRIES.map((c) => (
-                            <SelectItem key={c.code} value={c.code}>
-                              {c.flag} {c.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Select
-                        value={cityFilter}
-                        onValueChange={setCityFilter}
-                      >
-                        <SelectTrigger className="w-full sm:w-[140px] text-xs h-8 sm:h-9" data-testid="select-city-filter">
-                          <SelectValue placeholder="All Cities" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-[300px]">
-                          <SelectItem value="all">All Cities</SelectItem>
-                          {(countryFilter && countryFilter !== "all"
-                            ? getCitiesByCountry(countryFilter)
-                            : Array.from(new Set(
-                                allCampaigns
-                                   .flatMap((c: any) => c.targetCities || [])
-                                   .filter(Boolean)
-                              )).sort()
-                          ).map((cityName: string) => (
-                            <SelectItem key={cityName} value={cityName}>
-                              {cityName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  {(countryFilter && countryFilter !== "all" || cityFilter && cityFilter !== "all") && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setCountryFilter("");
-                        setCityFilter("");
-                      }}
-                      className="h-8 px-2 text-xs text-muted-foreground self-end sm:self-center"
-                      data-testid="button-clear-filter"
-                    >
-                      Clear filters
-                    </Button>
-                  )}
                 </div>
               </div>
             </motion.div>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-3 sm:mb-5 h-9 sm:h-10 p-1 bg-muted/70 rounded-xl">
-                <TabsTrigger value="all-campaigns" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-all-campaigns">
-                  Fixed Price Ads
-                </TabsTrigger>
-                <TabsTrigger value="join-groups" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-join-groups">
-                  Join Groups {subscriptions.length > 0 && `(${subscriptions.length})`}
-                </TabsTrigger>
-                <TabsTrigger value="my-campaigns" className="rounded-lg text-xs sm:text-sm font-semibold" data-testid="tab-my-campaigns">
-                  Joined Categories {joinedCategories.length > 0 && `(${joinedCategories.length})`}
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="all-campaigns">
-                {user?.instagramUsername ? (
-                  <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-foreground font-semibold shrink-0 border border-border/60">
-                        {getTierNameByFollowers(user.followers || user.instagramFollowers || 0, true).charAt(0)}
-                      </div>
-                      <div className="min-w-0">
-                        <span className="font-semibold text-foreground">
-                          {getTierBannerText(user.followers || user.instagramFollowers || 0, true)}
-                        </span>
-                        <span className="text-muted-foreground ml-1.5">
-                          ({(user.followers || user.instagramFollowers || 0).toLocaleString()} followers verified)
-                        </span>
-                      </div>
+            <div className="w-full">
+              {user?.instagramUsername ? (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-foreground font-semibold shrink-0 border border-border/60">
+                      {getTierNameByFollowers(user.followers || user.instagramFollowers || 0, true).charAt(0)}
                     </div>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline">
-                      Click any card to reserve your slot
-                    </span>
-                  </div>
-                ) : (
-                  <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
-                    <div>
-                      <span className="font-medium text-foreground">Connect Instagram in Profile to sync audience tier</span>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-foreground">
+                        {getTierBannerText(user.followers || user.instagramFollowers || 0, true)}
+                      </span>
+                      <span className="text-muted-foreground ml-1.5">
+                        ({(user.followers || user.instagramFollowers || 0).toLocaleString()} followers verified)
+                      </span>
                     </div>
                   </div>
-                )}
-
-                {campaignGroups.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40">
-                    <h2 className="text-base font-bold mb-1 text-foreground">No campaigns for your tier and city yet</h2>
-                    <p className="text-xs text-muted-foreground max-w-sm">
-                      Check back soon or update your city selection in Profile
-                    </p>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline">
+                    Click any card to reserve your slot
+                  </span>
+                </div>
+              ) : (
+                <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
+                  <div>
+                    <span className="font-medium text-foreground">Connect Instagram in Profile to sync audience tier</span>
                   </div>
-                ) : (
-                  /* Responsive Grid: 2 columns on mobile, 3 on tablet, 4 on desktop */
-                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                    {campaignGroups.map((group, index: number) => {
-                      const isLocked = isGroupLocked(group);
-                      const isReserved = isAnyReservedInGroup(group);
-                      const bestCampaign = getBestCampaignForUser(group);
-                      const lowestTier = group.campaigns[0];
+                </div>
+              )}
 
-                      const targetedTierNames = Array.from(
-                        new Set(
-                          group.campaigns
-                            .flatMap((c: any) => c.targetTiers || (c.tier ? [c.tier] : []))
-                            .filter(Boolean)
-                        )
-                      ).join(", ") || (bestCampaign?.tier || "Mid");
+              {campaignGroups.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40">
+                  <h2 className="text-base font-bold mb-1 text-foreground">No campaigns for your tier and city yet</h2>
+                  <p className="text-xs text-muted-foreground max-w-sm">
+                    Check back soon or update your city selection in Profile
+                  </p>
+                </div>
+              ) : (
+                /* Responsive Grid: 2 columns on mobile, 3 on tablet, 4 on desktop */
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                  {campaignGroups.map((group, index: number) => {
+                    const isLocked = isGroupLocked(group);
+                    const isReserved = isAnyReservedInGroup(group);
+                    const bestCampaign = getBestCampaignForUser(group);
+                    const lowestTier = group.campaigns[0];
 
-                      const payments = group.campaigns.map(c => parseFloat(c.payAmount));
-                      const minPay = Math.min(...payments);
-                      const maxPay = Math.max(...payments);
-                      const paymentDisplay = minPay === maxPay 
-                        ? formatINR(minPay.toString()) 
-                        : `${formatINR(minPay.toString())} - ${formatINR(maxPay.toString())}`;
+                    const targetedTierNames = Array.from(
+                      new Set(
+                        group.campaigns
+                          .flatMap((c: any) => c.targetTiers || (c.tier ? [c.tier] : []))
+                          .filter(Boolean)
+                      )
+                    ).join(", ") || (bestCampaign?.tier || "Mid");
 
-                      return (
-                        <motion.div
-                          key={group.title}
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: index * 0.02 }}
-                          className="h-full"
-                        >
-                          <Card 
-                            className={`group relative flex flex-col h-full overflow-hidden rounded-xl border border-border/80 bg-card hover:border-border transition-all duration-150 hover:shadow-xs cursor-pointer active:scale-[0.99] ${
-                              isReserved ? 'ring-1 ring-emerald-500/40 border-emerald-500/40' : ''
-                            } ${isLocked ? 'opacity-85' : ''}`}
-                            onClick={() => handleOpenGroupDetails(group)}
-                            data-testid={`card-campaign-grid-${index}`}
-                          >
-                            {/* Card Header */}
-                            <div className="p-3.5 border-b border-border/70 flex flex-col justify-between">
-                              <div className="flex items-center justify-between gap-1 mb-2">
-                                {isReserved ? (
-                                  <span className="bg-emerald-600 text-white text-[10px] font-semibold py-0.5 px-2 rounded">
-                                    Reserved
-                                  </span>
-                                ) : isLocked ? (
-                                  <span className="bg-muted text-muted-foreground text-[10px] font-medium py-0.5 px-1.5 rounded border border-border">
-                                    Locked
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                                    Fixed Ad
-                                  </span>
-                                )}
-
-                                <span className="text-[10px] text-muted-foreground font-medium truncate max-w-[120px]">
-                                  {targetedTierNames}
-                                </span>
-                              </div>
-
-                              <div>
-                                <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-1 leading-snug">
-                                  {group.title}
-                                </h3>
-                                <p className="text-[10px] sm:text-xs text-muted-foreground line-clamp-1 mt-0.5">
-                                  {group.brand}
-                                </p>
-                              </div>
-                            </div>
-
-                            {/* Card Body */}
-                            <CardContent className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between gap-2.5 bg-card">
-                              <div className="flex items-center justify-between gap-1">
-                                <span className="font-bold text-xs sm:text-sm text-foreground tabular-nums">
-                                  {bestCampaign && !isLocked ? formatINR(bestCampaign.payAmount) : paymentDisplay}
-                                </span>
-                                <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                                  {bestCampaign?.tier || lowestTier?.tier || "Mid"}
-                                </span>
-                              </div>
-
-                              {/* Footer metadata: Deadline & spots */}
-                              <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2 border-t border-border/60">
-                                <span className="truncate">
-                                  Due {(() => {
-                                    if (!group.deadline) return "Flexible";
-                                    try {
-                                      const d = new Date(group.deadline);
-                                      return !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : "Flexible";
-                                    } catch {
-                                      return "Flexible";
-                                    }
-                                  })()}
-                                </span>
-                                {typeof group.totalSpots === "number" && !isNaN(group.totalSpots) && group.totalSpots > 0 && (
-                                  <span className="font-medium text-foreground whitespace-nowrap tabular-nums">
-                                    {group.totalSpots} spots
-                                  </span>
-                                )}
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </motion.div>
-                      );
-                    })}
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="join-groups" className="space-y-4">
-                {/* Follower Tier Status Banner */}
-                {user?.instagramUsername && user?.followers && user.followers >= 500 ? (
-                  <div className="rounded-xl border border-border/80 bg-card p-4 shadow-xs" data-testid="tier-info-banner">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground font-bold text-sm border border-border/60">
-                          {(TIERS.find(t => t.id === getUserTierId())?.name || "Starter").slice(0, 3)}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-foreground text-sm sm:text-base">
-                              @{user.instagramUsername}
-                            </span>
-                            <span className="text-[11px] font-semibold text-foreground bg-muted px-2 py-0.5 rounded border border-border/50">
-                              {TIERS.find(t => t.id === getUserTierId())?.name || "Starter"} Tier
-                            </span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Audience: <strong className="text-foreground tabular-nums">{user.followers?.toLocaleString()} followers</strong> &bull; Eligible for groups up to {TIERS.find(t => t.id === getUserTierId())?.name} tier
-                          </p>
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => setActiveTab("all-campaigns")}
-                        className="rounded-xl bg-primary text-primary-foreground text-xs h-8.5 px-4 self-start sm:self-center shadow-xs"
-                      >
-                        Browse Fixed Ads
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-border/80 bg-card p-4">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Connect Instagram to Sync Tier</p>
-                      <p className="text-xs text-muted-foreground">Go to Profile to link your creator account and sync your verified follower tier.</p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Category Groups Accordion */}
-                <div className="space-y-3">
-                  {PROMOTION_CATEGORIES.map((category, index) => {
-                    const subCount = getSubscriptionCount(category.id);
+                    const payments = group.campaigns.map(c => parseFloat(c.payAmount));
+                    const minPay = Math.min(...payments);
+                    const maxPay = Math.max(...payments);
+                    const paymentDisplay = minPay === maxPay 
+                      ? formatINR(minPay.toString()) 
+                      : `${formatINR(minPay.toString())} - ${formatINR(maxPay.toString())}`;
 
                     return (
                       <motion.div
-                        key={category.id}
-                        initial={{ opacity: 0, y: 15 }}
+                        key={group.title}
+                        initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: index * 0.03 }}
+                        transition={{ delay: index * 0.02 }}
+                        className="h-full"
                       >
-                        <Accordion type="single" collapsible>
-                          <AccordionItem value={category.id} className="border border-border/80 rounded-xl overflow-hidden bg-card">
-                            <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-muted/40 transition-colors" data-testid={`accordion-${category.id}`}>
-                              <div className="flex items-center gap-3 text-left min-w-0 flex-1 pr-2">
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-semibold text-sm sm:text-base text-foreground">{category.name}</span>
-                                    {subCount > 0 ? (
-                                      <span className="inline-flex items-center text-[11px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                                        {subCount} Tier{subCount > 1 ? "s" : ""} Joined
-                                      </span>
-                                    ) : (
-                                      <span className="text-[11px] text-muted-foreground">
-                                        Not Joined
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-xs text-muted-foreground truncate mt-0.5">{category.description}</p>
-                                </div>
-                              </div>
-                            </AccordionTrigger>
-                            <AccordionContent className="px-4 pb-4 pt-2 border-t border-border/40 bg-muted/20">
-                              <p className="text-xs font-medium text-muted-foreground mb-3">
-                                Available audience tiers for {category.name} promotions:
+                        <Card 
+                          className={`group relative flex flex-col h-full overflow-hidden rounded-xl border border-border/80 bg-card hover:border-border transition-all duration-150 hover:shadow-xs cursor-pointer active:scale-[0.99] ${
+                            isReserved ? 'ring-1 ring-emerald-500/40 border-emerald-500/40' : ''
+                          } ${isLocked ? 'opacity-85' : ''}`}
+                          onClick={() => handleOpenGroupDetails(group)}
+                          data-testid={`card-campaign-grid-${index}`}
+                        >
+                          {/* Card Header */}
+                          <div className="p-3.5 border-b border-border/70 flex flex-col justify-between">
+                            <div className="flex items-center justify-between gap-1 mb-2">
+                              {isReserved ? (
+                                <span className="bg-emerald-600 text-white text-[10px] font-semibold py-0.5 px-2 rounded">
+                                  Reserved
+                                </span>
+                              ) : isLocked ? (
+                                <span className="bg-muted text-muted-foreground text-[10px] font-medium py-0.5 px-1.5 rounded border border-border">
+                                  Locked
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                                  Fixed Ad
+                                </span>
+                              )}
+
+                              <span className="text-[10px] text-muted-foreground font-medium truncate max-w-[120px]">
+                                {targetedTierNames}
+                              </span>
+                            </div>
+
+                            <div>
+                              <h3 className="font-bold text-xs sm:text-sm text-foreground line-clamp-1 leading-snug">
+                                {group.title}
+                              </h3>
+                              <p className="text-[10px] sm:text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                                {group.brand}
                               </p>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                                {TIERS.map((tier) => {
-                                  const eligible = canJoinTier(tier.id);
-                                  const subscribed = isSubscribed(category.id, tier.name);
-                                  const groupKey = `${category.id}-${tier.name}`;
-                                  const isLoading = loadingGroup === groupKey;
+                            </div>
+                          </div>
 
-                                  return (
-                                    <div
-                                      key={tier.id}
-                                      className={`flex flex-col justify-between p-3.5 rounded-xl border transition-all ${
-                                        subscribed
-                                          ? "border-emerald-500/50 bg-emerald-500/5"
-                                          : eligible
-                                          ? "border-border/80 bg-card hover:border-border"
-                                          : "border-border/40 bg-muted/40 opacity-70"
-                                      }`}
-                                    >
-                                      <div>
-                                        <div className="flex items-center justify-between gap-1.5 mb-1">
-                                          <span className="font-semibold text-xs text-foreground">{tier.name}</span>
-                                          {subscribed ? (
-                                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">Joined</span>
-                                          ) : eligible ? (
-                                            <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Eligible</span>
-                                          ) : (
-                                            <span className="text-[10px] text-muted-foreground">Locked</span>
-                                          )}
-                                        </div>
-                                        <p className="text-[11px] text-muted-foreground tabular-nums">
-                                          {formatFollowers(tier.minFollowers)}+ followers
-                                        </p>
-                                      </div>
+                          {/* Card Body */}
+                          <CardContent className="p-3 sm:p-3.5 flex-1 flex flex-col justify-between gap-2.5 bg-card">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-bold text-xs sm:text-sm text-foreground tabular-nums">
+                                {bestCampaign && !isLocked ? formatINR(bestCampaign.payAmount) : paymentDisplay}
+                              </span>
+                              <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                                {bestCampaign?.tier || lowestTier?.tier || "Mid"}
+                              </span>
+                            </div>
 
-                                      <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between gap-2">
-                                        <span className="text-[11px] text-muted-foreground tabular-nums">
-                                          Payout ~{formatINR((tier.id * 800).toString())}
-                                        </span>
-                                        <Button
-                                          size="sm"
-                                          variant={subscribed ? "outline" : eligible ? "default" : "secondary"}
-                                          disabled={!eligible || isLoading}
-                                          onClick={() => handleToggleSubscription(category.id, tier.name, tier.id)}
-                                          className={`h-7 px-3 text-xs font-semibold rounded-lg shrink-0 ${
-                                            subscribed 
-                                              ? "hover:bg-destructive/10 hover:text-destructive border-border"
-                                              : eligible 
-                                              ? "bg-primary text-primary-foreground hover:bg-primary/90" 
-                                              : ""
-                                          }`}
-                                          data-testid={`button-toggle-${category.id}-${tier.name}`}
-                                        >
-                                          {isLoading ? (
-                                            "Updating..."
-                                          ) : subscribed ? (
-                                            "Leave"
-                                          ) : eligible ? (
-                                            "Join Group"
-                                          ) : (
-                                            "Locked"
-                                          )}
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </AccordionContent>
-                          </AccordionItem>
-                        </Accordion>
+                            {/* Footer metadata: Deadline & spots */}
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2 border-t border-border/60">
+                              <span className="truncate">
+                                Due {(() => {
+                                  if (!group.deadline) return "Flexible";
+                                  try {
+                                    const d = new Date(group.deadline);
+                                    return !isNaN(d.getTime()) ? d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : "Flexible";
+                                  } catch {
+                                    return "Flexible";
+                                  }
+                                })()}
+                              </span>
+                              {typeof group.totalSpots === "number" && !isNaN(group.totalSpots) && group.totalSpots > 0 && (
+                                <span className="font-medium text-foreground whitespace-nowrap tabular-nums">
+                                  {group.totalSpots} spots
+                                </span>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
                       </motion.div>
                     );
                   })}
                 </div>
-              </TabsContent>
-
-              <TabsContent value="my-campaigns">
-                {joinedCategories.length === 0 ? (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.98 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40"
-                  >
-                    <h2 className="text-base font-bold mb-1 text-foreground">No groups joined yet</h2>
-                    <p className="text-xs text-muted-foreground mb-4 max-w-sm">
-                      Join category groups for your tier in the "Join Groups" tab to unlock targeted campaigns.
-                    </p>
-                    <Button 
-                      onClick={() => setActiveTab("join-groups")}
-                      className="rounded-xl bg-primary text-primary-foreground text-xs font-semibold h-8.5 px-4 shadow-xs"
-                      data-testid="button-go-to-groups"
-                    >
-                      Browse & Join Groups
-                    </Button>
-                  </motion.div>
-                ) : (
-                  <>
-                    <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4">
-                      <div>
-                        <p className="font-semibold text-xs sm:text-sm text-foreground">{joinedCategories.length} Categories Joined</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Click any category card to view its active campaigns
-                        </p>
-                      </div>
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        onClick={() => setActiveTab("join-groups")}
-                        className="h-8 text-xs font-semibold rounded-lg shrink-0"
-                      >
-                        Manage Groups
-                      </Button>
-                    </div>
-
-                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
-                      {joinedCategories.map((categoryId, index) => {
-                        const category = getCategoryDetails(categoryId);
-                        if (!category) return null;
-                        
-                        const maxTier = getMaxTierForCategory(categoryId);
-                        
-                        return (
-                          <motion.div
-                            key={categoryId}
-                            initial={{ opacity: 0, y: 15 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: index * 0.03 }}
-                          >
-                            <Card 
-                              className="cursor-pointer transition-all hover:border-border active:scale-[0.99] rounded-xl border border-border/80 bg-card hover:shadow-xs overflow-hidden"
-                              onClick={() => navigate(`/campaigns/${categoryId}`)}
-                              data-testid={`card-category-${categoryId}`}
-                            >
-                              <CardContent className="p-3.5 sm:p-4 flex flex-col justify-between h-full min-h-[100px]">
-                                <div className="flex items-start justify-between gap-2">
-                                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Category</span>
-                                  <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                                    {maxTier || "Starter"}
-                                  </span>
-                                </div>
-                                
-                                <div className="mt-3">
-                                  <h3 className="font-bold text-xs sm:text-sm text-foreground truncate">{category.name}</h3>
-                                  <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">{category.description}</p>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-              </TabsContent>
-            </Tabs>
+              )}
+            </div>
           </div>
         </main>
 

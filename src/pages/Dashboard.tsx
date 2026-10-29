@@ -8,6 +8,8 @@ import { useQuery } from "@tanstack/react-query";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { useAuth } from "@/lib/auth-context";
 
+import { getTierNameByFollowers } from "@shared/tiers";
+
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
 const Instagram = __DummyIcon;
@@ -89,12 +91,16 @@ export default function Dashboard() {
   });
 
   const isVerifiedAccount = Boolean(activeUser.isInstagramVerified && activeUser.instagramUsername);
+  const activeUserTierName = getTierNameByFollowers(
+    activeUser.followers || activeUser.instagramFollowers || 0,
+    Boolean(isVerifiedAccount || (activeUser.followers || activeUser.instagramFollowers || 0) > 0)
+  );
 
   const stats = [
     { 
       label: "Verified Audience", 
       value: (isVerifiedAccount && activeUser.followers) ? `${activeUser.followers.toLocaleString()} followers` : "Not Connected", 
-      sub: isVerifiedAccount ? `${activeUser.tier || "Creator"} Tier` : "Connect Instagram to verify"
+      sub: isVerifiedAccount ? `${activeUserTierName} Tier` : "Connect Instagram to verify"
     },
     { 
       label: "Escrow Earnings", 
@@ -122,7 +128,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 min-w-0">
             <h1 className="text-base font-bold text-foreground truncate">Dashboard</h1>
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">
-              {activeUser.tier || "Creator"}
+              {activeUserTierName}
             </span>
           </div>
           <NotificationDropdown userId={activeUser.id} />
@@ -211,7 +217,7 @@ export default function Dashboard() {
                       Audience Tier
                     </span>
                     <span className="font-semibold text-foreground text-sm mt-0.5 block">
-                      {activeUser.tier || "Small"} Tier
+                      {activeUserTierName} Tier
                     </span>
                   </div>
                   <div className="p-3 rounded-lg border border-border/60 bg-muted/30">

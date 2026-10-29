@@ -5,6 +5,7 @@ import { NotificationDropdown } from "./NotificationDropdown";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { getTierNameByFollowers } from "@shared/tiers";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -81,6 +82,9 @@ export function Sidebar() {
     { href: "/support", label: "Help & Support" },
   ];
 
+  const userFollowersCount = user?.followers || user?.instagramFollowers || 0;
+  const userCalculatedTier = getTierNameByFollowers(userFollowersCount, Boolean(user?.isInstagramVerified || userFollowersCount > 0));
+
   return (
     <>
       {/* Mobile Backdrop for More Menu */}
@@ -134,7 +138,7 @@ export function Sidebar() {
           <div className="fixed bottom-[calc(4.25rem+env(safe-area-inset-bottom,0.5rem))] right-3 left-3 max-w-sm mx-auto rounded-2xl border border-border bg-popover/98 backdrop-blur-xl p-3 shadow-xl z-50 animate-in fade-in slide-from-bottom-2 duration-150">
             <div className="px-2 py-1.5 border-b border-border/50 mb-2 flex items-center justify-between">
               <span className="text-[11px] font-semibold text-muted-foreground tracking-wide uppercase">Navigation</span>
-              {user?.tier && <span className="text-[11px] text-foreground font-medium">{user.tier} Tier</span>}
+              {user && <span className="text-[11px] text-foreground font-medium">{userCalculatedTier} Tier</span>}
             </div>
             
             <div className="grid grid-cols-2 gap-1 py-1">
@@ -282,14 +286,14 @@ export function Sidebar() {
                   {user.instagramUsername ? `@${user.instagramUsername.replace(/^@+/, "")}` : (user.handle || user.name)}
                 </span>
                 <span className="text-[11px] font-semibold text-foreground bg-muted px-1.5 py-0.5 rounded">
-                  {user.isInstagramVerified && user.instagramUsername ? (user.tier || "Creator") : "Unlinked"}
+                  {userCalculatedTier}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
                 <span>Audience</span>
                 <span className="font-medium text-foreground">
-                  {user.isInstagramVerified && (user.followers || user.instagramFollowers)
-                    ? `${(user.followers || user.instagramFollowers || 0).toLocaleString()} followers`
+                  {user.isInstagramVerified && userFollowersCount
+                    ? `${userFollowersCount.toLocaleString()} followers`
                     : "Not connected"}
                 </span>
               </div>

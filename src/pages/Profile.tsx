@@ -548,9 +548,7 @@ export default function Profile() {
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
                   {activeUser.role === "creator" && (
                     <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded bg-muted text-foreground border border-border">
-                      {activeUser.isInstagramVerified && activeUser.instagramUsername && activeUser.followers >= 5000
-                        ? getTierNameByFollowers(activeUser.followers)
-                        : (activeUser.followers > 0 && activeUser.followers < 5000 ? INELIGIBLE_TIER_LABEL : "Unlinked")}
+                      {getTierNameByFollowers(activeUser.followers || 0, Boolean(activeUser.isInstagramVerified && activeUser.instagramUsername))}
                     </span>
                   )}
                   
