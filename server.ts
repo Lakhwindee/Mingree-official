@@ -671,16 +671,12 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
   return { appId, appSecret };
 }
 
-// Compute official Meta OAuth Redirect / Callback URI
-function getInstagramRedirectUri(req?: express.Request): string {
-  if (req) {
-    const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
-    const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
-    if (host) {
-      return `${protocol}://${host}/api/instagram/callback`;
-    }
-  }
-  return "https://mingree.com/api/instagram/callback";
+// Compute official Meta OAuth Redirect / Callback URI from process.env.APP_URL only
+function getInstagramRedirectUri(): string {
+  const appUrl = (process.env.APP_URL || "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app").replace(/\/+$/, "");
+  const redirectUri = `${appUrl}/api/instagram/callback`;
+  console.log(`[INSTAGRAM OAUTH] redirect_uri used: ${redirectUri}`);
+  return redirectUri;
 }
 
 const INTERNAL_SESSION_SECRET = crypto.randomBytes(32).toString("hex");
@@ -745,7 +741,7 @@ app.get("/api/admin/api-keys", (req, res) => {
     cashfree_secret_key: process.env.CASHFREE_SECRET_KEY ? "••••••••••••••••" : "",
     instagram_app_id: appId,
     instagram_app_secret: appSecret ? "••••••••••••••••" : "",
-    instagram_redirect_uri: getInstagramRedirectUri(req),
+    instagram_redirect_uri: getInstagramRedirectUri(),
     min_instagram_followers: getMinInstagramFollowers(),
     rapidapi_key: process.env.RAPIDAPI_KEY ? "••••••••••••••••" : "",
   });
@@ -755,7 +751,7 @@ app.get("/api/admin/api-keys", (req, res) => {
 app.get("/api/instagram/requirements", (req, res) => {
   res.json({
     minFollowers: getMinInstagramFollowers(),
-    redirectUri: getInstagramRedirectUri(req),
+    redirectUri: getInstagramRedirectUri(),
   });
 });
 
@@ -3548,7 +3544,7 @@ app.put("/api/users/:id/shipping-address", requireAuth, (req: AuthRequest, res) 
 // Instagram Configuration - Get
 app.get("/api/instagram/config", (req, res) => {
   const { appId, appSecret } = getInstagramCredentials();
-  const redirectUri = getInstagramRedirectUri(req);
+  const redirectUri = getInstagramRedirectUri();
   res.json({
     configured: Boolean(appId && appSecret),
     appId: appId || "",
@@ -3576,7 +3572,7 @@ app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
     configured: Boolean(creds.appId && creds.appSecret),
     appId: creds.appId || "",
     appSecretConfigured: Boolean(creds.appSecret),
-    redirectUri: getInstagramRedirectUri(req),
+    redirectUri: getInstagramRedirectUri(),
     devRedirectUri: "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback",
     sharedRedirectUri: "https://ais-pre-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback",
   });
@@ -3585,7 +3581,7 @@ app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
 // 1. GET /api/instagram/login - Initiates seamless official Instagram OAuth authorization
 app.get("/api/instagram/login", (req: express.Request, res: express.Response) => {
   const { appId, appSecret } = getInstagramCredentials();
-  const redirectUri = getInstagramRedirectUri(req);
+  const redirectUri = getInstagramRedirectUri();
   const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
 
   // Soft auth: derive userId from session cookie, bearer token, or query parameter
@@ -4055,7 +4051,7 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
   if (!userId) userId = 1;
 
   const { appId, appSecret } = getInstagramCredentials();
-  const redirectUri = getInstagramRedirectUri(req);
+  const redirectUri = getInstagramRedirectUri();
   const devRedirectUri = "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback";
   const sharedRedirectUri = "https://ais-pre-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback";
 
@@ -4099,7 +4095,7 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
 // 2. GET /api/instagram/callback - Receives authorization code, validates state, exchanges token server-side
 app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"], async (req, res) => {
   const { code, state, error, error_reason, error_description } = req.query;
-  const redirectUri = getInstagramRedirectUri(req);
+  const redirectUri = getInstagramRedirectUri();
 
   console.log(`[INSTAGRAM OAUTH] ========================================================`);
   console.log(`[INSTAGRAM OAUTH] OAuth Callback Received from Meta/Instagram`);
