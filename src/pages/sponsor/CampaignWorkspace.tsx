@@ -1347,37 +1347,7 @@ export default function CampaignWorkspace() {
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-zinc-300">Required Hashtags (Space separated)</Label>
-                <Input
-                  value={briefFormData.requiredTags}
-                  onChange={(e) => setBriefFormData({ ...briefFormData, requiredTags: e.target.value })}
-                  placeholder="#MundaDesi #Mingree"
-                  className="bg-zinc-950 border-zinc-700 text-white font-mono"
-                />
-              </div>
 
-              <div className="space-y-1.5">
-                <Label className="text-zinc-300">Required Mentions (Space separated)</Label>
-                <Input
-                  value={briefFormData.requiredMentions}
-                  onChange={(e) => setBriefFormData({ ...briefFormData, requiredMentions: e.target.value })}
-                  placeholder="@brand @artist"
-                  className="bg-zinc-950 border-zinc-700 text-white font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-zinc-300">Caption Instructions & Hook</Label>
-              <Textarea
-                rows={2}
-                value={briefFormData.requiredCaptionNote}
-                onChange={(e) => setBriefFormData({ ...briefFormData, requiredCaptionNote: e.target.value })}
-                className="bg-zinc-950 border-zinc-700 text-white font-mono"
-              />
-            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
