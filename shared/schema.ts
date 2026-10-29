@@ -14,7 +14,6 @@ export const users = pgTable("users", {
   isEmailVerified: boolean("email_verified").notNull().default(false),
   status: text("status").notNull().default("active"),
   companyName: text("company_name"),
-  city: text("city"),
   gstin: text("gstin"),
   pan: text("pan"),
   billingAddress: text("billing_address"),
@@ -400,26 +399,6 @@ export const adminSettings = pgTable("admin_settings", {
   value: jsonb("value").notNull(),
   description: text("description"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-// 34. Cities
-export const cities = pgTable("cities", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  state: text("state").notNull(),
-  active: boolean("active").notNull().default(true),
-});
-
-// 35. City Change Requests
-export const cityChangeRequests = pgTable("city_change_requests", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  fromCity: text("from_city").notNull(),
-  toCity: text("to_city").notNull(),
-  reason: text("reason").notNull(),
-  status: text("status").notNull().default("pending"), // pending | approved | rejected
-  note: text("note"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // Zod Schemas
