@@ -81,9 +81,26 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
         gstin text,
         pan text,
         billing_address text,
+        handle text,
+        avatar text,
+        tier text DEFAULT 'Nano',
+        instagram_username text,
+        is_instagram_verified boolean DEFAULT false,
+        instagram_followers int DEFAULT 0,
+        instagram_profile_url text,
+        followers int DEFAULT 0,
         created_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status);
+
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS handle text;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS tier text DEFAULT 'Nano';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_username text;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_instagram_verified boolean DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_followers int DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_profile_url text;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS followers int DEFAULT 0;
 
       INSERT INTO users (email, password_hash, name, role, email_verified, status)
       VALUES ('platform@mingree.internal', '!', 'Mingree Platform Treasury', 'admin', true, 'blocked')
@@ -107,6 +124,13 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
         token_expires_at timestamptz,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS instagram_user_id text;
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS username text;
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS followers int DEFAULT 0;
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS median_views int DEFAULT 0;
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS encrypted_access_token text;
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS access_token_enc text;
 
       CREATE TABLE IF NOT EXISTS campaigns (
         id bigserial PRIMARY KEY,
