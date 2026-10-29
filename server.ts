@@ -53,26 +53,42 @@ import {
 } from "./server/walletAndPayments";
 import { initCronJobs } from "./server/cronJobs";
 import {
-  getAdminUsersList,
+  recordAdminAuditLog,
+  getEscrowInvariantCheck,
+  getOverviewStatsAdmin,
+  getUsersPaginatedAdmin,
+  getUserDetailsAdmin,
   toggleBlockUserAdmin,
-  getRiskReviewQueueAdmin,
+  resetInstagramLinkAdmin,
+  changeUserCityAdmin,
+  getRiskReviewQueuePaginatedAdmin,
   decideRiskReviewAdmin,
+  getCampaignsAdmin,
+  getManualCheckDealsQueueAdmin,
+  decideManualCheckDealAdmin,
+  getSilentArtistDealsQueueAdmin,
+  decideSilentArtistDealAdmin,
   getDisputesAdmin,
-  resolveDisputeAdmin,
+  settleDisputeAdmin,
+  getWithdrawalsAdmin,
+  approveWithdrawalAdmin,
+  rejectWithdrawalAdmin,
+  getCashfreeOrdersAdmin,
   getUpiPaymentsAdmin,
   approveUpiPaymentAdmin,
   rejectUpiPaymentAdmin,
-  getAppConfigAdmin,
-  updateAppConfigAdmin,
+  getLedgerAdmin,
+  getCitiesAdmin,
+  updateCityAdmin,
+  getCityChangeRequestsAdmin,
+  decideCityChangeRequestAdmin,
+  getSettingsAdmin,
+  updateSettingsAdmin,
   getPromoCodesAdmin,
   createPromoCodeAdmin,
   togglePromoCodeAdmin,
-  getSupportTicketsAdmin,
-  respondSupportTicketAdmin,
-  getSecurityAuditLogsAdmin,
-  getInstagramBindingsAdmin,
-  transferInstagramBindingAdmin,
-  getPlatformRevenueAdmin,
+  getCreatorProSubscribersAdmin,
+  getAuditLogsAdmin,
 } from "./server/adminConsole";
 
 import {
@@ -5024,152 +5040,339 @@ app.get("/api/admin/stats", (req, res) => {
 
 
 
-// ================= ADMIN CONSOLE API ROUTES (STEP 13) =================
+// ================= ADMIN CONSOLE API ROUTES =================
 
-// 1. Users & Creator Profiles
+// 1. Overview & Escrow Invariant
+app.get("/api/admin/overview", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const overview = await getOverviewStatsAdmin();
+  res.json(overview);
+});
+
+// 2. Users Management (Paginated, Search, Filters, Detail, Actions)
 app.get("/api/admin/users", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const usersList = await getAdminUsersList();
-  res.json(usersList);
+  const { page, limit, search, role, status, tier, city } = req.query;
+  const result = await getUsersPaginatedAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 15,
+    search: typeof search === "string" ? search : undefined,
+    role: typeof role === "string" ? role : undefined,
+    status: typeof status === "string" ? status : undefined,
+    tier: typeof tier === "string" ? tier : undefined,
+    city: typeof city === "string" ? city : undefined,
+  });
+  res.json(result);
+});
+
+app.get("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const userId = Number(req.params.id);
+  const details = await getUserDetailsAdmin(userId);
+  if (!details) return res.status(404).json({ error: "User not found" });
+  res.json(details);
 });
 
 app.post("/api/admin/users/:id/block", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const targetUserId = Number(req.params.id);
   const { block, reason } = req.body;
-  const result = await toggleBlockUserAdmin(req.user!.id, targetUserId, Boolean(block), reason);
-  res.json(result);
+  try {
+    const result = await toggleBlockUserAdmin(req.user!.id, targetUserId, Boolean(block), reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to block/unblock user" });
+  }
 });
 
-// 2. Risk Review Queue
-app.get("/api/admin/risk-queue", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const queue = await getRiskReviewQueueAdmin();
-  res.json(queue);
+app.post("/api/admin/users/:id/reset-instagram", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const targetUserId = Number(req.params.id);
+  const { reason } = req.body;
+  try {
+    const result = await resetInstagramLinkAdmin(req.user!.id, targetUserId, reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to reset Instagram link" });
+  }
 });
 
-app.post("/api/admin/risk-queue/:userId/decide", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const targetUserId = Number(req.params.userId);
-  const { action, notes } = req.body;
-  const result = await decideRiskReviewAdmin(req.user!.id, targetUserId, action, notes);
-  res.json(result);
+app.post("/api/admin/users/:id/city", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const targetUserId = Number(req.params.id);
+  const { city, reason } = req.body;
+  try {
+    const result = await changeUserCityAdmin(req.user!.id, targetUserId, String(city), reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to change city" });
+  }
 });
 
-// 3. Disputes
-app.get("/api/admin/disputes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const disputesList = await getDisputesAdmin();
-  res.json(disputesList);
-});
-
-app.post("/api/admin/disputes/:id/resolve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const disputeId = Number(req.params.id);
-  const { resolution, resolutionNotes, creatorAmount, artistAmount } = req.body;
-  const result = await resolveDisputeAdmin(req.user!.id, disputeId, resolution, resolutionNotes, {
-    creatorAmount: Number(creatorAmount || 0),
-    artistAmount: Number(artistAmount || 0),
+// 3. Risk Review Queue
+app.get("/api/admin/risk-review", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { page, limit, search } = req.query;
+  const result = await getRiskReviewQueuePaginatedAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 15,
+    search: typeof search === "string" ? search : undefined,
   });
   res.json(result);
 });
 
-// 4. Withdrawals Management
+app.post("/api/admin/risk-review/:id/decide", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const targetUserId = Number(req.params.id);
+  const { action, notes } = req.body;
+  try {
+    const result = await decideRiskReviewAdmin(req.user!.id, targetUserId, action, notes, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to submit risk review decision" });
+  }
+});
+
+// 4. Campaigns & Deals
+app.get("/api/admin/campaigns", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { page, limit, search, status, artistId, city } = req.query;
+  const result = await getCampaignsAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 15,
+    search: typeof search === "string" ? search : undefined,
+    status: typeof status === "string" ? status : undefined,
+    artistId: artistId ? Number(artistId) : undefined,
+    city: typeof city === "string" ? city : undefined,
+  });
+  res.json(result);
+});
+
+app.get("/api/admin/manual-check-deals", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const queue = await getManualCheckDealsQueueAdmin();
+  res.json(queue);
+});
+
+app.post("/api/admin/manual-check-deals/:id/decide", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const dealId = Number(req.params.id);
+  const { action, reason } = req.body;
+  try {
+    const result = await decideManualCheckDealAdmin(req.user!.id, dealId, action, reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to decide manual check deal" });
+  }
+});
+
+app.get("/api/admin/silent-artist-deals", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const queue = await getSilentArtistDealsQueueAdmin();
+  res.json(queue);
+});
+
+app.post("/api/admin/silent-artist-deals/:id/decide", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const dealId = Number(req.params.id);
+  const { action, reason } = req.body;
+  try {
+    const result = await decideSilentArtistDealAdmin(req.user!.id, dealId, action, reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to decide silent artist deal" });
+  }
+});
+
+// 5. Disputes Management
+app.get("/api/admin/disputes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { page, limit, status } = req.query;
+  const result = await getDisputesAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 15,
+    status: typeof status === "string" ? status : undefined,
+  });
+  res.json(result);
+});
+
+app.post("/api/admin/disputes/:id/settle", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const disputeId = Number(req.params.id);
+  const { resolution, reason, splitParams, idempotencyKey } = req.body;
+  try {
+    const result = await settleDisputeAdmin(
+      req.user!.id,
+      disputeId,
+      resolution,
+      reason,
+      splitParams,
+      idempotencyKey,
+      req.ip
+    );
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to settle dispute" });
+  }
+});
+
+// 6. Withdrawals Management
 app.get("/api/admin/withdrawals", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const list = await getAllWithdrawalsAdmin();
-  res.json(list);
+  const { page, limit, status } = req.query;
+  const result = await getWithdrawalsAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 15,
+    status: typeof status === "string" ? status : undefined,
+  });
+  res.json(result);
 });
 
 app.post("/api/admin/withdrawals/:id/approve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const withdrawalId = Number(req.params.id);
   const { utrRef, utr } = req.body;
-  const result = await approveWithdrawal(withdrawalId, req.user!.id, utrRef || utr || "");
-  res.json(result);
+  try {
+    const result = await approveWithdrawalAdmin(req.user!.id, withdrawalId, utrRef || utr || "", req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to approve withdrawal" });
+  }
 });
 
 app.post("/api/admin/withdrawals/:id/reject", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const withdrawalId = Number(req.params.id);
   const { reason, rejectionReason } = req.body;
-  const result = await rejectWithdrawal(withdrawalId, req.user!.id, reason || rejectionReason || "");
+  try {
+    const result = await rejectWithdrawalAdmin(req.user!.id, withdrawalId, reason || rejectionReason || "", req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to reject withdrawal" });
+  }
+});
+
+// 7. Payments (Cashfree, UPI, Ledger Explorer)
+app.get("/api/admin/payments/cashfree", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { page, limit } = req.query;
+  const result = await getCashfreeOrdersAdmin({ page: page ? Number(page) : 1, limit: limit ? Number(limit) : 15 });
   res.json(result);
 });
 
-// 5. Manual UPI Payments
-app.get(["/api/admin/pending-upi-payments", "/api/admin/upi-payments"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+app.get("/api/admin/payments/upi", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const upiList = await getUpiPaymentsAdmin();
   res.json(upiList);
 });
 
-app.post(["/api/admin/pending-upi-payments/:id/approve", "/api/admin/upi-payments/:id/approve"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+app.post("/api/admin/payments/upi/:id/approve", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const paymentId = Number(req.params.id);
-  const result = await approveUpiPaymentAdmin(req.user!.id, paymentId);
-  res.json(result);
+  try {
+    const result = await approveUpiPaymentAdmin(req.user!.id, paymentId, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to approve UPI payment" });
+  }
 });
 
-app.post(["/api/admin/pending-upi-payments/:id/reject", "/api/admin/upi-payments/:id/reject"], requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+app.post("/api/admin/payments/upi/:id/reject", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const paymentId = Number(req.params.id);
   const { reason } = req.body;
-  const result = await rejectUpiPaymentAdmin(req.user!.id, paymentId, reason);
+  try {
+    const result = await rejectUpiPaymentAdmin(req.user!.id, paymentId, reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to reject UPI payment" });
+  }
+});
+
+app.get("/api/admin/ledger", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { page, limit, userId, type, startDate, endDate } = req.query;
+  const result = await getLedgerAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 20,
+    userId: userId ? Number(userId) : undefined,
+    type: typeof type === "string" ? type : undefined,
+    startDate: typeof startDate === "string" ? startDate : undefined,
+    endDate: typeof endDate === "string" ? endDate : undefined,
+  });
   res.json(result);
 });
 
-// 6. App Config & Fee / Benchmark Editor
-app.get("/api/admin/config", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const currentConfig = await getAppConfigAdmin();
-  res.json(currentConfig);
+// 8. Cities Management & City Change Requests
+app.get("/api/admin/cities", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const list = await getCitiesAdmin();
+  res.json(list);
 });
 
-app.post("/api/admin/config", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const result = await updateAppConfigAdmin(req.user!.id, req.body);
-  res.json(result);
+app.post("/api/admin/cities/:id", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const cityId = Number(req.params.id);
+  const { name, state, active, reason } = req.body;
+  try {
+    const result = await updateCityAdmin(req.user!.id, cityId, name, state, Boolean(active), reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to update city" });
+  }
 });
 
-// 7. Promo Codes
+app.get("/api/admin/city-change-requests", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const list = await getCityChangeRequestsAdmin();
+  res.json(list);
+});
+
+app.post("/api/admin/city-change-requests/:id/decide", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const requestId = Number(req.params.id);
+  const { action, note } = req.body;
+  try {
+    const result = await decideCityChangeRequestAdmin(req.user!.id, requestId, action, note, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to decide city change request" });
+  }
+});
+
+// 9. Platform Settings
+app.get("/api/admin/settings", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const settings = await getSettingsAdmin();
+  res.json(settings);
+});
+
+app.post("/api/admin/settings", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { settings, reason } = req.body;
+  try {
+    const result = await updateSettingsAdmin(req.user!.id, settings || {}, reason, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to update platform settings" });
+  }
+});
+
+// 10. Promo Codes & Creator Pro
 app.get("/api/admin/promo-codes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const codes = await getPromoCodesAdmin();
   res.json(codes);
 });
 
 app.post("/api/admin/promo-codes", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const result = await createPromoCodeAdmin(req.user!.id, req.body);
-  res.json(result);
+  try {
+    const result = await createPromoCodeAdmin(req.user!.id, req.body, req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to create promo code" });
+  }
 });
 
 app.patch("/api/admin/promo-codes/:id/toggle", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
   const promoId = Number(req.params.id);
   const { isActive } = req.body;
-  const result = await togglePromoCodeAdmin(req.user!.id, promoId, Boolean(isActive));
+  try {
+    const result = await togglePromoCodeAdmin(req.user!.id, promoId, Boolean(isActive), req.ip);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to toggle promo code" });
+  }
+});
+
+app.get("/api/admin/creator-pro", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const list = await getCreatorProSubscribersAdmin();
+  res.json(list);
+});
+
+// 11. Security Audit Logs
+app.get("/api/admin/audit-logs", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
+  const { page, limit, adminId, action, targetType, startDate, endDate } = req.query;
+  const result = await getAuditLogsAdmin({
+    page: page ? Number(page) : 1,
+    limit: limit ? Number(limit) : 20,
+    adminId: adminId ? Number(adminId) : undefined,
+    action: typeof action === "string" ? action : undefined,
+    targetType: typeof targetType === "string" ? targetType : undefined,
+    startDate: typeof startDate === "string" ? startDate : undefined,
+    endDate: typeof endDate === "string" ? endDate : undefined,
+  });
   res.json(result);
-});
-
-// 8. Support Tickets
-app.get("/api/admin/support-tickets", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const tickets = await getSupportTicketsAdmin();
-  res.json(tickets);
-});
-
-app.post("/api/admin/support-tickets/:id/respond", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const ticketId = Number(req.params.id);
-  const { responseText, newStatus } = req.body;
-  const result = await respondSupportTicketAdmin(req.user!.id, ticketId, responseText, newStatus);
-  res.json(result);
-});
-
-// 9. Security Logs & Instagram Identity Binding Transfers
-app.get("/api/admin/security-logs", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const logs = await getSecurityAuditLogsAdmin();
-  res.json(logs);
-});
-
-app.get("/api/admin/instagram-bindings", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const bindings = await getInstagramBindingsAdmin();
-  res.json(bindings);
-});
-
-app.post("/api/admin/instagram-bindings/transfer", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const { targetInstagramUserId, newUserId } = req.body;
-  const result = await transferInstagramBindingAdmin(req.user!.id, targetInstagramUserId, Number(newUserId));
-  res.json(result);
-});
-
-// 10. Platform Revenue Breakdown
-app.get("/api/admin/revenue", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  const revenue = await getPlatformRevenueAdmin();
-  res.json(revenue);
 });
 
 app.post("/api/promo-codes/validate", requireAuth, async (req: AuthRequest, res) => {

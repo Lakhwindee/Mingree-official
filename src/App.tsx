@@ -135,6 +135,25 @@ function GuestRoute({ component: Component }: { component: React.ComponentType }
   return <Component />;
 }
 
+// Protected Route wrapper for Admin
+function AdminRoute() {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-slate-950 text-white">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated && user?.role === "admin") {
+    return <AdminDashboard />;
+  }
+
+  return <AdminLogin />;
+}
+
 function Router() {
   return (
     <Switch>
@@ -218,9 +237,8 @@ function Router() {
       <Route path="/sponsor/support" component={Support} />
       
       {/* Admin Routes */}
-      <Route path="/admin">
-        <Redirect to="/login" />
-      </Route>
+      <Route path="/admin" component={AdminRoute} />
+      <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin/dashboard" component={AdminDashboard} />
       
       {/* Legal Pages */}
