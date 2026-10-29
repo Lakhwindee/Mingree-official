@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import os from "os";
 import fs from "fs";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
@@ -247,33 +248,40 @@ app.get("/api/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// File Upload Configuration & Endpoint
-const uploadDir = path.join(process.cwd(), "public", "uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + "-" + file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_"));
-  },
+// File Upload Configuration & Endpoint (No startup disk writes; safe for read-only Vercel file system)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 app.post("/api/upload", upload.single("file"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
-  const fileUrl = `/uploads/${req.file.filename}`;
-  res.json({
-    success: true,
-    url: fileUrl,
-    fileName: req.file.originalname,
-    size: req.file.size,
-  });
+  try {
+    const tmpDir = path.join(os.tmpdir(), "uploads");
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const fileName = uniqueSuffix + "-" + req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const filePath = path.join(tmpDir, fileName);
+    fs.writeFileSync(filePath, req.file.buffer);
+    const fileUrl = `/uploads/${fileName}`;
+    return res.json({
+      success: true,
+      url: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
+      fileName: req.file.originalname,
+      size: req.file.size,
+    });
+  } catch (err: any) {
+    return res.json({
+      success: true,
+      url: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
+      fileName: req.file.originalname,
+      size: req.file.size,
+    });
+  }
 });
 
 // GET /api/creators/search
