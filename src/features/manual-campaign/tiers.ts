@@ -1,14 +1,15 @@
 // Tier labels are filters only. They are never prices. Half-open ranges [min, max).
 // Must match the backend (src/util.ts TIERS) and shared/tiers.ts after Step 1 of the pack.
 export const TIERS = [
-  { id: "nano", label: "Nano", min: 5_000, max: 10_000 },
-  { id: "micro", label: "Micro", min: 10_000, max: 50_000 },
-  { id: "mid", label: "Mid", min: 50_000, max: 100_000 },
-  { id: "upper_mid", label: "Upper-Mid", min: 100_000, max: 250_000 },
-  { id: "macro", label: "Macro", min: 250_000, max: 500_000 },
-  { id: "large", label: "Large", min: 500_000, max: 1_000_000 },
-  { id: "mega", label: "Mega", min: 1_000_000, max: 2_500_000 },
-  { id: "elite", label: "Elite", min: 2_500_000, max: Infinity },
+  { id: "tier_1", label: "Tier 1", min: 500, max: 2500 },
+  { id: "tier_2", label: "Tier 2", min: 2500, max: 5000 },
+  { id: "tier_3", label: "Tier 3", min: 5000, max: 10000 },
+  { id: "tier_4", label: "Tier 4", min: 10000, max: 25000 },
+  { id: "tier_5", label: "Tier 5", min: 25000, max: 50000 },
+  { id: "tier_6", label: "Tier 6", min: 50000, max: 100000 },
+  { id: "tier_7", label: "Tier 7", min: 100000, max: 250000 },
+  { id: "tier_8", label: "Tier 8", min: 250000, max: 500000 },
+  { id: "tier_9", label: "Tier 9", min: 500000, max: Infinity },
 ] as const;
 
 export const compact = (n: number): string => {

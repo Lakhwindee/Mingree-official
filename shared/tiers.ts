@@ -7,22 +7,23 @@ export interface Tier {
   basePayment?: number;
 }
 
-// Manual & Fixed mode tiers with 8 canonical half-open ranges [min, max)
+// Manual & Fixed mode tiers starting from 500 followers
 export const TIERS: Tier[] = [
-  { id: 1, name: "Nano", label: "Nano", minFollowers: 5000, maxFollowers: 10000, basePayment: 1000 },
-  { id: 2, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 2500 },
-  { id: 3, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 5000 },
-  { id: 4, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 10000 },
-  { id: 5, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 500000, basePayment: 20000 },
-  { id: 6, name: "Large", label: "Large", minFollowers: 500000, maxFollowers: 1000000, basePayment: 35000 },
-  { id: 7, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: 2500000, basePayment: 60000 },
-  { id: 8, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 100000 },
+  { id: 1, name: "Tier 1", label: "Tier 1", minFollowers: 500, maxFollowers: 2500, basePayment: 1000 },
+  { id: 2, name: "Tier 2", label: "Tier 2", minFollowers: 2500, maxFollowers: 5000, basePayment: 2000 },
+  { id: 3, name: "Tier 3", label: "Tier 3", minFollowers: 5000, maxFollowers: 10000, basePayment: 3500 },
+  { id: 4, name: "Tier 4", label: "Tier 4", minFollowers: 10000, maxFollowers: 25000, basePayment: 6000 },
+  { id: 5, name: "Tier 5", label: "Tier 5", minFollowers: 25000, maxFollowers: 50000, basePayment: 10000 },
+  { id: 6, name: "Tier 6", label: "Tier 6", minFollowers: 50000, maxFollowers: 100000, basePayment: 18000 },
+  { id: 7, name: "Tier 7", label: "Tier 7", minFollowers: 100000, maxFollowers: 250000, basePayment: 30000 },
+  { id: 8, name: "Tier 8", label: "Tier 8", minFollowers: 250000, maxFollowers: 500000, basePayment: 50000 },
+  { id: 9, name: "Tier 9", label: "Tier 9", minFollowers: 500000, maxFollowers: Infinity, basePayment: 100000 },
 ];
 
 export const FIXED_TIERS = TIERS;
 
-export const MIN_FOLLOWERS = 5000;
-export const INELIGIBLE_TIER_LABEL = "Not eligible yet (needs 5,000 followers)";
+export const MIN_FOLLOWERS = 500;
+export const INELIGIBLE_TIER_LABEL = "Not eligible yet (needs 500 followers)";
 
 export function getTierByFollowers(followers: number): Tier | null {
   if (followers < MIN_FOLLOWERS) return null;
