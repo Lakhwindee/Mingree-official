@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { getTierByFollowers } from "../shared/tiers";
 
 // Token Encryption Key (AES-256-GCM)
 const TOKEN_ENC_RAW = process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "mingree_token_encryption_default_key";
@@ -54,15 +55,12 @@ export function calculateEngagementRate(totalLikes: number, totalComments: numbe
   return parseFloat(rate.toFixed(2));
 }
 
-// 5. Tier Label Classification using half-open ranges [min, max) from brief
+// 5. Tier Label Classification using 20 tiers from shared/tiers.ts
 export function getTierLabelFromFollowers(followers: number): string {
   if (followers < 500) return "Ineligible (<500)";
-  if (followers < 2000) return "Starter";
-  if (followers < 10000) return "Nano";
-  if (followers < 50000) return "Micro";
-  if (followers < 250000) return "Mid";
-  if (followers < 1000000) return "Macro";
-  return "Mega";
+  if (followers > 500000) return "Above 500K";
+  const tier = getTierByFollowers(followers);
+  return tier ? tier.name : "Ineligible (<500)";
 }
 
 // 6. Timing-Safe HMAC OAuth State Verification

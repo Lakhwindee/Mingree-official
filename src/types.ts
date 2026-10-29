@@ -108,15 +108,26 @@ export interface SponsorDeposit {
 }
 
 export const TIERS: Tier[] = [
-  { id: 1, name: "Tier 1", label: "Tier 1", minFollowers: 500, maxFollowers: 2500, basePayment: 1000 },
-  { id: 2, name: "Tier 2", label: "Tier 2", minFollowers: 2500, maxFollowers: 5000, basePayment: 2000 },
-  { id: 3, name: "Tier 3", label: "Tier 3", minFollowers: 5000, maxFollowers: 10000, basePayment: 3500 },
-  { id: 4, name: "Tier 4", label: "Tier 4", minFollowers: 10000, maxFollowers: 25000, basePayment: 6000 },
-  { id: 5, name: "Tier 5", label: "Tier 5", minFollowers: 25000, maxFollowers: 50000, basePayment: 10000 },
-  { id: 6, name: "Tier 6", label: "Tier 6", minFollowers: 50000, maxFollowers: 100000, basePayment: 18000 },
-  { id: 7, name: "Tier 7", label: "Tier 7", minFollowers: 100000, maxFollowers: 250000, basePayment: 30000 },
-  { id: 8, name: "Tier 8", label: "Tier 8", minFollowers: 250000, maxFollowers: 500000, basePayment: 50000 },
-  { id: 9, name: "Tier 9", label: "Tier 9", minFollowers: 500000, maxFollowers: Infinity, basePayment: 100000 },
+  { id: 1, name: "Tier 1", label: "Tier 1", minFollowers: 500, maxFollowers: 1001, basePayment: 22 },
+  { id: 2, name: "Tier 2", label: "Tier 2", minFollowers: 1001, maxFollowers: 2001, basePayment: 30 },
+  { id: 3, name: "Tier 3", label: "Tier 3", minFollowers: 2001, maxFollowers: 3001, basePayment: 42 },
+  { id: 4, name: "Tier 4", label: "Tier 4", minFollowers: 3001, maxFollowers: 5001, basePayment: 60 },
+  { id: 5, name: "Tier 5", label: "Tier 5", minFollowers: 5001, maxFollowers: 7501, basePayment: 75 },
+  { id: 6, name: "Tier 6", label: "Tier 6", minFollowers: 7501, maxFollowers: 10001, basePayment: 90 },
+  { id: 7, name: "Tier 7", label: "Tier 7", minFollowers: 10001, maxFollowers: 12501, basePayment: 105 },
+  { id: 8, name: "Tier 8", label: "Tier 8", minFollowers: 12501, maxFollowers: 15001, basePayment: 120 },
+  { id: 9, name: "Tier 9", label: "Tier 9", minFollowers: 15001, maxFollowers: 20001, basePayment: 180 },
+  { id: 10, name: "Tier 10", label: "Tier 10", minFollowers: 20001, maxFollowers: 25001, basePayment: 210 },
+  { id: 11, name: "Tier 11", label: "Tier 11", minFollowers: 25001, maxFollowers: 30001, basePayment: 240 },
+  { id: 12, name: "Tier 12", label: "Tier 12", minFollowers: 30001, maxFollowers: 40001, basePayment: 300 },
+  { id: 13, name: "Tier 13", label: "Tier 13", minFollowers: 40001, maxFollowers: 50001, basePayment: 360 },
+  { id: 14, name: "Tier 14", label: "Tier 14", minFollowers: 50001, maxFollowers: 75001, basePayment: 480 },
+  { id: 15, name: "Tier 15", label: "Tier 15", minFollowers: 75001, maxFollowers: 100001, basePayment: 600 },
+  { id: 16, name: "Tier 16", label: "Tier 16", minFollowers: 100001, maxFollowers: 150001, basePayment: 840 },
+  { id: 17, name: "Tier 17", label: "Tier 17", minFollowers: 150001, maxFollowers: 200001, basePayment: 1080 },
+  { id: 18, name: "Tier 18", label: "Tier 18", minFollowers: 200001, maxFollowers: 300001, basePayment: 1440 },
+  { id: 19, name: "Tier 19", label: "Tier 19", minFollowers: 300001, maxFollowers: 400001, basePayment: 1800 },
+  { id: 20, name: "Tier 20", label: "Tier 20", minFollowers: 400001, maxFollowers: 500001, basePayment: 2160 },
 ];
 
 export const CATEGORIES = [
