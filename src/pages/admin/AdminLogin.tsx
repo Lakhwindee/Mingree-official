@@ -26,11 +26,17 @@ export default function AdminLogin() {
         body: JSON.stringify({ email: loginEmail, password: loginPassword }),
         credentials: "include",
       });
+      const text = await response.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error("Invalid server response. Please try again.");
+      }
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.error || "Login failed");
       }
-      return response.json();
+      return data;
     },
     onSuccess: async (user) => {
       login(user);
@@ -38,8 +44,12 @@ export default function AdminLogin() {
       queryClient.setQueryData(["currentUser"], user);
       setLocation("/admin/dashboard");
     },
-    onError: (error: Error) => {
-      setError(error.message);
+    onError: (err: Error) => {
+      const rawMsg = err.message || "";
+      const safeMsg = rawMsg.includes("expected pattern") || rawMsg.includes("SyntaxError") || rawMsg.includes("JSON")
+        ? "Invalid email or password. Please try again."
+        : rawMsg;
+      setError(safeMsg);
     },
   });
 
