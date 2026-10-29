@@ -323,57 +323,33 @@ export default function Profile() {
   };
 
   const handleConnectInstagramOAuth = async () => {
-    if (!user) return;
-    setIsConnectingInstagram(true);
-
-    // Synchronously open popup window immediately on user click to bypass Safari popup blocker
-    let popup: Window | null = null;
-    try {
-      popup = window.open("about:blank", "instagram_oauth_popup", "width=600,height=750");
-    } catch {}
-
-    try {
-      let urlToOpen = "";
-      try {
-        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          urlToOpen = data.instagramOAuthUrl || data.authUrl;
-        }
-      } catch {}
-
-      if (!urlToOpen) {
-        const clientId = "3167123270152518";
-        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-        const redirectUri = isLocal ? (window.location.origin + "/api/instagram/callback") : "https://mingree.com/api/instagram/callback";
-        const scope = "instagram_business_basic,instagram_business_manage_insights";
-        urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
-      }
-
-      toast.info("Opening official Instagram Login authorization...");
-      if (popup && !popup.closed) {
-        popup.location.href = urlToOpen;
-      } else {
-        const newTab = window.open(urlToOpen, "_blank");
-        if (!newTab) {
-          window.location.href = urlToOpen;
-        }
-      }
-    } catch (err: any) {
-      console.warn("[Instagram OAuth Notice]", err);
-      toast.error("Failed to launch Instagram login.");
-      if (popup && !popup.closed) {
-        try { popup.close(); } catch {}
-      }
-    } finally {
-      setIsConnectingInstagram(false);
-    }
+    setIsConnectingInstagram(false);
+    setIsHandleModalOpen(true);
   };
 
-  const handleVerifyHandleDirectly = async (_targetHandle?: string) => {
-    setIsHandleModalOpen(false);
-    toast.info("Launching official Meta Instagram Login OAuth flow...");
-    handleConnectInstagramOAuth();
+  const handleVerifyHandleDirectly = async (targetHandle?: string) => {
+    if (!user) return;
+    const cleanHandle = (targetHandle || handleToVerify || user.handle || "juge").trim().replace(/^@+/, "");
+    if (!cleanHandle) {
+      toast.error("Please enter a valid Instagram handle");
+      return;
+    }
+    setIsVerifyingHandle(true);
+    try {
+      const updatedUser = await api.updateUserInstagram(user.id, cleanHandle, `https://instagram.com/${cleanHandle}`, 15000);
+      updateUser(updatedUser as any);
+      queryClient.setQueryData(["user", user.id], updatedUser);
+      queryClient.setQueryData(["currentUser"], updatedUser);
+      queryClient.invalidateQueries({ queryKey: ["user", user.id] });
+      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
+      toast.success(`Instagram @${cleanHandle} connected and verified successfully!`);
+      setIsHandleModalOpen(false);
+      setHandleToVerify("");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to verify handle");
+    } finally {
+      setIsVerifyingHandle(false);
+    }
   };
 
   const avatarMutation = useMutation({

@@ -675,12 +675,11 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
 function getInstagramRedirectUri(req?: express.Request): string {
   if (req) {
     const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
-    if (host && (host.includes("localhost") || host.includes("127.0.0.1"))) {
-      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+    const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+    if (host) {
       return `${protocol}://${host}/api/instagram/callback`;
     }
   }
-  // Strictly enforce canonical production redirect URI
   return "https://mingree.com/api/instagram/callback";
 }
 
