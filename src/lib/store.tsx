@@ -71,28 +71,7 @@ const StoreContext = React.createContext<StoreContextType | undefined>(undefined
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = React.useState<UserProfile>(defaultUser);
   const [campaignsStatus, setCampaignsStatus] = React.useState<Record<string, CampaignSubmission>>({});
-  const [transactions, setTransactions] = React.useState<Transaction[]>([
-    {
-      id: "tx-1",
-      type: "credit",
-      amount: 500,
-      tax: 50,
-      net: 450,
-      date: "2024-05-15",
-      description: "Campaign Payout: Zara Summer Launch",
-      status: "completed"
-    },
-    {
-      id: "tx-2",
-      type: "credit",
-      amount: 150,
-      tax: 15,
-      net: 135,
-      date: "2024-05-20",
-      description: "Campaign Payout: Liquid I.V. Story",
-      status: "completed"
-    }
-  ]);
+  const [transactions, setTransactions] = React.useState<Transaction[]>([]);
 
   const updateUser = (data: Partial<UserProfile>) => {
     setUser(prev => ({ ...prev, ...data }));

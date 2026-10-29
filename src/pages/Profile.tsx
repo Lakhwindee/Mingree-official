@@ -77,6 +77,20 @@ export default function Profile() {
   const [handleToVerify, setHandleToVerify] = useState("");
   const [isVerifyingHandle, setIsVerifyingHandle] = useState(false);
 
+  const [lowFollowersNotice, setLowFollowersNotice] = useState<{
+    open: boolean;
+    username: string;
+    followers: number;
+    requiredMin: number;
+    message: string;
+  }>({
+    open: false,
+    username: "",
+    followers: 0,
+    requiredMin: 500,
+    message: "",
+  });
+
   // Rate card states
   const [reelPrice, setReelPrice] = useState("2500");
   const [storyPrice, setStoryPrice] = useState("800");
@@ -182,10 +196,44 @@ export default function Profile() {
     }
   };
 
+  const handleOAuthError = (errorMsg: string, usernameFromData?: string, followersFromData?: number) => {
+    setIsConnectingInstagram(false);
+    const lower = (errorMsg || "").toLowerCase();
+    if (
+      lower.includes("follower") ||
+      lower.includes("minimum") ||
+      lower.includes("require") ||
+      lower.includes("qualify") ||
+      lower.includes("tier") ||
+      (typeof followersFromData === "number" && followersFromData > 0 && followersFromData < 500)
+    ) {
+      const matchFollowers = errorMsg.match(/only\s+([\d,]+)\s+followers/i) || errorMsg.match(/([\d,]+)\s+followers/i);
+      const matchUsername = errorMsg.match(/@([a-zA-Z0-9_.]+)/);
+      const count = typeof followersFromData === "number" && followersFromData > 0 
+        ? followersFromData 
+        : (matchFollowers ? parseInt(matchFollowers[1].replace(/,/g, ""), 10) : 0);
+      const uname = usernameFromData || (matchUsername ? matchUsername[1] : (activeUser?.instagramUsername || activeUser?.handle || ""));
+
+      setLowFollowersNotice({
+        open: true,
+        username: uname,
+        followers: count,
+        requiredMin: count < 500 ? 500 : 5000,
+        message: errorMsg || `Instagram account @${uname} does not meet the follower requirement.`,
+      });
+    } else {
+      toast.error(errorMsg || "Instagram connection failed.");
+    }
+  };
+
   useEffect(() => {
-    // Clean URL query parameters if present without triggering auto-connection
+    // Check URL parameters for errors or completion
     const params = new URLSearchParams(window.location.search);
-    if (params.has("code") || params.has("error") || params.has("instagram_connected") || params.has("instagram_error")) {
+    const igErr = params.get("instagram_error");
+    if (igErr) {
+      handleOAuthError(decodeURIComponent(igErr));
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.has("code") || params.has("error") || params.has("instagram_connected")) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -200,8 +248,7 @@ export default function Profile() {
           if (event.data?.type === "INSTAGRAM_OAUTH_SUCCESS") {
             refreshAccountFromServer(true);
           } else if (event.data?.type === "INSTAGRAM_OAUTH_ERROR") {
-            setIsConnectingInstagram(false);
-            toast.error(event.data?.error || "Instagram connection failed.");
+            handleOAuthError(event.data?.error || "Instagram connection failed.", event.data?.username, event.data?.followers);
           }
         };
       }
@@ -214,8 +261,7 @@ export default function Profile() {
           if (parsed.type === "INSTAGRAM_OAUTH_SUCCESS") {
             refreshAccountFromServer(true);
           } else if (parsed.type === "INSTAGRAM_OAUTH_ERROR") {
-            setIsConnectingInstagram(false);
-            toast.error(parsed.error || "Instagram connection failed.");
+            handleOAuthError(parsed.error || "Instagram connection failed.", parsed.username, parsed.followers);
           }
         } catch {}
       }
@@ -228,8 +274,7 @@ export default function Profile() {
       if (event.data?.type === "INSTAGRAM_AUTH_SUCCESS" || event.data?.type === "INSTAGRAM_OAUTH_SUCCESS") {
         refreshAccountFromServer(true);
       } else if (event.data?.type === "INSTAGRAM_AUTH_ERROR" || event.data?.type === "INSTAGRAM_OAUTH_ERROR") {
-        setIsConnectingInstagram(false);
-        toast.error(event.data?.error || "Instagram connection failed.");
+        handleOAuthError(event.data?.error || "Instagram connection failed.", event.data?.username, event.data?.followers);
       }
     };
     window.addEventListener("message", handleAuthMessage);
@@ -777,7 +822,7 @@ export default function Profile() {
 
                   <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
                     <span className="text-emerald-500 font-bold">✓</span>
-                    <span>Audience metrics and performance benchmarks sync automatically with active brand offers.</span>
+                    <span>Audience metrics sync automatically with active brand offers.</span>
                   </div>
                 </div>
               ) : (
@@ -903,6 +948,105 @@ export default function Profile() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Low Followers / Tier Requirement Notice Dialog */}
+      <Dialog open={lowFollowersNotice.open} onOpenChange={(open) => setLowFollowersNotice(prev => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-md p-6 bg-card border-border shadow-2xl">
+          <DialogHeader className="space-y-3 text-center sm:text-left">
+            <div className="mx-auto sm:mx-0 w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 shadow-2xs">
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+
+            <div>
+              <DialogTitle className="text-lg font-bold text-foreground">
+                Follower Requirement Notice
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground mt-1">
+                {lowFollowersNotice.username ? `@${lowFollowersNotice.username}` : "Instagram Creator Profile"} • Minimum Threshold Requirement
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Follower progress box */}
+            <div className="p-4 rounded-xl bg-muted/40 border border-border/80 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-foreground">Verified Audience Count</span>
+                <span className="font-bold font-mono text-amber-600 dark:text-amber-400">
+                  {lowFollowersNotice.followers.toLocaleString()} / {lowFollowersNotice.requiredMin.toLocaleString()}
+                </span>
+              </div>
+
+              <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden border border-border/60">
+                <div
+                  className="bg-gradient-to-r from-amber-500 to-pink-500 h-2.5 rounded-full transition-all duration-500"
+                  style={{
+                    width: `${Math.min(100, Math.max(6, Math.round((lowFollowersNotice.followers / lowFollowersNotice.requiredMin) * 100)))}%`
+                  }}
+                />
+              </div>
+
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {lowFollowersNotice.followers < 500 ? (
+                  <>
+                    Aapke Instagram account par abhi <strong className="text-foreground font-semibold">{lowFollowersNotice.followers.toLocaleString()} followers</strong> hain. Mingree par account connect karne ke liye minimum <strong className="text-foreground font-semibold">500 followers</strong> ki zaroorat hai.
+                  </>
+                ) : (
+                  <>
+                    Aapke Instagram account par <strong className="text-foreground font-semibold">{lowFollowersNotice.followers.toLocaleString()} followers</strong> hain. Paid Nano tier brand campaigns ke liye minimum <strong className="text-foreground font-semibold">5,000 followers</strong> required hain.
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* Platform Guidelines Box */}
+            <div className="p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-2 text-xs">
+              <p className="font-semibold text-amber-700 dark:text-amber-300">
+                Platform Rules & Requirements:
+              </p>
+              <ul className="space-y-1.5 text-muted-foreground text-[11px]">
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold shrink-0">✓</span>
+                  <span>Minimum <strong>500 authentic followers</strong> required to connect your Instagram profile.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold shrink-0">✓</span>
+                  <span>Account must be <strong>Public</strong> and set to Professional Creator or Business mode.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold shrink-0">✓</span>
+                  <span><strong>5,000+ followers</strong> unlocks official Nano Creator Tier brand deal campaigns!</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLowFollowersNotice(prev => ({ ...prev, open: false }))}
+              className="w-full sm:w-auto text-xs h-9"
+              data-testid="button-close-low-followers-modal"
+            >
+              Samajh Gaya / Got It
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setLowFollowersNotice(prev => ({ ...prev, open: false }));
+                setLocation("/campaigns");
+              }}
+              className="w-full sm:w-auto text-xs h-9 bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 hover:opacity-95 text-white font-semibold"
+              data-testid="button-view-tiers-low-followers-modal"
+            >
+              View Creator Tiers
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
