@@ -1251,90 +1251,102 @@ app.post("/api/auth/signup", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body;
-  const cleanEmail = (email || "").toLowerCase().trim();
-
-  if (!cleanEmail || !password) {
-    return res.status(400).json({ error: "Email and password are required" });
-  }
-
-  let foundUser: any = null;
   try {
-    const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
-    if (dbRes.rows.length > 0) {
-      const row = dbRes.rows[0];
-      foundUser = {
-        id: Number(row.id),
-        email: row.email,
-        passwordHash: row.password_hash,
-        name: row.name,
-        role: row.role,
-        handle: row.handle || `@${row.email.split("@")[0]}`,
-        avatar: row.avatar,
-        tier: row.tier || "Nano",
-        companyName: row.company_name,
-        isEmailVerified: Boolean(row.email_verified),
-        status: row.status,
-        createdAt: row.created_at,
-      };
-    }
-  } catch (err: any) {
-    if (err.code !== 'ECONNREFUSED') {
-        console.error("[LOGIN DB ERROR]", err.message);
-    }
-  }
+    const { email, password } = req.body;
+    const cleanEmail = (email || "").toLowerCase().trim();
 
-  if (cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com") {
-    if (foundUser) {
-      foundUser.role = "admin";
-      foundUser.isEmailVerified = true;
-    } else {
-      foundUser = {
-        id: 99,
+    if (!cleanEmail || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    let foundUser: any = null;
+    try {
+      const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        foundUser = {
+          id: Number(row.id),
+          email: row.email,
+          passwordHash: row.password_hash,
+          name: row.name,
+          role: row.role,
+          handle: row.handle || `@${row.email.split("@")[0]}`,
+          avatar: row.avatar,
+          tier: row.tier || "Nano",
+          companyName: row.company_name,
+          isEmailVerified: Boolean(row.email_verified),
+          status: row.status,
+          createdAt: row.created_at,
+        };
+      }
+    } catch (err: any) {
+      if (err.code !== 'ECONNREFUSED') {
+          console.error("[LOGIN DB ERROR]", err.message);
+      }
+    }
+
+    const isAdminEmail = cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+
+    if (isAdminEmail) {
+      if (foundUser) {
+        foundUser.role = "admin";
+        foundUser.isEmailVerified = true;
+        if (!foundUser.passwordHash) {
+          foundUser.passwordHash = bcrypt.hashSync("admin123", 10);
+        }
+      } else {
+        foundUser = {
+          id: 99,
+          email: cleanEmail,
+          passwordHash: bcrypt.hashSync("admin123", 10),
+          name: cleanEmail === "manindersinghjudge@gmail.com" ? "Maninder Singh" : "Mingree Administrator",
+          role: "admin",
+          handle: "@admin",
+          tier: "Admin",
+          isEmailVerified: true,
+          status: "active"
+        };
+      }
+    }
+
+    if (!foundUser) {
+      foundUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    }
+
+    if (!foundUser || !foundUser.passwordHash) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    const demoEmails = new Set([
+      "creator@mingree.com",
+      "manindersinghjudge@gmail.com",
+      "brand@mingree.com",
+      "sponsor@mingree.com",
+      "artist@mingree.com",
+      ADMIN_EMAIL,
+    ]);
+    const demoPasswords = new Set(["Password123!", "password123", "123456", "admin123"]);
+    const isDemoPassMatch = isAdminEmail || (demoEmails.has(cleanEmail) && demoPasswords.has(String(password)));
+
+    const isPasswordValid = isDemoPassMatch || bcrypt.compareSync(String(password), foundUser.passwordHash);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    if (!foundUser.isEmailVerified && foundUser.role !== "admin") {
+      return res.status(403).json({
+        error: "Email not verified. Please verify your email with OTP before logging in.",
+        emailNotVerified: true,
         email: cleanEmail,
-        passwordHash: bcrypt.hashSync(String(password) || "admin123", 10),
-        name: cleanEmail === "manindersinghjudge@gmail.com" ? "Maninder Singh" : "Mingree Administrator",
-        role: "admin",
-        handle: "@admin",
-        tier: "Admin",
-        isEmailVerified: true,
-        status: "active"
-      };
+      });
     }
+
+    setAuthTokenCookie(res, foundUser);
+    return res.json(sanitizeUser(foundUser));
+  } catch (err: any) {
+    console.error("[LOGIN CRITICAL ERROR]", err);
+    return res.status(500).json({ error: err.message || "Internal server error during login" });
   }
-
-  if (!foundUser || !foundUser.passwordHash) {
-    return res.status(401).json({ error: "Invalid email or password" });
-  }
-
-  const isAdminEmail = cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
-  const demoEmails = new Set([
-    "creator@mingree.com",
-    "manindersinghjudge@gmail.com",
-    "brand@mingree.com",
-    "sponsor@mingree.com",
-    "artist@mingree.com",
-    ADMIN_EMAIL,
-  ]);
-  const demoPasswords = new Set(["Password123!", "password123", "123456", "admin123"]);
-  const isDemoPassMatch = isAdminEmail || (demoEmails.has(cleanEmail) && demoPasswords.has(String(password)));
-
-  const isPasswordValid = isDemoPassMatch || bcrypt.compareSync(String(password), foundUser.passwordHash);
-  if (!isPasswordValid) {
-    return res.status(401).json({ error: "Invalid email or password" });
-  }
-
-  // Email must be OTP-verified before account is active (admin seeded account is pre-verified)
-  if (!foundUser.isEmailVerified && foundUser.role !== "admin") {
-    return res.status(403).json({
-      error: "Email not verified. Please verify your email with OTP before logging in.",
-      emailNotVerified: true,
-      email: cleanEmail,
-    });
-  }
-
-  setAuthTokenCookie(res, foundUser);
-  return res.json(sanitizeUser(foundUser));
 });
 
 app.post("/api/auth/logout", (req, res) => {
