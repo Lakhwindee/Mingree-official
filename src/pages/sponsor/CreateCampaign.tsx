@@ -95,7 +95,7 @@ export default function CreateCampaign() {
     brandLogo: "",
     brandLogoFileName: "",
     category: "music_reels",
-    types: [] as string[],
+    contentType: "reel",
     promotionStyle: "",
     description: "",
     requiredCaptionNote: "",
@@ -291,8 +291,8 @@ export default function CreateCampaign() {
       toast.error("Please select at least one city");
       return false;
     }
-    if (formData.types.length === 0) {
-      toast.error("Please select at least one content type");
+    if (!formData.contentType) {
+      toast.error("Please select a content type");
       return false;
     }
     if (!formData.promotionStyle) {
@@ -327,7 +327,7 @@ export default function CreateCampaign() {
     }
 
     setIsCreating(true);
-    const typeLabel = formData.types.map(t => CONTENT_TYPES.find(ct => ct.id === t)?.label).filter(Boolean).join(", ");
+    const typeLabel = CONTENT_TYPES.find(ct => ct.id === formData.contentType)?.label || "Reel";
 
     try {
         await api.createCampaign(sponsor.id, {
@@ -336,8 +336,8 @@ export default function CreateCampaign() {
           brandLogo: formData.brandLogo,
           category: formData.category,
           payAmount: "0", // Will be handled per tier
-          type: typeLabel || "Reel",
-          contentTypes: formData.types,
+          type: typeLabel,
+          contentTypes: [formData.contentType],
           promotionStyle: formData.promotionStyle || undefined,
           assetUrl: formData.assetUrl || null,
           assetFileName: formData.assetFileName || null,
@@ -770,26 +770,24 @@ export default function CreateCampaign() {
                   <Label>Content Type *</Label>
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     {CONTENT_TYPES.map((type) => {
-                      const isChecked = formData.types.includes(type.id);
+                      const isSelected = formData.contentType === type.id;
                       return (
                         <label
                           key={type.id}
                           className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-4 transition-all ${
-                            isChecked
+                            isSelected
                               ? "border-primary bg-primary/5"
                               : "border-muted hover:border-muted-foreground/50"
                           }`}
-                          data-testid={`checkbox-${type.id}`}
+                          data-testid={`radio-content-${type.id}`}
                         >
-                          <Checkbox
-                            checked={isChecked}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setFormData(prev => ({ ...prev, types: [...prev.types, type.id] }));
-                              } else {
-                                setFormData(prev => ({ ...prev, types: prev.types.filter(t => t !== type.id) }));
-                              }
-                            }}
+                          <input
+                            type="radio"
+                            name="contentType"
+                            value={type.id}
+                            checked={isSelected}
+                            onChange={() => setFormData({ ...formData, contentType: type.id })}
+                            className="h-4 w-4 accent-primary"
                           />
                           <div className="flex items-center gap-2">
                             <span className="text-lg">{type.icon}</span>
@@ -1041,13 +1039,11 @@ export default function CreateCampaign() {
                   <p className="font-medium">{getPromotionStyleLabel()}</p>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">Content Types:</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {formData.types.map(t => (
-                      <Badge key={t} variant="secondary" className="text-xs">
-                        {CONTENT_TYPES.find(ct => ct.id === t)?.label}
-                      </Badge>
-                    ))}
+                  <span className="text-muted-foreground">Content Type:</span>
+                  <div className="flex items-center gap-1 mt-1">
+                    <Badge variant="secondary" className="text-xs">
+                      {CONTENT_TYPES.find(ct => ct.id === formData.contentType)?.label || "Reel"}
+                    </Badge>
                   </div>
                 </div>
                 <div>
