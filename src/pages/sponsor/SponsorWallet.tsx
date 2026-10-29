@@ -250,6 +250,16 @@ export default function SponsorWallet() {
     script.async = true;
     document.body.appendChild(script);
   }, []);
+
+  useEffect(() => {
+    if (typeof window.Cashfree !== 'undefined') return;
+    const existing = document.querySelector('script[src*="cashfree"]');
+    if (existing) return;
+    const script = document.createElement("script");
+    script.src = "https://sdk.cashfree.com/js/v3/cashfree.js";
+    script.async = true;
+    document.body.appendChild(script);
+  }, []);
   
   // Handle PayU and Cashfree success/failure callback
   useEffect(() => {
@@ -397,7 +407,16 @@ export default function SponsorWallet() {
 
     try {
       if (typeof window.Cashfree === 'undefined') {
-        throw new Error("Cashfree SDK failed to load. Please refresh the page.");
+        const waitForCashfree = () => new Promise<void>((resolve, reject) => {
+          let attempts = 0;
+          const check = () => {
+            if (typeof window.Cashfree !== 'undefined') return resolve();
+            if (attempts++ > 20) return reject(new Error("Cashfree SDK could not be loaded. Please refresh the page."));
+            setTimeout(check, 500);
+          };
+          check();
+        });
+        await waitForCashfree();
       }
 
       const orderRes = await fetch("/api/cashfree/create-order", {
