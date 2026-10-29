@@ -509,9 +509,19 @@ export default function Profile() {
                       {activeUser.followers.toLocaleString()} followers
                     </span>
                   ) : (
-                    <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded bg-muted text-muted-foreground border border-border">
-                      Not Connected
-                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleConnectInstagramOAuth}
+                      disabled={isConnectingInstagram}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-semibold h-7 px-2.5 rounded-md bg-gradient-to-r from-amber-500/10 via-pink-500/10 to-purple-600/10 hover:from-amber-500/20 hover:via-pink-500/20 hover:to-purple-600/20 text-foreground border border-pink-500/30 cursor-pointer shadow-2xs"
+                      data-testid="button-header-connect-instagram"
+                    >
+                      <svg className="w-3 h-3 fill-current text-pink-500" viewBox="0 0 24 24">
+                        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                      </svg>
+                      <span>{isConnectingInstagram ? "Connecting..." : "Connect Instagram"}</span>
+                    </Button>
                   )}
 
                   {activeUser.city ? (
@@ -637,197 +647,195 @@ export default function Profile() {
           )}
 
           {/* Instagram Account Section */}
-          {user.role !== "admin" && (
-            <Card className="border-border/80 overflow-hidden shadow-sm">
-              <CardHeader className="p-4 sm:p-6 pb-3 sm:pb-3 border-b border-border/40">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 flex items-center justify-center text-white shadow-sm shrink-0">
-                      <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-                      </svg>
-                    </div>
-                    <div>
-                      <CardTitle className="text-base sm:text-lg font-bold">
-                        Instagram Professional Account
-                      </CardTitle>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                        <span>Verified Instagram Profile</span>
-                        <span aria-hidden="true">·</span>
-                        <span className="text-emerald-500 font-medium">Verified Insights Integration</span>
-                      </div>
+          <Card className="border-border/80 overflow-hidden shadow-sm">
+            <CardHeader className="p-4 sm:p-6 pb-3 sm:pb-3 border-b border-border/40">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 flex items-center justify-center text-white shadow-sm shrink-0">
+                    <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <CardTitle className="text-base sm:text-lg font-bold">
+                      Instagram Professional Account
+                    </CardTitle>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                      <span>Verified Instagram Profile</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-emerald-500 font-medium">Verified Insights Integration</span>
                     </div>
                   </div>
                 </div>
-              </CardHeader>
+              </div>
+            </CardHeader>
 
-              <CardContent className="p-4 sm:p-6 space-y-4">
-                {isInstagramLinked ? (
-                  <div className="space-y-4">
-                    {/* Linked Profile Card */}
-                    <div className="rounded-xl border border-border/80 bg-muted/20 p-4 sm:p-5">
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Avatar className="h-12 w-12 border border-border shrink-0">
-                            <AvatarImage src={activeUser.avatar || undefined} className="object-cover" />
-                            <AvatarFallback className="font-bold bg-muted text-foreground">
-                              {activeUser.instagramUsername ? activeUser.instagramUsername.charAt(0).toUpperCase() : "IG"}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <h3 className="font-bold text-base text-foreground truncate">
-                                @{activeUser.instagramUsername}
-                              </h3>
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-500 text-white text-[10px]" title="Verified Creator">
-                                ✓
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                              <span>Professional Creator Account</span>
-                              <span aria-hidden="true">·</span>
-                              <span className="text-emerald-500">Live Insights Active</span>
-                            </div>
+            <CardContent className="p-4 sm:p-6 space-y-4">
+              {isInstagramLinked ? (
+                <div className="space-y-4">
+                  {/* Linked Profile Card */}
+                  <div className="rounded-xl border border-border/80 bg-muted/20 p-4 sm:p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar className="h-12 w-12 border border-border shrink-0">
+                          <AvatarImage src={activeUser.avatar || undefined} className="object-cover" />
+                          <AvatarFallback className="font-bold bg-muted text-foreground">
+                            {activeUser.instagramUsername ? activeUser.instagramUsername.charAt(0).toUpperCase() : "IG"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h3 className="font-bold text-base text-foreground truncate">
+                              @{activeUser.instagramUsername}
+                            </h3>
+                            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-500 text-white text-[10px]" title="Verified Creator">
+                              ✓
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                            <span>Professional Creator Account</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="text-emerald-500">Live Insights Active</span>
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleConnectInstagramOAuth}
-                            disabled={isConnectingInstagram}
-                            className="h-8 text-xs rounded border-border hover:bg-muted font-medium"
-                          >
-                            {isConnectingInstagram ? "Syncing..." : "Sync Latest Reach"}
-                          </Button>
-
-                          <Button variant="outline" size="sm" asChild className="h-8 text-xs rounded border-border">
-                            <a 
-                              href={activeUser.instagramProfileUrl || `https://instagram.com/${activeUser.instagramUsername}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              data-testid="link-instagram-profile"
-                            >
-                              View on Instagram ↗
-                            </a>
-                          </Button>
-                          
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-8 text-xs text-destructive hover:bg-destructive/10 rounded px-2.5"
-                            onClick={handleDisconnect}
-                            data-testid="button-disconnect-instagram"
-                          >
-                            Disconnect
-                          </Button>
-                        </div>
                       </div>
 
-                      {/* Verified Metrics Grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-border/50">
-                        <div className="p-3 rounded-lg bg-background border border-border/60">
-                          <span className="text-[11px] text-muted-foreground block font-medium">Followers</span>
-                          <span className="text-lg font-bold text-foreground mt-0.5 block">
-                            {typeof activeUser.instagramFollowers === "number" && activeUser.instagramFollowers > 0
-                              ? activeUser.instagramFollowers.toLocaleString()
-                              : (typeof activeUser.followers === "number" && activeUser.followers > 0
-                                  ? activeUser.followers.toLocaleString()
-                                  : "Unavailable")}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground mt-0.5 block">Audience count</span>
-                        </div>
-                        <div className="p-3 rounded-lg bg-background border border-border/60">
-                          <span className="text-[11px] text-muted-foreground block font-medium">30-Day Reach</span>
-                          <span className="text-lg font-bold text-foreground mt-0.5 block">
-                            {typeof activeUser.reach === "number" && activeUser.reach > 0
-                              ? activeUser.reach.toLocaleString()
-                              : "Unavailable"}
-                          </span>
-                          <span className="text-[10px] text-emerald-500 font-medium mt-0.5 block">Verified Sync</span>
-                        </div>
-                        <div className="p-3 rounded-lg bg-background border border-border/60">
-                          <span className="text-[11px] text-muted-foreground block font-medium">Median Reel Views</span>
-                          <span className="text-lg font-bold text-foreground mt-0.5 block">
-                            {typeof activeUser.medianViews === "number" && activeUser.medianViews > 0
-                              ? activeUser.medianViews.toLocaleString()
-                              : "Unavailable"}
-                          </span>
-                          <span className="text-[10px] text-sky-500 font-medium mt-0.5 block">Past 10 reels</span>
-                        </div>
-                        <div className="p-3 rounded-lg bg-background border border-border/60">
-                          <span className="text-[11px] text-muted-foreground block font-medium">Audience Quality</span>
-                          <span className="text-lg font-bold text-emerald-500 mt-0.5 block">
-                            {(activeUser as any).audienceGeoQuality || "Unavailable"}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground mt-0.5 block">Verified geo-distribution</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
-                      <span className="text-emerald-500 font-bold">✓</span>
-                      <span>Audience metrics and performance benchmarks sync automatically with active brand offers.</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {/* Unlinked State - Professional Creator Authorization Banner */}
-                    <div className="rounded-xl border border-border/80 bg-muted/20 p-5 space-y-4">
-                      <div>
-                        <h4 className="text-base font-bold text-foreground">
-                          Connect Instagram Creator Account
-                        </h4>
-                        <p className="text-xs sm:text-sm text-muted-foreground mt-1 leading-relaxed">
-                          Link your official Instagram Creator or Business profile to verify your audience metrics, unlock paid brand sponsorships, and showcase verified 30-day reach to music labels.
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-muted-foreground pt-1">
-                        <div className="flex items-start gap-2">
-                          <span className="text-emerald-500 font-bold mt-0.5">✓</span>
-                          <span>Verified Creator badge across Mingree marketplace</span>
-                        </div>
-                        <div className="flex items-start gap-2">
-                          <span className="text-emerald-500 font-bold mt-0.5">✓</span>
-                          <span>Live 30-day reach &amp; median reel view rate synced</span>
-                        </div>
-                        <div className="flex items-start gap-2">
-                          <span className="text-emerald-500 font-bold mt-0.5">✓</span>
-                          <span>Secure connection via official instagram.com login</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/40">
-                        <Button
-                          onClick={handleConnectInstagramOAuth}
-                          disabled={isConnectingInstagram}
-                          size="default"
-                          className="h-10 px-6 rounded-lg text-xs font-semibold text-white shadow-sm bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 hover:opacity-95 cursor-pointer flex items-center gap-2"
-                          data-testid="button-profile-connect-instagram-oauth"
-                        >
-                          <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-                          </svg>
-                          <span>{isConnectingInstagram ? "Opening Instagram..." : "Connect with Instagram"}</span>
-                        </Button>
-
+                      <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
                         <Button
                           variant="outline"
-                          size="default"
-                          onClick={() => setIsHandleModalOpen(true)}
-                          className="h-10 px-4 rounded-lg text-xs font-medium border-border hover:bg-muted"
+                          size="sm"
+                          onClick={handleConnectInstagramOAuth}
+                          disabled={isConnectingInstagram}
+                          className="h-8 text-xs rounded border-border hover:bg-muted font-medium"
                         >
-                          Verify via Handle
+                          {isConnectingInstagram ? "Syncing..." : "Sync Latest Reach"}
+                        </Button>
+
+                        <Button variant="outline" size="sm" asChild className="h-8 text-xs rounded border-border">
+                          <a 
+                            href={activeUser.instagramProfileUrl || `https://instagram.com/${activeUser.instagramUsername}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            data-testid="link-instagram-profile"
+                          >
+                            View on Instagram ↗
+                          </a>
+                        </Button>
+                        
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-8 text-xs text-destructive hover:bg-destructive/10 rounded px-2.5"
+                          onClick={handleDisconnect}
+                          data-testid="button-disconnect-instagram"
+                        >
+                          Disconnect
                         </Button>
                       </div>
                     </div>
+
+                    {/* Verified Metrics Grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-border/50">
+                      <div className="p-3 rounded-lg bg-background border border-border/60">
+                        <span className="text-[11px] text-muted-foreground block font-medium">Followers</span>
+                        <span className="text-lg font-bold text-foreground mt-0.5 block">
+                          {typeof activeUser.instagramFollowers === "number" && activeUser.instagramFollowers > 0
+                            ? activeUser.instagramFollowers.toLocaleString()
+                            : (typeof activeUser.followers === "number" && activeUser.followers > 0
+                                ? activeUser.followers.toLocaleString()
+                                : "Unavailable")}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground mt-0.5 block">Audience count</span>
+                      </div>
+                      <div className="p-3 rounded-lg bg-background border border-border/60">
+                        <span className="text-[11px] text-muted-foreground block font-medium">30-Day Reach</span>
+                        <span className="text-lg font-bold text-foreground mt-0.5 block">
+                          {typeof activeUser.reach === "number" && activeUser.reach > 0
+                            ? activeUser.reach.toLocaleString()
+                            : "Unavailable"}
+                        </span>
+                        <span className="text-[10px] text-emerald-500 font-medium mt-0.5 block">Verified Sync</span>
+                      </div>
+                      <div className="p-3 rounded-lg bg-background border border-border/60">
+                        <span className="text-[11px] text-muted-foreground block font-medium">Median Reel Views</span>
+                        <span className="text-lg font-bold text-foreground mt-0.5 block">
+                          {typeof activeUser.medianViews === "number" && activeUser.medianViews > 0
+                            ? activeUser.medianViews.toLocaleString()
+                            : "Unavailable"}
+                        </span>
+                        <span className="text-[10px] text-sky-500 font-medium mt-0.5 block">Past 10 reels</span>
+                      </div>
+                      <div className="p-3 rounded-lg bg-background border border-border/60">
+                        <span className="text-[11px] text-muted-foreground block font-medium">Audience Quality</span>
+                        <span className="text-lg font-bold text-emerald-500 mt-0.5 block">
+                          {(activeUser as any).audienceGeoQuality || "Unavailable"}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground mt-0.5 block">Verified geo-distribution</span>
+                      </div>
+                    </div>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
+                    <span className="text-emerald-500 font-bold">✓</span>
+                    <span>Audience metrics and performance benchmarks sync automatically with active brand offers.</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Unlinked State - Professional Creator Authorization Banner */}
+                  <div className="rounded-xl border border-border/80 bg-muted/20 p-5 space-y-4">
+                    <div>
+                      <h4 className="text-base font-bold text-foreground">
+                        Connect Instagram Creator Account
+                      </h4>
+                      <p className="text-xs sm:text-sm text-muted-foreground mt-1 leading-relaxed">
+                        Link your official Instagram Creator or Business profile to verify your audience metrics, unlock paid brand sponsorships, and showcase verified 30-day reach to music labels.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-muted-foreground pt-1">
+                      <div className="flex items-start gap-2">
+                        <span className="text-emerald-500 font-bold mt-0.5">✓</span>
+                        <span>Verified Creator badge across Mingree marketplace</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-emerald-500 font-bold mt-0.5">✓</span>
+                        <span>Live 30-day reach &amp; median reel view rate synced</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-emerald-500 font-bold mt-0.5">✓</span>
+                        <span>Secure connection via official instagram.com login</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/40">
+                      <Button
+                        onClick={handleConnectInstagramOAuth}
+                        disabled={isConnectingInstagram}
+                        size="default"
+                        className="h-10 px-6 rounded-lg text-xs font-semibold text-white shadow-sm bg-gradient-to-r from-amber-500 via-pink-500 to-purple-600 hover:opacity-95 cursor-pointer flex items-center gap-2"
+                        data-testid="button-profile-connect-instagram-oauth"
+                      >
+                        <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                          <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+                        </svg>
+                        <span>{isConnectingInstagram ? "Opening Instagram..." : "Connect with Instagram"}</span>
+                      </Button>
+
+                      <Button
+                        variant="outline"
+                        size="default"
+                        onClick={() => setIsHandleModalOpen(true)}
+                        className="h-10 px-4 rounded-lg text-xs font-medium border-border hover:bg-muted"
+                      >
+                        Verify via Handle
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
 
           {/* Account Settings */}

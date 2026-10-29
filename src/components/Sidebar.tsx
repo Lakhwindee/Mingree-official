@@ -279,7 +279,7 @@ export function Sidebar() {
 
         {/* Footer: Creator Tier Card & Logout */}
         <div className="mt-auto pt-4 space-y-2 border-t border-border/70">
-          {user && (user.role === "creator" || !user.role) && (
+          {user && (
             <div className="rounded-xl border border-border/80 bg-card p-3 shadow-2xs">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-foreground truncate max-w-[130px]">
@@ -291,11 +291,17 @@ export function Sidebar() {
               </div>
               <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
                 <span>Audience</span>
-                <span className="font-medium text-foreground">
-                  {user.isInstagramVerified && userFollowersCount
-                    ? `${userFollowersCount.toLocaleString()} followers`
-                    : "Not connected"}
-                </span>
+                {user.isInstagramVerified && user.instagramUsername ? (
+                  <span className="font-medium text-foreground">
+                    {userFollowersCount ? `${userFollowersCount.toLocaleString()} followers` : "0 followers"}
+                  </span>
+                ) : (
+                  <Link href="/profile">
+                    <span className="text-pink-600 dark:text-pink-400 font-semibold hover:underline cursor-pointer flex items-center gap-1">
+                      + Connect IG
+                    </span>
+                  </Link>
+                )}
               </div>
             </div>
           )}
