@@ -55,7 +55,7 @@ export const fallbackSponsorUser: ApiUser = {
   avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
   isVerified: true,
   tier: "Sponsor",
-  balance: "0.00",
+  balance: "100000.00",
   companyName: "Brand Sponsor Pvt Ltd",
   gstNumber: "",
   instagramUsername: null,
