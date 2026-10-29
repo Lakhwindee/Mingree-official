@@ -673,7 +673,10 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
 
 // Compute official Meta OAuth Redirect / Callback URI from process.env.APP_URL only
 function getInstagramRedirectUri(): string {
-  const appUrl = (process.env.APP_URL || "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app").replace(/\/+$/, "");
+  const appUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
+  if (!appUrl) {
+    throw new Error("APP_URL is not set");
+  }
   const redirectUri = `${appUrl}/api/instagram/callback`;
   console.log(`[INSTAGRAM OAUTH] redirect_uri used: ${redirectUri}`);
   return redirectUri;
@@ -3544,37 +3547,44 @@ app.put("/api/users/:id/shipping-address", requireAuth, (req: AuthRequest, res) 
 // Instagram Configuration - Get
 app.get("/api/instagram/config", (req, res) => {
   const { appId, appSecret } = getInstagramCredentials();
-  const redirectUri = getInstagramRedirectUri();
+  let redirectUri = "";
+  try {
+    redirectUri = getInstagramRedirectUri();
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "APP_URL is not set" });
+  }
   res.json({
     configured: Boolean(appId && appSecret),
     appId: appId || "",
     appSecretConfigured: Boolean(appSecret),
     redirectUri,
-    devRedirectUri: "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback",
-    sharedRedirectUri: "https://ais-pre-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback",
   });
 });
 
 // Instagram Configuration - Save
 app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
-  const { appId, appSecret, redirectUri } = req.body || {};
+  const { appId, appSecret, redirectUri: customRedirectUri } = req.body || {};
   const settings = loadSettings();
   if (typeof appId === "string" && appId.trim()) settings.instagram_app_id = appId.trim();
   if (typeof appSecret === "string" && appSecret.trim() && !appSecret.startsWith("•") && !appSecret.startsWith("••••")) {
     settings.instagram_app_secret = appSecret.trim();
   }
-  if (typeof redirectUri === "string" && redirectUri.trim()) settings.instagram_redirect_uri = redirectUri.trim();
+  if (typeof customRedirectUri === "string" && customRedirectUri.trim()) settings.instagram_redirect_uri = customRedirectUri.trim();
   saveSettings(settings);
 
   const creds = getInstagramCredentials();
+  let redirectUri = "";
+  try {
+    redirectUri = getInstagramRedirectUri();
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "APP_URL is not set" });
+  }
   return res.json({ 
     success: true, 
     configured: Boolean(creds.appId && creds.appSecret),
     appId: creds.appId || "",
     appSecretConfigured: Boolean(creds.appSecret),
-    redirectUri: getInstagramRedirectUri(),
-    devRedirectUri: "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback",
-    sharedRedirectUri: "https://ais-pre-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback",
+    redirectUri,
   });
 });
 
@@ -4051,9 +4061,12 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
   if (!userId) userId = 1;
 
   const { appId, appSecret } = getInstagramCredentials();
-  const redirectUri = getInstagramRedirectUri();
-  const devRedirectUri = "https://ais-dev-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback";
-  const sharedRedirectUri = "https://ais-pre-k2puuebcekhcieay7qmwqf-788442053754.asia-southeast1.run.app/api/instagram/callback";
+  let redirectUri = "";
+  try {
+    redirectUri = getInstagramRedirectUri();
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || "APP_URL is not set" });
+  }
 
   if (!appId || !appSecret) {
     return res.json({ 
@@ -4061,8 +4074,6 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
       appId: appId || "",
       appSecretConfigured: Boolean(appSecret),
       redirectUri,
-      devRedirectUri,
-      sharedRedirectUri,
       error: "Instagram Meta App ID or App Secret is not configured.",
     });
   }
@@ -4084,8 +4095,6 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
     authUrl,
     instagramOAuthUrl: authUrl,
     redirectUri,
-    devRedirectUri,
-    sharedRedirectUri,
     state,
     configured: true,
     appId,
