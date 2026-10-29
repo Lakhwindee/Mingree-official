@@ -300,3 +300,13 @@ CREATE TABLE IF NOT EXISTS security_audit_logs (
   details text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS instagram_identities (
+  instagram_user_id text PRIMARY KEY,
+  current_user_id bigint REFERENCES users(id) ON DELETE SET NULL,
+  historical_user_ids bigint[] DEFAULT '{}',
+  username text,
+  connect_count int DEFAULT 1,
+  linked_at timestamptz DEFAULT now(),
+  unlinked_at timestamptz
+);

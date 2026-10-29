@@ -9,17 +9,14 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  name: text("name").notNull(),
+  name: text("name").notNull().default(""),
   role: text("role").notNull().default("creator"), // creator, sponsor, admin
-  handle: text("handle"),
-  avatar: text("avatar"),
-  tier: text("tier").default("Tier 1"),
-  companyName: text("company_name"),
+  isEmailVerified: boolean("email_verified").notNull().default(false),
   status: text("status").notNull().default("active"),
+  companyName: text("company_name"),
   gstin: text("gstin"),
   pan: text("pan"),
   billingAddress: text("billing_address"),
-  isEmailVerified: boolean("email_verified").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -44,19 +41,21 @@ export const passwordResets = pgTable("password_resets", {
 
 // 4. Creator Profiles
 export const creatorProfiles = pgTable("creator_profiles", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  instagramUserId: text("instagram_user_id"),
+  userId: integer("user_id").primaryKey().references(() => users.id),
+  instagramUserId: text("instagram_user_id").unique(),
   username: text("username"),
   followers: integer("followers").notNull().default(0),
-  tierLabel: text("tier_label"),
+  mediaCount: integer("media_count").notNull().default(0),
+  tierLabel: text("tier_label").default("Nano"),
   medianViews: integer("median_views").notNull().default(0),
-  engagementRate: decimal("engagement_rate", { precision: 5, scale: 2 }).default("0.00"),
-  indiaAudiencePct: decimal("india_audience_pct", { precision: 5, scale: 2 }).default("0.00"),
+  engagementRate: decimal("engagement_rate", { precision: 8, scale: 5 }).default("0.00000"),
+  indiaAudiencePct: decimal("india_audience_pct", { precision: 5, scale: 2 }),
   riskScore: integer("risk_score").notNull().default(0),
-  status: text("status").notNull().default("pending"), // pending | active | needs_review | blocked
-  encryptedAccessToken: text("encrypted_access_token"),
+  status: text("status").notNull().default("pending"),
+  statusNote: text("status_note"),
+  accessTokenEnc: text("access_token_enc"),
   tokenExpiresAt: timestamp("token_expires_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 // 5. Rate Cards

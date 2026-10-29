@@ -256,10 +256,10 @@ export async function runDailyMaintenanceJobs(): Promise<{ metricsRefreshed: num
         .from(creatorProfiles)
         .where(eq(creatorProfiles.userId, creator.id));
 
-      if (profiles.length > 0 && profiles[0].encryptedAccessToken) {
+      if (profiles.length > 0 && profiles[0].accessTokenEnc) {
         try {
           // Attempt refresh
-          const tokenRes = await refreshInstagramUserToken(profiles[0].encryptedAccessToken);
+          const tokenRes = await refreshInstagramUserToken(profiles[0].accessTokenEnc);
           if (!tokenRes.success) {
             await db.insert(notifications).values({
               userId: creator.id,

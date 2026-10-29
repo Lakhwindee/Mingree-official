@@ -812,23 +812,26 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     };
     let user: any = null;
     try {
-      const dbRes = await pool.query("SELECT * FROM users WHERE id = $1", [decoded.id]);
+      const dbRes = await pool.query("SELECT id, email, password_hash, name, role, email_verified, status, company_name FROM users WHERE id = $1", [decoded.id]);
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
-        let followers = Number(row.followers || row.instagram_followers || 0);
+        let followers = 0;
         let medianViews: number | null = null;
         let reach: number | null = null;
-        let instagramUsername = row.instagram_username || null;
-        let isInstagramVerified = Boolean(row.is_instagram_verified && instagramUsername);
+        let instagramUsername: string | null = null;
+        let isInstagramVerified = false;
+        let tierLabel = "Nano";
+
         if (row.role === "creator") {
           try {
-            const cpRes = await pool.query("SELECT username, followers, median_views, encrypted_access_token, instagram_user_id, status FROM creator_profiles WHERE user_id = $1", [row.id]);
+            const cpRes = await pool.query("SELECT username, followers, median_views, access_token_enc, instagram_user_id, tier_label, status FROM creator_profiles WHERE user_id = $1", [row.id]);
             if (cpRes.rows.length > 0) {
               const cp = cpRes.rows[0];
               if (cp.username) instagramUsername = cp.username;
               if (cp.followers !== null && cp.followers !== undefined) followers = Number(cp.followers);
               if (cp.median_views !== null && cp.median_views !== undefined) medianViews = Number(cp.median_views);
-              if (cp.status === "active" && (cp.encrypted_access_token || cp.instagram_user_id)) {
+              if (cp.tier_label) tierLabel = cp.tier_label;
+              if (cp.status === "active" && (cp.access_token_enc || cp.instagram_user_id)) {
                 isInstagramVerified = true;
               }
             }
@@ -837,7 +840,7 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
         const isVerifiedConnection = Boolean(isInstagramVerified && instagramUsername);
         if (isVerifiedConnection && followers > 0) {
           reach = Math.round(followers * 2.2);
-          if (medianViews === null) medianViews = Math.round(followers * 0.45);
+          if (medianViews === null || medianViews === 0) medianViews = Math.round(followers * 0.45);
         } else {
           followers = 0;
           reach = 0;
@@ -850,9 +853,9 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
           passwordHash: row.password_hash,
           name: row.name,
           role: row.role,
-          handle: row.handle || `@${row.email.split("@")[0]}`,
-          avatar: row.avatar,
-          tier: isVerifiedConnection ? (row.tier || "Nano") : "Unlinked",
+          handle: `@${row.email.split("@")[0]}`,
+          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
           status: row.status,
           followers: isVerifiedConnection ? followers : 0,
@@ -963,11 +966,11 @@ const defaultAccounts = [
     id: 3,
     email: "creator@mingree.com",
     passwordHash: bcrypt.hashSync("password123", 10),
-    name: "Priya Sharma (Creator)",
+    name: "Creator Account",
     role: "creator",
     handle: "@creator",
     avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-    tier: "Nano",
+    tier: "Unlinked",
     instagramUsername: null,
     instagramProfileUrl: null,
     instagramFollowers: 0,
@@ -1154,10 +1157,10 @@ app.post("/api/auth/signup", async (req, res) => {
   let newUser: any;
   try {
     const insertRes = await pool.query(
-      `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name, handle, avatar, tier)
-       VALUES ($1, $2, $3, $4, true, 'active', $5, $6, $7, $8)
+      `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name)
+       VALUES ($1, $2, $3, $4, true, 'active', $5)
        RETURNING *`,
-      [cleanEmail, passwordHash, userName, requestedRole, userCompany, userHandle, userAvatar, userTier]
+      [cleanEmail, passwordHash, userName, requestedRole, userCompany]
     );
     const dbRow = insertRes.rows[0];
     newUser = {
@@ -1330,25 +1333,27 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
   let authoritativeUser: any = null;
   if (isDatabaseConfigured) {
     try {
-      const dbRes = await pool.query("SELECT * FROM users WHERE id = $1", [targetId]);
+      const dbRes = await pool.query("SELECT id, email, name, role, email_verified, status, company_name, gstin, pan, billing_address, created_at FROM users WHERE id = $1", [targetId]);
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
-        let followers = Number(row.followers || row.instagram_followers || 0);
+        let followers = 0;
         let medianViews: number | null = null;
         let reach: number | null = null;
         let engagementRate: number | null = null;
-        let instagramUsername = row.instagram_username || null;
-        let isInstagramVerified = Boolean(row.is_instagram_verified && instagramUsername);
+        let instagramUsername: string | null = null;
+        let isInstagramVerified = false;
+        let tierLabel = "Nano";
 
         try {
-          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, encrypted_access_token, instagram_user_id, status FROM creator_profiles WHERE user_id = $1", [targetId]);
+          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status FROM creator_profiles WHERE user_id = $1", [targetId]);
           if (cpRes.rows.length > 0) {
             const cp = cpRes.rows[0];
             if (cp.username) instagramUsername = cp.username;
             if (cp.followers !== null && cp.followers !== undefined) followers = Number(cp.followers);
             if (cp.median_views !== null && cp.median_views !== undefined) medianViews = Number(cp.median_views);
             if (cp.engagement_rate !== null && cp.engagement_rate !== undefined) engagementRate = Number(cp.engagement_rate);
-            if (cp.status === "active" && (cp.encrypted_access_token || cp.instagram_user_id)) {
+            if (cp.tier_label) tierLabel = cp.tier_label;
+            if (cp.status === "active" && (cp.access_token_enc || cp.instagram_user_id)) {
               isInstagramVerified = true;
             }
           }
@@ -1357,7 +1362,7 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
         const isVerifiedConnection = Boolean(isInstagramVerified && instagramUsername);
         if (isVerifiedConnection && followers > 0) {
           reach = Math.round(followers * 2.2);
-          if (medianViews === null) medianViews = Math.round(followers * 0.45);
+          if (medianViews === null || medianViews === 0) medianViews = Math.round(followers * 0.45);
         } else {
           followers = 0;
           reach = 0;
@@ -1369,10 +1374,9 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
           email: row.email,
           name: row.name,
           role: row.role,
-          handle: row.handle || `@${row.email.split("@")[0]}`,
-          avatar: row.avatar,
-          tier: isVerifiedConnection ? (row.tier || "Nano") : "Unlinked",
-          city: row.city || "",
+          handle: `@${row.email.split("@")[0]}`,
+          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
           status: row.status,
           followers: isVerifiedConnection ? followers : 0,
@@ -4731,56 +4735,59 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let dbPersistError = "";
     if (isDatabaseConfigured) {
       try {
+        // Ensure user row exists in users table (using only 001_init.sql columns)
         await pool.query(
-          `UPDATE users SET
-             instagram_username = $1,
-             instagram_profile_url = $2,
-             instagram_followers = $3,
-             followers = $4,
-             is_instagram_verified = true,
-             instagram_verification_status = 'verified'
-           WHERE id = $5`,
-          [igUsername, `https://instagram.com/${igUsername}`, followersCount, followersCount, stateRecord.userId]
+          `INSERT INTO users (id, email, password_hash, name, role, email_verified, status)
+           VALUES ($1, $2, '!', $3, 'creator', true, 'active')
+           ON CONFLICT (id) DO NOTHING`,
+          [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account"]
         );
 
-        const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [stateRecord.userId]);
-        if (cpCheck.rows.length > 0) {
-          await pool.query(
-            `UPDATE creator_profiles 
-             SET instagram_user_id = $2, username = $3, followers = $4, median_views = $5, engagement_rate = $6, risk_score = $7, status = $8, encrypted_access_token = $9, token_expires_at = $10
-             WHERE user_id = $1`,
-            [
-              stateRecord.userId,
-              igUserId,
-              igUsername,
-              followersCount,
-              medianViews,
-              engagementRate,
-              riskEval.riskScore,
-              riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
-              finalAccessToken,
-              new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-            ]
-          );
-        } else {
-          await pool.query(
-            `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, median_views, engagement_rate, risk_score, status, encrypted_access_token, token_expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-            [
-              stateRecord.userId,
-              igUserId,
-              igUsername,
-              followersCount,
-              medianViews,
-              engagementRate,
-              riskEval.riskScore,
-              riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
-              finalAccessToken,
-              new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-            ]
-          );
-        }
-        console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile & users row for user ${stateRecord.userId}`);
+        // Upsert creator_profiles (using only 001_init.sql columns)
+        await pool.query(
+          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, median_views, engagement_rate, risk_score, status, access_token_enc, token_expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (user_id) DO UPDATE SET
+             instagram_user_id = EXCLUDED.instagram_user_id,
+             username = EXCLUDED.username,
+             followers = EXCLUDED.followers,
+             media_count = EXCLUDED.media_count,
+             median_views = EXCLUDED.median_views,
+             engagement_rate = EXCLUDED.engagement_rate,
+             risk_score = EXCLUDED.risk_score,
+             status = EXCLUDED.status,
+             access_token_enc = EXCLUDED.access_token_enc,
+             token_expires_at = EXCLUDED.token_expires_at`,
+          [
+            stateRecord.userId,
+            igUserId,
+            igUsername,
+            followersCount,
+            mediaCount,
+            medianViews,
+            engagementRate,
+            riskEval.riskScore,
+            riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+            finalAccessToken,
+            new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+          ]
+        );
+
+        // Upsert instagram_identities
+        await pool.query(
+          `INSERT INTO instagram_identities (instagram_user_id, current_user_id, historical_user_ids, username, connect_count, linked_at)
+           VALUES ($1, $2, ARRAY[$2::bigint], $3, 1, now())
+           ON CONFLICT (instagram_user_id) DO UPDATE SET
+             current_user_id = EXCLUDED.current_user_id,
+             historical_user_ids = array_append(instagram_identities.historical_user_ids, EXCLUDED.current_user_id),
+             username = EXCLUDED.username,
+             connect_count = instagram_identities.connect_count + 1,
+             linked_at = now(),
+             unlinked_at = NULL`,
+          [igUserId, stateRecord.userId, igUsername]
+        );
+
+        console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile & instagram identity for user ${stateRecord.userId}`);
       } catch (pgErr: any) {
         dbPersistFailed = true;
         dbPersistError = pgErr?.message || String(pgErr);
@@ -6213,8 +6220,8 @@ async function startServer() {
       if (res.rows.length === 0) {
         const hash = bcrypt.hashSync(adminPass, 10);
         await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status, handle, tier)
-           VALUES ($1, $2, 'Mingree Administrator', 'admin', true, 'active', '@admin', 'Admin')`,
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
+           VALUES ($1, $2, 'Mingree Administrator', 'admin', true, 'active')`,
           [adminEmail, hash]
         );
         console.log(`[SEED] Admin account seeded: ${adminEmail}`);
@@ -6226,8 +6233,8 @@ async function startServer() {
       if (artistRes.rows.length === 0) {
         const hash = bcrypt.hashSync("password123", 10);
         const inserted = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name, handle, tier, avatar)
-           VALUES ($1, $2, 'Rohan Verma (Artist)', 'sponsor', true, 'active', 'Rohan Records', '@rohanmusic', 'Standard', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150')
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name)
+           VALUES ($1, $2, 'Rohan Verma (Artist)', 'sponsor', true, 'active', 'Rohan Records')
            RETURNING id`,
           [artistEmail, hash]
         );
@@ -6246,8 +6253,8 @@ async function startServer() {
       if (creatorRes.rows.length === 0) {
         const hash = bcrypt.hashSync("password123", 10);
         const inserted = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status, handle, tier, avatar)
-           VALUES ($1, $2, 'Priya Sharma (Creator)', 'creator', true, 'active', '@creator', 'Rising', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150')
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
+           VALUES ($1, $2, 'Creator Account', 'creator', true, 'active')
            RETURNING id`,
           [creatorEmail, hash]
         );

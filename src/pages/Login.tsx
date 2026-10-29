@@ -51,7 +51,7 @@ export default function Login() {
             ? "Mingree Administrator"
             : fallbackRole === "sponsor"
             ? "Brand Partner"
-            : "Priya Sharma (Creator)"),
+            : "Creator Account"),
         email: demoEmail,
         handle:
           data.handle ||
