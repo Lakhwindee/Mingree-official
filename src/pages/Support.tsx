@@ -10,6 +10,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Sidebar } from "@/components/Sidebar";
+import { SponsorSidebar } from "@/components/SponsorSidebar";
+import { useAuth } from "@/lib/auth-context";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import type { ApiUser } from "@/lib/api";
 
@@ -63,13 +65,17 @@ export default function Support() {
   const [replyText, setReplyText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const { user: authUser } = useAuth();
   const { data: user } = useQuery<ApiUser>({
     queryKey: ["currentUser"],
   });
 
+  const activeUser = user || (authUser as any);
+  const isSponsor = activeUser?.role === "sponsor";
+
   const { data: tickets, isLoading: ticketsLoading } = useQuery<SupportTicket[]>({
-    queryKey: [`/api/users/${user?.id}/support-tickets`],
-    enabled: !!user?.id,
+    queryKey: [`/api/users/${activeUser?.id}/support-tickets`],
+    enabled: !!activeUser?.id,
   });
 
   const { data: ticketDetails, isLoading: detailsLoading } = useQuery<TicketDetails>({
@@ -348,7 +354,7 @@ export default function Support() {
 
   return (
     <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-background">
-      <Sidebar />
+      {isSponsor ? <SponsorSidebar /> : <Sidebar />}
 
       {/* Mobile Sticky Top Header */}
       <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full">
@@ -356,7 +362,7 @@ export default function Support() {
           <h1 className="text-base font-bold text-foreground truncate">Help & Support</h1>
           <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-muted text-foreground whitespace-nowrap">Tickets</span>
         </div>
-        {user && <NotificationDropdown userId={user.id} />}
+        {activeUser && <NotificationDropdown userId={activeUser.id} />}
       </header>
 
       <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
