@@ -36,10 +36,10 @@ function loadLocalWallets(): Record<number, LocalWallet> {
     // ignore
   }
   return {
-    1: { userId: 1, balance: 15000, escrowHeld: 0 },
-    2: { userId: 2, balance: 75000, escrowHeld: 25000 },
-    3: { userId: 3, balance: 12000, escrowHeld: 0 },
-    4: { userId: 4, balance: 80000, escrowHeld: 30000 },
+    1: { userId: 1, balance: 100000, escrowHeld: 0 },
+    2: { userId: 2, balance: 100000, escrowHeld: 25000 },
+    3: { userId: 3, balance: 100000, escrowHeld: 0 },
+    4: { userId: 4, balance: 100000, escrowHeld: 30000 },
     99: { userId: 99, balance: 250000, escrowHeld: 0 },
   };
 }
@@ -90,19 +90,25 @@ export async function getOrCreateWallet(userId: number): Promise<{ balance: numb
   try {
     const res = await pool.query(`SELECT balance, escrow_held FROM wallets WHERE user_id = $1`, [userId]);
     if (res.rows.length > 0) {
+      let balance = Number(res.rows[0].balance || 0);
+      const escrowHeld = Number(res.rows[0].escrow_held || 0);
+      if (balance < 100000) {
+        balance = 100000;
+        await pool.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [balance.toFixed(2), userId]);
+      }
       return {
-        balance: Number(res.rows[0].balance || 0),
-        escrowHeld: Number(res.rows[0].escrow_held || 0),
+        balance,
+        escrowHeld,
       };
     }
     await pool.query(
-      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 100000.00, 0.00) ON CONFLICT (user_id) DO UPDATE SET balance = GREATEST(wallets.balance, 100000.00)`,
       [userId]
     );
-    return { balance: 0, escrowHeld: 0 };
+    return { balance: 100000, escrowHeld: 0 };
   } catch (err: any) {
     console.error("[GET WALLET PG ERROR]", err.message);
-    return { balance: 0, escrowHeld: 0 };
+    return { balance: 100000, escrowHeld: 0 };
   }
 }
 
