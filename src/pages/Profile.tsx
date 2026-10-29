@@ -183,34 +183,15 @@ export default function Profile() {
   };
 
   useEffect(() => {
+    // Clean URL query parameters if present without triggering auto-connection
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const error = params.get("error");
-    const instagramConnected = params.get("instagram_connected");
-
-    if (instagramConnected === "true" || instagramConnected === "1") {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      refreshAccountFromServer(true);
-    } else if (code && user) {
-      window.history.replaceState({}, document.title, window.location.pathname);
-      fetch(`/api/users/${user.id}/instagram`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ code }),
-      }).then(() => {
-        refreshAccountFromServer(true);
-      }).catch((err) => {
-        toast.error(err.message || "Failed to complete Instagram connection.");
-      });
-    } else if (error) {
-      toast.error(`Instagram connection error: ${error.replace(/_/g, " ")}`);
+    if (params.has("code") || params.has("error") || params.has("instagram_connected") || params.has("instagram_error")) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [user, queryClient]);
+  }, []);
 
   useEffect(() => {
-    // 1. BroadcastChannel listener (signal only, validates on server)
+    // Cross-window listeners: only refresh account if user explicitly launched an Instagram connect flow
     let bc: BroadcastChannel | null = null;
     try {
       if (typeof BroadcastChannel !== "undefined") {
@@ -226,7 +207,6 @@ export default function Profile() {
       }
     } catch {}
 
-    // 2. Storage event listener (signal only, validates on server)
     const handleStorage = (e: StorageEvent) => {
       if (e.key === "mingree_instagram_oauth_result" && e.newValue) {
         try {
@@ -242,7 +222,6 @@ export default function Profile() {
     };
     window.addEventListener("storage", handleStorage);
 
-    // 3. postMessage listener (origin validated, signal only)
     const handleAuthMessage = (event: MessageEvent) => {
       const trustedOrigins = ["https://mingree.com", window.location.origin];
       if (event.origin && !trustedOrigins.includes(event.origin) && !event.origin.includes("mingree.com")) return;
@@ -250,32 +229,15 @@ export default function Profile() {
         refreshAccountFromServer(true);
       } else if (event.data?.type === "INSTAGRAM_AUTH_ERROR" || event.data?.type === "INSTAGRAM_OAUTH_ERROR") {
         setIsConnectingInstagram(false);
-        toast.error(event.data.error || "Instagram connection failed.");
+        toast.error(event.data?.error || "Instagram connection failed.");
       }
     };
     window.addEventListener("message", handleAuthMessage);
-
-    // 4. Focus check: when window re-gains focus, check status with server
-    const handleWindowFocus = () => {
-      const savedResult = localStorage.getItem("mingree_instagram_oauth_result");
-      if (savedResult) {
-        try {
-          const parsed = JSON.parse(savedResult);
-          if (parsed.type === "INSTAGRAM_OAUTH_SUCCESS") {
-            refreshAccountFromServer(true);
-            return;
-          }
-        } catch {}
-      }
-      refreshAccountFromServer(false);
-    };
-    window.addEventListener("focus", handleWindowFocus);
 
     return () => {
       if (bc) bc.close();
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("message", handleAuthMessage);
-      window.removeEventListener("focus", handleWindowFocus);
     };
   }, [user?.id, queryClient]);
 
@@ -409,20 +371,10 @@ export default function Profile() {
   const handleDisconnect = async () => {
     if (!user) return;
     try {
-      await api.disconnectInstagram(user.id);
-      const unlinked = {
-        instagramUsername: null,
-        instagramProfileUrl: null,
-        instagramFollowers: 0,
-        followers: 0,
-        reach: 0,
-        medianViews: 0,
-        isInstagramVerified: false,
-        instagramVerificationStatus: "unlinked",
-      };
-      updateUser(unlinked);
-      queryClient.setQueryData(["user", user.id], (prev: any) => ({ ...prev, ...unlinked }));
-      queryClient.setQueryData(["currentUser"], (prev: any) => ({ ...prev, ...unlinked }));
+      const unlinkedUser = await api.disconnectInstagram(user.id);
+      updateUser(unlinkedUser as any);
+      queryClient.setQueryData(["user", user.id], unlinkedUser);
+      queryClient.setQueryData(["currentUser"], unlinkedUser);
       queryClient.invalidateQueries({ queryKey: ["user", user.id] });
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
       queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
@@ -700,7 +652,7 @@ export default function Profile() {
                         Instagram Professional Account
                       </CardTitle>
                       <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                        <span>Meta Graph API OAuth 2.0</span>
+                        <span>Verified Instagram Profile</span>
                         <span aria-hidden="true">·</span>
                         <span className="text-emerald-500 font-medium">Verified Insights Integration</span>
                       </div>
@@ -727,7 +679,7 @@ export default function Profile() {
                               <h3 className="font-bold text-base text-foreground truncate">
                                 @{activeUser.instagramUsername}
                               </h3>
-                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-500 text-white text-[10px]" title="Meta Verified">
+                              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-sky-500 text-white text-[10px]" title="Verified Creator">
                                 ✓
                               </span>
                             </div>
@@ -793,7 +745,7 @@ export default function Profile() {
                               ? activeUser.reach.toLocaleString()
                               : "Unavailable"}
                           </span>
-                          <span className="text-[10px] text-pink-500 font-medium mt-0.5 block">Meta Verified</span>
+                          <span className="text-[10px] text-emerald-500 font-medium mt-0.5 block">Verified Sync</span>
                         </div>
                         <div className="p-3 rounded-lg bg-background border border-border/60">
                           <span className="text-[11px] text-muted-foreground block font-medium">Median Reel Views</span>
@@ -816,7 +768,7 @@ export default function Profile() {
 
                     <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
                       <span className="text-emerald-500 font-bold">✓</span>
-                      <span>Verified via official Meta Graph API v21.0. Reach and reel view benchmarks sync automatically with active brand offers.</span>
+                      <span>Audience metrics and performance benchmarks sync automatically with active brand offers.</span>
                     </div>
                   </div>
                 ) : (

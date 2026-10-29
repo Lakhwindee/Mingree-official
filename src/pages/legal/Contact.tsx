@@ -98,7 +98,7 @@ export default function Contact() {
             </div>
             <div>
               <h3 className="font-semibold mb-1 text-foreground">How do I link my Instagram account?</h3>
-              <p className="text-muted-foreground">Go to your Profile page and connect your handle or use Meta OAuth login to connect your account.</p>
+              <p className="text-muted-foreground">Go to your Profile page and connect your handle or use Instagram login to connect your account.</p>
             </div>
           </div>
         </div>

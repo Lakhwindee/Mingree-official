@@ -879,30 +879,6 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
       user = registeredUsers.find((u) => u.id === decoded.id || u.email.toLowerCase() === decoded.email?.toLowerCase());
     }
 
-    // Hydrate user with verified JWT claims if session cookie contains signed connection state
-    if (decoded.instagramUsername && decoded.isInstagramVerified) {
-      if (!user) {
-        user = {
-          id: decoded.id,
-          email: decoded.email,
-          role: decoded.role || "creator",
-          handle: `@${(decoded.email || "user").split("@")[0]}`,
-        };
-      }
-      if (!user.instagramUsername || !user.isInstagramVerified) {
-        user.instagramUsername = decoded.instagramUsername;
-        user.isInstagramVerified = true;
-        user.instagramVerificationStatus = "verified";
-        user.instagramFollowers = decoded.instagramFollowers || user.followers || 0;
-        user.followers = user.instagramFollowers;
-        user.instagramProfileUrl = decoded.instagramProfileUrl || `https://instagram.com/${decoded.instagramUsername}`;
-        if (user.followers > 0) {
-          user.reach = decoded.reach ?? Math.round(user.followers * 2.2);
-          user.medianViews = decoded.medianViews ?? Math.round(user.followers * 0.45);
-        }
-      }
-    }
-
     if (!user) {
       return res.status(401).json({ error: "Unauthorized: User account not found" });
     }
@@ -1406,21 +1382,6 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
     }
   }
 
-  if (authoritativeUser && req.user!.id === targetId && req.user!.isInstagramVerified && req.user!.instagramUsername) {
-    if (!authoritativeUser.isInstagramVerified || !authoritativeUser.instagramUsername) {
-      authoritativeUser.instagramUsername = req.user!.instagramUsername;
-      authoritativeUser.isInstagramVerified = true;
-      authoritativeUser.instagramVerificationStatus = "verified";
-      authoritativeUser.instagramFollowers = req.user!.instagramFollowers || authoritativeUser.followers || 0;
-      authoritativeUser.followers = authoritativeUser.instagramFollowers;
-      authoritativeUser.instagramProfileUrl = req.user!.instagramProfileUrl || `https://instagram.com/${req.user!.instagramUsername}`;
-      if (authoritativeUser.followers > 0) {
-        authoritativeUser.reach = req.user!.reach ?? Math.round(authoritativeUser.followers * 2.2);
-        authoritativeUser.medianViews = req.user!.medianViews ?? Math.round(authoritativeUser.followers * 0.45);
-      }
-    }
-  }
-
   if (!authoritativeUser) {
     return res.status(404).json({ error: "User not found" });
   }
@@ -1546,7 +1507,7 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
 });
 
 // POST /api/users/:id/instagram/disconnect
-app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, res) => {
+app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -1557,6 +1518,80 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, 
   const previousFollowers = user.instagramFollowers || 0;
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
 
+  // Perform disconnect inside ONE atomic database transaction
+  let dbTransactionError: string | null = null;
+  if (isDatabaseConfigured) {
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+
+      // 1. Delete stored access token & clear all Instagram fields on creator_profiles
+      await client.query(
+        `UPDATE creator_profiles
+         SET instagram_user_id = NULL,
+             username = NULL,
+             followers = 0,
+             media_count = 0,
+             median_views = 0,
+             engagement_rate = 0.00,
+             status = 'pending',
+             access_token_enc = NULL,
+             token_expires_at = NULL
+         WHERE user_id = $1`,
+        [targetId]
+      );
+
+      // 2. Unbind identity on instagram_identities
+      if (previousIgId) {
+        await client.query(
+          `UPDATE instagram_identities
+           SET current_user_id = NULL, unlinked_at = now()
+           WHERE instagram_user_id = $1`,
+          [previousIgId]
+        );
+      } else if (previousUsername) {
+        await client.query(
+          `UPDATE instagram_identities
+           SET current_user_id = NULL, unlinked_at = now()
+           WHERE LOWER(username) = LOWER($1)`,
+          [previousUsername.toLowerCase()]
+        );
+      }
+
+      // 3. Insert audit log row into security_audit_logs
+      await client.query(
+        `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          "DISCONNECT_RECORDED",
+          targetId,
+          previousUsername || "unknown",
+          0,
+          JSON.stringify([]),
+          "ALLOW",
+          clientIp,
+          `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.`
+        ]
+      );
+
+      await client.query("COMMIT");
+    } catch (err: any) {
+      if (client) {
+        try { await client.query("ROLLBACK"); } catch {}
+      }
+      dbTransactionError = err?.message || String(err);
+      console.error("[PG DISCONNECT TRANSACTION ERROR]", dbTransactionError);
+    } finally {
+      if (client) client.release();
+    }
+  }
+
+  if (dbTransactionError) {
+    return res.status(500).json({ error: `Disconnect failed in database transaction: ${dbTransactionError}` });
+  }
+
+  // Clear in-memory identity bindings & audit log
   if (previousIgId) {
     unbindIdentityFromUser(previousIgId, user.id);
   }
@@ -1574,32 +1609,49 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, (req: AuthRequest, 
     ipAddress: clientIp,
     userAgent: String(req.headers["user-agent"] || ""),
     decision: "ALLOW",
-    details: `User #${user.id} disconnected Instagram @${previousUsername || "unknown"}. Historical binding preserved for anti-hijack protection.`,
+    details: `User #${user.id} disconnected Instagram @${previousUsername || "unknown"}.`,
   });
 
+  // Clear every Instagram field on the user object in memory
   user.instagramUsername = null;
   user.instagramProfileUrl = null;
   user.instagramFollowers = 0;
   user.followers = 0;
+  user.reach = 0;
+  user.medianViews = 0;
+  user.engagementRate = 0;
   user.isInstagramVerified = false;
   user.instagramVerificationCode = null;
   user.instagramVerificationStatus = "unlinked";
   user.instagramAccessToken = null;
   user.instagramUserId = null;
   user.instagramTokenExpiresAt = null;
+  user.tier = "Unlinked";
+
+  const regUser = registeredUsers.find((u) => u.id === targetId || u.email?.toLowerCase() === user.email?.toLowerCase());
+  if (regUser) {
+    regUser.instagramUsername = null;
+    regUser.instagramProfileUrl = null;
+    regUser.instagramFollowers = 0;
+    regUser.followers = 0;
+    regUser.reach = 0;
+    regUser.medianViews = 0;
+    regUser.engagementRate = 0;
+    regUser.isInstagramVerified = false;
+    regUser.instagramVerificationStatus = "unlinked";
+    regUser.instagramAccessToken = null;
+    regUser.instagramUserId = null;
+    regUser.instagramTokenExpiresAt = null;
+    regUser.tier = "Unlinked";
+  }
+
   saveRegisteredUsers();
 
-  try {
-    pool.query(
-      `UPDATE creator_profiles
-       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', encrypted_access_token = NULL, token_expires_at = NULL
-       WHERE user_id = $1`,
-      [user.id]
-    ).catch((err: any) => console.error("[PG DISCONNECT ERROR]", err.message));
-  } catch {}
+  // Re-issue JWT session cookie without old Instagram claims
+  setAuthTokenCookie(res, user);
 
-  console.log(`[INSTAGRAM] Creator ${targetId} disconnected Instagram account`);
-  res.json(sanitizeUser(user));
+  console.log(`[INSTAGRAM] Creator ${targetId} disconnected Instagram account cleanly`);
+  return res.json(sanitizeUser(user));
 });
 
 // POST /api/instagram/reset-all - Clears all fake/test connected Instagram accounts and resets state to fresh
@@ -3954,10 +4006,10 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
     redirectUri,
   });
 
-  // Official Instagram Login Authorization URL for App ID 3167123270152518
-  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
+  // Official Instagram Login Authorization URL with force_reauth=true
+  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}&force_reauth=true`;
 
-  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated for client: ${appId}`);
+  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated with force_reauth=true for client: ${appId}`);
   res.json({
     authUrl,
     instagramOAuthUrl: authUrl,
@@ -4010,86 +4062,20 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           <title>${isSuccess ? "Instagram Connected" : "Instagram Connection Failed"}</title>
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              background-color: #0f172a;
-              color: #f8fafc;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              padding: 20px;
-              box-sizing: border-box;
-            }
-            .card {
-              background: #1e293b;
-              border: 1px solid #334155;
-              border-radius: 20px;
-              padding: 36px 28px;
-              text-align: center;
-              max-width: 420px;
-              width: 100%;
-              box-shadow: 0 20px 35px -10px rgba(0, 0, 0, 0.5);
-            }
-            .icon-wrapper {
-              width: 68px;
-              height: 68px;
-              border-radius: 50%;
-              margin: 0 auto 20px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              background: ${isSuccess ? 'linear-gradient(135deg, #f58529, #dd2a7b, #8134af)' : '#ef4444'};
-            }
+            body { font-family: system-ui, sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
+            .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 36px 28px; text-align: center; max-width: 420px; width: 100%; box-shadow: 0 20px 35px -10px rgba(0,0,0,0.5); }
             h1 { font-size: 22px; font-weight: 700; margin: 0 0 10px; }
             p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin: 0 0 24px; }
-            .badge {
-              display: inline-block;
-              background: #0f172a;
-              border: 1px solid #334155;
-              padding: 8px 16px;
-              border-radius: 9999px;
-              font-weight: 600;
-              font-size: 15px;
-              color: #38bdf8;
-              margin-bottom: 20px;
-            }
-            .btn {
-              display: inline-block;
-              background: #3b82f6;
-              color: #ffffff;
-              padding: 10px 24px;
-              border-radius: 10px;
-              font-weight: 600;
-              font-size: 14px;
-              text-decoration: none;
-              cursor: pointer;
-              border: none;
-            }
+            .btn { display: inline-block; background: #3b82f6; color: #ffffff; padding: 10px 24px; border-radius: 10px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; }
           </style>
         </head>
         <body>
           <div class="card">
-            <div class="icon-wrapper">
-              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                ${isSuccess 
-                  ? '<rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>'
-                  : '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>'
-                }
-              </svg>
-            </div>
             <h1>${isSuccess ? "Instagram Connected!" : "Connection Failed"}</h1>
-            ${isSuccess 
-              ? `<div class="badge">@${result.username}</div>
-                 <p>Your official Instagram account has been securely verified and linked to your Mingree profile.</p>`
-              : `<p style="color: #f87171;">${result.error || "An error occurred during verification."}</p>`
-            }
+            <p>${isSuccess ? `@${result.username}` : (result.error || "An error occurred during verification.")}</p>
             <button class="btn" onclick="finish()">Return to Mingree</button>
           </div>
           <script>
-            var isFinished = false;
-            var destUrl = '${destUrl}';
             var oauthPayload = {
               type: '${isSuccess ? "INSTAGRAM_OAUTH_SUCCESS" : "INSTAGRAM_OAUTH_ERROR"}',
               status: '${isSuccess ? "success" : "error"}',
@@ -4098,55 +4084,16 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
               error: ${JSON.stringify(result.error || "")},
               timestamp: Date.now()
             };
-
-            // 1. Persist result to localStorage (shared across all tabs on mingree.com)
-            try {
-              localStorage.setItem("mingree_instagram_oauth_result", JSON.stringify(oauthPayload));
-            } catch (e) {}
-
-            // 2. BroadcastChannel (modern zero-friction cross-window event)
-            try {
-              if (window.BroadcastChannel) {
-                var bc = new BroadcastChannel("mingree_oauth_channel");
-                bc.postMessage(oauthPayload);
-              }
-            } catch (e) {}
-
-            // 3. postMessage to opener
-            function notifyOpener() {
+            try { localStorage.setItem("mingree_instagram_oauth_result", JSON.stringify(oauthPayload)); } catch (e) {}
+            try { if (window.BroadcastChannel) { new BroadcastChannel("mingree_oauth_channel").postMessage(oauthPayload); } } catch (e) {}
+            function finish() {
               if (window.opener && !window.opener.closed) {
                 try { window.opener.postMessage(oauthPayload, "*"); } catch(e) {}
-                try { window.opener.postMessage(oauthPayload, window.location.origin); } catch(e) {}
-                try { window.opener.postMessage(oauthPayload, "https://mingree.com"); } catch(e) {}
+                try { window.close(); return; } catch(e) {}
               }
+              window.location.href = '${destUrl}';
             }
-            notifyOpener();
-
-            function finish() {
-              if (isFinished) return;
-              isFinished = true;
-              notifyOpener();
-
-              // If opener is accessible and not closed, navigate opener directly and close popup!
-              try {
-                if (window.opener && !window.opener.closed) {
-                  try {
-                    window.opener.location.href = destUrl;
-                  } catch(e) {}
-                  try {
-                    window.close();
-                    return;
-                  } catch(e) {}
-                }
-              } catch(e) {}
-
-              // If popup cannot close or opener is not available, navigate this window
-              try { window.close(); } catch(e) {}
-              window.location.href = destUrl;
-            }
-
-            // Auto-redirect opener or close after short delay
-            setTimeout(finish, 1600);
+            setTimeout(finish, 1500);
           </script>
         </body>
       </html>
@@ -4160,13 +4107,24 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     return res.status(200).send(renderOAuthResult({ success: false, error: errorMsg, returnTo: "/profile" }));
   }
 
-  // 2. Validate state parameter (CSRF protection with signed token fallback & serverless cookie recovery)
+  // 2. Validate state parameter strictly (CSRF protection, single-use, session-bound)
   const { appId, appSecret } = getInstagramCredentials();
   let stateRecord: { userId: number; returnTo?: string; redirectUri?: string } | undefined;
+
+  // Retrieve current session user ID from auth token cookie
+  let sessionUserId: number | null = null;
+  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
+      if (decoded?.id) sessionUserId = decoded.id;
+    } catch {}
+  }
 
   if (typeof state === "string" && state.trim()) {
     if (instagramOAuthStates.has(state)) {
       stateRecord = instagramOAuthStates.get(state);
+      // Immediately delete state token to enforce ONE-TIME USE and reject replayed callbacks
       instagramOAuthStates.delete(state);
     } else {
       const verified = verifySignedOAuthState(state, appSecret);
@@ -4176,24 +4134,18 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     }
   }
 
-  if (!stateRecord) {
-    // Graceful serverless recovery across stateless instances
-    let fallbackUserId = 1;
-    const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
-        if (decoded?.id) fallbackUserId = decoded.id;
-      } catch {}
-    }
-    if (code && typeof code === "string" && code.trim()) {
-      console.warn(`[INSTAGRAM OAUTH] Serverless state fallback active for user #${fallbackUserId}`);
-      stateRecord = { userId: fallbackUserId, returnTo: "/profile", redirectUri: "https://mingree.com/api/instagram/callback" };
-    }
+  // Reject replayed, old, missing, or mismatched session states
+  if (!stateRecord || (sessionUserId && stateRecord.userId !== sessionUserId)) {
+    console.warn(`[INSTAGRAM OAUTH] Authorization state validation failed. State found: ${Boolean(stateRecord)}, State User ID: ${stateRecord?.userId}, Session User ID: ${sessionUserId}`);
+    return res.status(200).send(renderOAuthResult({
+      success: false,
+      error: "Authorization session expired or invalid state. Replayed and stale callbacks are rejected. Please click 'Connect with Instagram' to try again.",
+      returnTo: "/profile",
+    }));
   }
 
-  const clientReturnTo = stateRecord?.returnTo || "/profile";
-  const effectiveRedirectUri = stateRecord?.redirectUri || redirectUri;
+  const clientReturnTo = stateRecord.returnTo || "/profile";
+  const effectiveRedirectUri = stateRecord.redirectUri || redirectUri;
 
   if (!stateRecord) {
     console.warn("[INSTAGRAM OAUTH] Authorization session state could not be resolved");

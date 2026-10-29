@@ -28,7 +28,7 @@ export default function AboutMingree() {
       description: "Escrow-backed earnings deposited directly to your bank account or UPI with zero payment delays."
     },
     {
-      title: "Official Meta Verification",
+      title: "Official Profile Verification",
       description: "Sync your live Instagram metrics and get the verified badge to qualify for high-ticket sponsorships."
     }
   ];
@@ -48,7 +48,7 @@ export default function AboutMingree() {
     },
     {
       title: "100% Genuine Audiences",
-      description: "Meta API integration guarantees verified accounts with genuine engagement and no fake metrics."
+      description: "Direct Instagram account verification guarantees authentic engagement with zero fake metrics."
     }
   ];
 
@@ -56,7 +56,7 @@ export default function AboutMingree() {
     {
       step: "01",
       title: "Create Account & Connect Instagram",
-      description: "Sign up and link your Instagram profile via official Meta login to verify your follower tier (min 500 followers)."
+      description: "Sign up and link your Instagram profile to verify your follower tier."
     },
     {
       step: "02",
@@ -77,20 +77,20 @@ export default function AboutMingree() {
 
   const faqs = [
     {
-      q: "What is the minimum requirement to join Mingree?",
-      a: "Creators need at least 500 followers on Instagram and an authentic profile. Connecting your account via official Meta Login automatically verifies your follower count and unlocks your initial tier."
+      q: "What is the requirement to join Mingree?",
+      a: "Creators need a verified Instagram creator account. Connecting your account automatically verifies your audience metrics and unlocks your tier."
     },
     {
       q: "How do payouts and withdrawals work?",
-      a: "Brands deposit campaign funds into Mingree escrow before campaigns launch. Once a creator's submission is approved, the funds are credited directly to the creator's wallet balance and can be withdrawn via IMPS/NEFT Bank Transfer or UPI."
+      a: "Brands deposit campaign funds into Mingree escrow before campaigns launch. Once a creator's submission is approved, the funds are credited directly to the creator's wallet balance and can be withdrawn via Bank Transfer or UPI."
     },
     {
-      q: "What are the 20 Creator Tiers?",
-      a: "Mingree categorizes creators into 20 progressive tiers starting from Nano (500-2K followers) up to Celebrity/Mega (1M+ followers). Higher tiers receive higher fixed base payouts per post."
+      q: "What are the Creator Tiers?",
+      a: "Mingree categorizes creators into progressive tiers based on verified followers. Higher tiers receive higher fixed base payouts per post."
     },
     {
-      q: "Is Mingree safe and compliant with Instagram?",
-      a: "Yes! Mingree uses official Meta Instagram Graph API endpoints with OAuth 2.0. We never ask for your Instagram password, and we strictly follow Meta's Developer Policies."
+      q: "Is Mingree safe?",
+      a: "Yes! Mingree integrates directly with secure Instagram authorization. We never ask for your Instagram password."
     }
   ];
 
