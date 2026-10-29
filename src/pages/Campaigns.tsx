@@ -19,7 +19,7 @@ import { motion } from "framer-motion";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useLocation } from "wouter";
 import { PROMOTION_CATEGORIES } from "@shared/schema";
-import { TIERS, formatFollowers, getTierByFollowers } from "@shared/tiers";
+import { TIERS, formatFollowers, getTierByFollowers, getTierNameByFollowers, getTierBannerText } from "@shared/tiers";
 import { COUNTRIES, getCountryByCode } from "@shared/countries";
 import { getCitiesByCountry } from "@shared/cities";
 import { useState, useMemo } from "react";
@@ -528,16 +528,18 @@ export default function Campaigns() {
               </TabsList>
 
               <TabsContent value="all-campaigns">
-                {user?.instagramUsername && user?.tier ? (
+                {user?.instagramUsername ? (
                   <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-foreground font-semibold shrink-0 border border-border/60">
-                        {user.tier.charAt(0)}
+                        {getTierNameByFollowers(user.followers || user.instagramFollowers || 0, true).charAt(0)}
                       </div>
                       <div className="min-w-0">
-                        <span className="font-semibold text-foreground">Tier: {user.tier}</span>
+                        <span className="font-semibold text-foreground">
+                          {getTierBannerText(user.followers || user.instagramFollowers || 0, true)}
+                        </span>
                         <span className="text-muted-foreground ml-1.5">
-                          ({formatFollowers(TIERS.find(t => t.name === user.tier)?.minFollowers || 500)}+ followers verified)
+                          ({(user.followers || user.instagramFollowers || 0).toLocaleString()} followers verified)
                         </span>
                       </div>
                     </div>
@@ -555,9 +557,9 @@ export default function Campaigns() {
 
                 {campaignGroups.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40">
-                    <h2 className="text-base font-bold mb-1 text-foreground">No campaigns available</h2>
+                    <h2 className="text-base font-bold mb-1 text-foreground">No campaigns for your tier and city yet</h2>
                     <p className="text-xs text-muted-foreground max-w-sm">
-                      Check back soon or adjust your country and city filters above
+                      Check back soon or update your city selection in Profile
                     </p>
                   </div>
                 ) : (
@@ -568,16 +570,22 @@ export default function Campaigns() {
                       const isReserved = isAnyReservedInGroup(group);
                       const bestCampaign = getBestCampaignForUser(group);
                       const lowestTier = group.campaigns[0];
-                      
-                      const allPromotional = group.campaigns.every(c => c.isPromotional);
-                      
+
+                      const targetedTierNames = Array.from(
+                        new Set(
+                          group.campaigns
+                            .flatMap((c: any) => c.targetTiers || (c.tier ? [c.tier] : []))
+                            .filter(Boolean)
+                        )
+                      ).join(", ") || (bestCampaign?.tier || "Mid");
+
                       const payments = group.campaigns.map(c => parseFloat(c.payAmount));
                       const minPay = Math.min(...payments);
                       const maxPay = Math.max(...payments);
                       const paymentDisplay = minPay === maxPay 
                         ? formatINR(minPay.toString()) 
                         : `${formatINR(minPay.toString())} - ${formatINR(maxPay.toString())}`;
-                      
+
                       return (
                         <motion.div
                           key={group.title}
@@ -593,7 +601,7 @@ export default function Campaigns() {
                             onClick={() => handleOpenGroupDetails(group)}
                             data-testid={`card-campaign-grid-${index}`}
                           >
-                            {/* Card Header (Pure Typographic Precision) */}
+                            {/* Card Header */}
                             <div className="p-3.5 border-b border-border/70 flex flex-col justify-between">
                               <div className="flex items-center justify-between gap-1 mb-2">
                                 {isReserved ? (
@@ -610,8 +618,8 @@ export default function Campaigns() {
                                   </span>
                                 )}
 
-                                <span className="text-[10px] text-muted-foreground font-medium">
-                                  {group.campaigns.length} {group.campaigns.length === 1 ? 'tier' : 'tiers'}
+                                <span className="text-[10px] text-muted-foreground font-medium truncate max-w-[120px]">
+                                  {targetedTierNames}
                                 </span>
                               </div>
 
@@ -632,7 +640,7 @@ export default function Campaigns() {
                                   {bestCampaign && !isLocked ? formatINR(bestCampaign.payAmount) : paymentDisplay}
                                 </span>
                                 <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                                  {bestCampaign?.tier || lowestTier?.tier || "Starter"}
+                                  {bestCampaign?.tier || lowestTier?.tier || "Mid"}
                                 </span>
                               </div>
 
@@ -649,9 +657,11 @@ export default function Campaigns() {
                                     }
                                   })()}
                                 </span>
-                                <span className="font-medium text-foreground whitespace-nowrap tabular-nums">
-                                  {group.totalSpots} spots
-                                </span>
+                                {typeof group.totalSpots === "number" && !isNaN(group.totalSpots) && group.totalSpots > 0 && (
+                                  <span className="font-medium text-foreground whitespace-nowrap tabular-nums">
+                                    {group.totalSpots} spots
+                                  </span>
+                                )}
                               </div>
                             </CardContent>
                           </Card>

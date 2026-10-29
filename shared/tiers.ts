@@ -7,9 +7,9 @@ export interface Tier {
   basePayment?: number;
 }
 
-// Manual (Advanced) mode tiers with 8 canonical tiers
+// Manual & Fixed mode tiers with 8 canonical half-open ranges [min, max)
 export const TIERS: Tier[] = [
-  { id: 1, name: "Nano", label: "Nano", minFollowers: 500, maxFollowers: 10000, basePayment: 0 },
+  { id: 1, name: "Nano", label: "Nano", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
   { id: 2, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
   { id: 3, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
   { id: 4, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
@@ -19,23 +19,29 @@ export const TIERS: Tier[] = [
   { id: 8, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 0 },
 ];
 
-// Fixed Price mode tiers
-export const FIXED_TIERS: Tier[] = [
-  { id: 1, name: "Nano", label: "Nano", minFollowers: 500, maxFollowers: 10000, basePayment: 0 },
-  { id: 2, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
-  { id: 3, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
-  { id: 4, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
-  { id: 5, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
-  { id: 6, name: "Large", label: "Large", minFollowers: 500000, maxFollowers: 1000000, basePayment: 0 },
-  { id: 7, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: 2500000, basePayment: 0 },
-  { id: 8, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 0 },
-];
+export const FIXED_TIERS = TIERS;
 
-export const MIN_FOLLOWERS = 500;
+export const MIN_FOLLOWERS = 5000;
+export const INELIGIBLE_TIER_LABEL = "Not eligible yet (needs 5,000 followers)";
 
 export function getTierByFollowers(followers: number): Tier | null {
   if (followers < MIN_FOLLOWERS) return null;
   return TIERS.find(t => followers >= t.minFollowers && followers < t.maxFollowers) || TIERS[TIERS.length - 1];
+}
+
+export function getTierNameByFollowers(followers: number, isConnected = true): string {
+  if (!isConnected || followers <= 0) return "Unlinked";
+  if (followers < MIN_FOLLOWERS) return INELIGIBLE_TIER_LABEL;
+  const tier = getTierByFollowers(followers);
+  return tier ? tier.name : INELIGIBLE_TIER_LABEL;
+}
+
+export function getTierBannerText(followers: number, isConnected = true): string {
+  if (!isConnected || followers <= 0) return "Tier: Not Connected";
+  if (followers < MIN_FOLLOWERS) return `Tier: ${INELIGIBLE_TIER_LABEL}`;
+  const tier = getTierByFollowers(followers);
+  if (!tier) return `Tier: ${INELIGIBLE_TIER_LABEL}`;
+  return `Tier: ${tier.name} (${formatTierRange(tier.minFollowers, tier.maxFollowers)})`;
 }
 
 export function getTierById(id: number): Tier | undefined {
@@ -56,7 +62,7 @@ export function formatTierRange(minFollowers: number, maxFollowers: number): str
   if (maxFollowers === Infinity || maxFollowers >= 100000000) {
     return `${formatFollowers(minFollowers)}+`;
   }
-  return `${formatFollowers(minFollowers)}-${formatFollowers(maxFollowers)}`;
+  return `${formatFollowers(minFollowers)} - ${formatFollowers(maxFollowers)}`;
 }
 
 export const PROMOTION_STYLE_MULTIPLIERS: Record<string, number> = {

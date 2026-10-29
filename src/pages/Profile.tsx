@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { useLocation, Link } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getCitiesByCountry } from "@shared/cities";
+import { getTierNameByFollowers, INELIGIBLE_TIER_LABEL } from "@shared/tiers";
 import { motion } from "motion/react";
 import { useAuth } from "@/lib/auth-context";
 import confetti from "canvas-confetti";
@@ -527,7 +528,9 @@ export default function Profile() {
               {/* User Info Details */}
               <div className="text-center sm:text-left space-y-2">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h2 className="text-xl sm:text-2xl font-bold text-foreground">{user.name}</h2>
+                  <h2 className="text-xl sm:text-2xl font-bold text-foreground">
+                    {activeUser.name || activeUser.instagramUsername || "Creator"}
+                  </h2>
                   {user.isVerified && (
                     <Badge className="bg-primary/10 text-primary hover:bg-primary/20 text-[11px] py-0 px-2 border border-primary/20">
                       Verified
@@ -536,14 +539,18 @@ export default function Profile() {
                 </div>
                 
                 <p className="text-xs sm:text-sm font-medium text-muted-foreground">
-                  {user.handle.startsWith("@") ? user.handle : `@${user.handle}`}
+                  {activeUser.instagramUsername 
+                    ? `@${activeUser.instagramUsername}` 
+                    : (activeUser.handle ? (activeUser.handle.startsWith("@") ? activeUser.handle : `@${activeUser.handle}`) : "Not connected")}
                 </p>
 
                 {/* Status Badges Row */}
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
                   {activeUser.role === "creator" && (
                     <span className="inline-flex items-center text-[11px] font-semibold px-2.5 py-1 rounded bg-muted text-foreground border border-border">
-                      {activeUser.isInstagramVerified && activeUser.instagramUsername ? (activeUser.tier || "Creator") : "Unlinked"}
+                      {activeUser.isInstagramVerified && activeUser.instagramUsername && activeUser.followers >= 5000
+                        ? getTierNameByFollowers(activeUser.followers)
+                        : (activeUser.followers > 0 && activeUser.followers < 5000 ? INELIGIBLE_TIER_LABEL : "Unlinked")}
                     </span>
                   )}
                   
@@ -557,9 +564,21 @@ export default function Profile() {
                     </span>
                   )}
 
-                  <span className="inline-flex items-center text-[11px] font-medium px-2.5 py-1 rounded bg-muted text-muted-foreground border border-border">
-                    {activeUser.city || "No city set"}
-                  </span>
+                  {activeUser.city ? (
+                    <span className="inline-flex items-center text-[11px] font-medium px-2.5 py-1 rounded bg-muted text-foreground border border-border">
+                      {activeUser.city}
+                    </span>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingProfile(true)}
+                      className="inline-flex items-center text-[11px] font-semibold h-7 px-2.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 cursor-pointer"
+                      data-testid="button-choose-city-prompt"
+                    >
+                      Choose your city
+                    </Button>
+                  )}
                 </div>
 
                 {/* Edit Form Drawer / Container */}

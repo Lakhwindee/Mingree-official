@@ -51,11 +51,11 @@ export default function Login() {
             ? "Mingree Administrator"
             : fallbackRole === "sponsor"
             ? "Brand Partner"
-            : "Creator Account"),
+            : demoEmail.split("@")[0]),
         email: demoEmail,
         handle:
           data.handle ||
-          (fallbackRole === "admin" ? "@admin" : fallbackRole === "sponsor" ? "@brandpartner" : "@creator"),
+          (fallbackRole === "admin" ? "@admin" : fallbackRole === "sponsor" ? "@brandpartner" : `@${demoEmail.split("@")[0]}`),
         role: fallbackRole,
         avatar: data.avatar,
         followers: data.followers || 0,

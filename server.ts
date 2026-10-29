@@ -11,6 +11,7 @@ import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
 import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured, ensureSchemaInitialized } from "./server/db";
 import { eq } from "drizzle-orm";
+import { getTierNameByFollowers, getTierBannerText, TIERS } from "./shared/tiers";
 
 // Prevent container crashes from unhandled rejections or exceptions
 process.on('unhandledRejection', (reason) => {
@@ -1969,263 +1970,9 @@ app.post("/api/admin/config/benchmark-cpm", requireAuth, requireRole("admin"), (
 let inMemoryCampaigns: any[] = [];
 let inMemoryReservations: any[] = [];
 
-const initialCampaignsData: any[] = [
-  {
-    id: 1,
-    sponsorId: 2,
-    artistId: 2,
-    title: "boAt Rockerz 550 ANC Earphones - Active Basshead Reel",
-    songUrl: "https://instagram.com/reels/audio/boat_rockerz_bass",
-    genre: "Music Reels",
-    language: "Punjabi / Hindi / English",
-    brand: "boAt Lifestyle",
-    brandLogo: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=100",
-    payAmount: "8500",
-    budget: "85000",
-    totalBudget: 85000,
-    remainingBudget: 68000,
-    totalSpots: 10,
-    spotsFilled: 2,
-    status: "active",
-    minFollowers: 5000,
-    minEngagement: 2.5,
-    requiredCaptionNote: "#ad #PlugIntoNirvana | Rocking the boAt Rockerz 550 active noise cancellation! Tag @boat.nirvana.",
-    targetCountries: ["India"],
-    targetCities: ["Mumbai", "Delhi", "Bangalore", "Pune", "Chandigarh"],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 2,
-    sponsorId: 4,
-    artistId: 4,
-    title: "Mamaearth Vitamin C Face Wash - Glass Skin Morning Routine",
-    songUrl: "",
-    genre: "Lifestyle",
-    language: "Hindi / English",
-    brand: "Mamaearth India",
-    brandLogo: "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=100",
-    payAmount: "6000",
-    budget: "60000",
-    totalBudget: 60000,
-    remainingBudget: 42000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 8000,
-    minEngagement: 3.0,
-    requiredCaptionNote: "#ad #MamaearthGlow | 100% Made Safe Certified Vitamin C Face Wash for natural glow. Tag @mamaearth.india",
-    targetCountries: ["India"],
-    targetCities: ["Delhi", "Mumbai", "Bangalore", "Kolkata"],
-    contentTypes: ["Reel", "Story"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 3,
-    sponsorId: 4,
-    artistId: 4,
-    title: "Zomato Gold Gourmet - 10-Minute Meal Unboxing Reel",
-    songUrl: "",
-    genre: "Food & Lifestyle",
-    language: "Hindi / English",
-    brand: "Zomato",
-    brandLogo: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=100",
-    payAmount: "12000",
-    budget: "120000",
-    totalBudget: 120000,
-    remainingBudget: 84000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 15000,
-    minEngagement: 3.0,
-    requiredCaptionNote: "#ad #ZomatoGold | Late night craving fixed in 10 mins with Zomato Gold! Use code ZOMATOCRAVE.",
-    targetCountries: ["India"],
-    targetCities: ["Mumbai", "Delhi", "Bangalore", "Hyderabad", "Pune"],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 4,
-    sponsorId: 2,
-    artistId: 2,
-    title: "Spotify India - Trending Indie & Punjabi Audio Reels",
-    songUrl: "https://instagram.com/reels/audio/spotify_indie_india",
-    genre: "Music Reels",
-    language: "Punjabi / Hindi",
-    brand: "Spotify India",
-    brandLogo: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100",
-    payAmount: "7500",
-    budget: "75000",
-    totalBudget: 75000,
-    remainingBudget: 52500,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 5000,
-    minEngagement: 2.5,
-    requiredCaptionNote: "#ad #SpotifyIndieIndia | Listening on loop on Spotify India. Use official audio in reel!",
-    targetCountries: ["India"],
-    targetCities: [],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 5,
-    sponsorId: 4,
-    artistId: 4,
-    title: "Cult.fit Transformation - 7-Day Workout & HIIT Reel",
-    songUrl: "",
-    genre: "Fitness & Health",
-    language: "English / Hindi",
-    brand: "Cult.fit",
-    brandLogo: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=100",
-    payAmount: "10000",
-    budget: "100000",
-    totalBudget: 100000,
-    remainingBudget: 70000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 10000,
-    minEngagement: 3.0,
-    requiredCaptionNote: "#ad #CultFit #WorkoutMotivation | 7-day free trial on cult.fit app! Tag @cultfitofficial.",
-    targetCountries: ["India"],
-    targetCities: ["Bangalore", "Mumbai", "Delhi", "Gurgaon", "Pune"],
-    contentTypes: ["Reel", "Story"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 6,
-    sponsorId: 2,
-    artistId: 2,
-    title: "Sugar Cosmetics - Matte As Hell Crayon Lipstick Swatch",
-    songUrl: "",
-    genre: "Fashion & Beauty",
-    language: "Hindi / English",
-    brand: "Sugar Cosmetics",
-    brandLogo: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=100",
-    payAmount: "7000",
-    budget: "70000",
-    totalBudget: 70000,
-    remainingBudget: 49000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 8000,
-    minEngagement: 2.8,
-    requiredCaptionNote: "#ad #BoldAndBeautiful | 12-hour transfer-proof stay testing with @trysugar Matte As Hell lipstick.",
-    targetCountries: ["India"],
-    targetCities: [],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 7,
-    sponsorId: 4,
-    artistId: 4,
-    title: "Swiggy Instamart - 10-Minute Grocery & Snack Unboxing",
-    songUrl: "",
-    genre: "Lifestyle & Food",
-    language: "Hindi / English",
-    brand: "Swiggy Instamart",
-    brandLogo: "https://images.unsplash.com/photo-1542838132-92c53300491e?w=100",
-    payAmount: "5000",
-    budget: "50000",
-    totalBudget: 50000,
-    remainingBudget: 35000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 5000,
-    minEngagement: 2.5,
-    requiredCaptionNote: "#ad #SwiggyInstamart | Snacks delivered in 10 minutes flat via Swiggy Instamart!",
-    targetCountries: ["India"],
-    targetCities: ["Mumbai", "Delhi", "Bangalore", "Pune", "Hyderabad"],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 8,
-    sponsorId: 2,
-    artistId: 2,
-    title: "Myntra Big Fashion Festival - Festive Outfit Styling Reel",
-    songUrl: "",
-    genre: "Fashion",
-    language: "Hindi / English",
-    brand: "Myntra",
-    brandLogo: "https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=100",
-    payAmount: "15000",
-    budget: "150000",
-    totalBudget: 150000,
-    remainingBudget: 105000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 20000,
-    minEngagement: 3.5,
-    requiredCaptionNote: "#ad #MyntraFashionFestival | Styling 3 festive outfits from Myntra. Up to 80% OFF. Tag @myntra.",
-    targetCountries: ["India"],
-    targetCities: [],
-    contentTypes: ["Reel", "Story"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 9,
-    sponsorId: 4,
-    artistId: 4,
-    title: "Noise ColorFit Pro 5 - AMOLED Smartwatch Tech Showcase",
-    songUrl: "",
-    genre: "Tech & Gadgets",
-    language: "English / Hindi",
-    brand: "Noise Wearables",
-    brandLogo: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=100",
-    payAmount: "9500",
-    budget: "95000",
-    totalBudget: 95000,
-    remainingBudget: 66500,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 12000,
-    minEngagement: 2.8,
-    requiredCaptionNote: "#ad #ListenToTheNoise | Noise ColorFit Pro 5 Bluetooth calling & AMOLED display review.",
-    targetCountries: ["India"],
-    targetCities: [],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 10,
-    sponsorId: 2,
-    artistId: 2,
-    title: "CRED UPI & Bill Payments Cashback Reel",
-    songUrl: "",
-    genre: "Finance & Lifestyle",
-    language: "Hindi / English",
-    brand: "CRED",
-    brandLogo: "https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=100",
-    payAmount: "18000",
-    budget: "180000",
-    totalBudget: 180000,
-    remainingBudget: 126000,
-    totalSpots: 10,
-    spotsFilled: 3,
-    status: "active",
-    minFollowers: 25000,
-    minEngagement: 3.5,
-    requiredCaptionNote: "#ad #CRED #PayWithCRED | Pay credit card bills & UPI payments on CRED for instant cashbacks!",
-    targetCountries: ["India"],
-    targetCities: ["Mumbai", "Delhi", "Bangalore", "Gurgaon"],
-    contentTypes: ["Reel"],
-    createdAt: new Date().toISOString(),
-  }
-];
+const initialCampaignsData: any[] = [];
 
 function loadCampaigns(): any[] {
-  if (inMemoryCampaigns.length === 0) {
-    inMemoryCampaigns = [...initialCampaignsData];
-  }
   return inMemoryCampaigns;
 }
 
@@ -2242,9 +1989,6 @@ function saveReservations(resList: any[]) {
 }
 
 // Auto-cleanup engine:
-// 1. Free creators cannot have reserved campaigns ("Ye free wale me reserved nai hono chahiye")
-// 2. If a paid user's subscription expires before submitting work link, reservation is removed ("wo reserved v udd jani chahiye")
-// 3. If deadline passes without work link submission, reservation is removed
 function cleanReservations(targetUserId?: number): any[] {
   const reservations = loadReservations();
   const campaigns = loadCampaigns();
@@ -2254,7 +1998,6 @@ function cleanReservations(targetUserId?: number): any[] {
   const validReservations: any[] = [];
 
   for (const r of reservations) {
-    // Only unsubmitted ("reserved") entries are subject to subscription invalidation & timeout
     if (r.status === "reserved" && !r.submittedAt) {
       const user: any = registeredUsers.find(u => u.id === r.userId);
 
@@ -2263,16 +2006,15 @@ function cleanReservations(targetUserId?: number): any[] {
       const isPro = (subPlan === "pro" || subPlan === "enterprise") && (!subExpiresAt || subExpiresAt > now);
 
       const isTimeExpired = r.expiresAt ? new Date(r.expiresAt).getTime() <= now : false;
-      const isSubscriptionExpired = !isPro; // Free plan or subscription expired!
+      const isSubscriptionExpired = !isPro;
 
       if (isSubscriptionExpired || isTimeExpired) {
-        console.log(`[CLEANUP] Removing unsubmitted reservation #${r.id} for user #${r.userId}. Reason: ${isSubscriptionExpired ? 'Subscription inactive/expired' : 'Reservation window expired'}. Restoring spot on campaign #${r.campaignId}.`);
+        console.log(`[CLEANUP] Removing unsubmitted reservation #${r.id} for user #${r.userId}.`);
         const campaign = campaigns.find(c => c.id === r.campaignId);
         if (campaign && campaign.spotsRemaining < campaign.totalSpots) {
           campaign.spotsRemaining += 1;
         }
         changed = true;
-        // Purged: "wo reserved v udd jani chahiye"
         continue;
       }
     }
@@ -2288,16 +2030,63 @@ function cleanReservations(targetUserId?: number): any[] {
   return validReservations;
 }
 
-// GET /api/campaigns - Discoverable campaigns for marketplace
-app.get(["/api/campaigns", "/api/campaigns/marketplace"], (req, res) => {
+// GET /api/campaigns - Discoverable campaigns for marketplace with strict server-side filtering by creator tier & city
+app.get(["/api/campaigns", "/api/campaigns/marketplace"], async (req: express.Request, res: express.Response) => {
   cleanReservations();
+  const authReq = req as AuthRequest;
+  const user = authReq.user;
+
+  let creatorFollowers = 0;
+  let creatorCity = "";
+  let creatorTier = "Unlinked";
+
+  if (user) {
+    creatorCity = user.city || "";
+    try {
+      const cpRes = await pool.query("SELECT followers FROM creator_profiles WHERE user_id = $1", [user.id]);
+      if (cpRes.rows.length > 0 && cpRes.rows[0].followers !== null) {
+        creatorFollowers = Number(cpRes.rows[0].followers);
+      } else {
+        creatorFollowers = user.followers || user.instagramFollowers || 0;
+      }
+    } catch {
+      creatorFollowers = user.followers || user.instagramFollowers || 0;
+    }
+    creatorTier = getTierNameByFollowers(creatorFollowers, Boolean(user.isInstagramVerified || creatorFollowers > 0));
+  } else if (req.query.userId) {
+    const targetId = Number(req.query.userId);
+    try {
+      const uRes = await pool.query("SELECT u.city, cp.followers FROM users u LEFT JOIN creator_profiles cp ON cp.user_id = u.id WHERE u.id = $1", [targetId]);
+      if (uRes.rows.length > 0) {
+        creatorCity = uRes.rows[0].city || "";
+        creatorFollowers = Number(uRes.rows[0].followers || 0);
+        creatorTier = getTierNameByFollowers(creatorFollowers, creatorFollowers > 0);
+      }
+    } catch {}
+  } else if (req.query.creatorTier) {
+    creatorTier = String(req.query.creatorTier);
+    if (req.query.city) creatorCity = String(req.query.city);
+    if (req.query.creatorFollowers) creatorFollowers = Number(req.query.creatorFollowers);
+  }
+
+  // Requirement 1: Creator with < 5,000 followers receives empty list
+  if (user && user.role === "creator" && creatorFollowers < 5000) {
+    return res.json([]);
+  }
+
   const { niche, country, city, minPayout } = req.query;
+  const activeCity = typeof city === "string" && city ? city : creatorCity;
+
   const list = getMarketplaceCampaigns({
     niche: typeof niche === "string" ? niche : undefined,
     country: typeof country === "string" ? country : undefined,
-    city: typeof city === "string" ? city : undefined,
+    city: activeCity || undefined,
     minPayout: minPayout ? parseFloat(String(minPayout)) : undefined,
+    creatorFollowers: creatorFollowers > 0 ? creatorFollowers : undefined,
+    creatorCity: activeCity || undefined,
+    creatorTier: creatorTier !== "Unlinked" && creatorTier !== "Not eligible yet (needs 5,000 followers)" ? creatorTier : undefined,
   });
+
   res.json(list);
 });
 

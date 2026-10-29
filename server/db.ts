@@ -77,6 +77,15 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
     }
     if (initSql) {
       await localClient.query(initSql);
+      // Purge any residual demo campaigns from DB
+      await localClient.query(`
+        DELETE FROM campaigns
+        WHERE title ILIKE '%boAt%' OR title ILIKE '%Myntra%' OR title ILIKE '%Spotify%'
+           OR title ILIKE '%Zomato%' OR title ILIKE '%Mamaearth%' OR title ILIKE '%Nykaa%'
+           OR title ILIKE '%Puma%' OR title ILIKE '%OnePlus%' OR title ILIKE '%Noise%'
+           OR title ILIKE '%Swiggy%' OR title ILIKE '%CRED%' OR title ILIKE '%Cult.fit%'
+           OR title ILIKE '%Lookbook%';
+      `).catch(() => {});
       schemaInitialized = true;
       console.log("[DB SCHEMA] Applied migrations/001_init.sql successfully.");
     }
