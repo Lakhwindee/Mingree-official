@@ -179,6 +179,61 @@ export function recordFailedAttempt(ip: string, userId: number) {
 }
 
 // 2. One-to-One Binding & Reclaim Protection
+export async function checkIdentityBindingDb(
+  client: any,
+  instagramUserId: string,
+  instagramUsername: string,
+  mingreeUserId: number
+): Promise<{ allowed: boolean; reason?: string; isDuplicate?: boolean; isCooldown?: boolean; remainingSecs?: number }> {
+  // 1. Check if instagram_user_id is currently linked to a different Mingree user in creator_profiles
+  const dupCp = await client.query(
+    `SELECT user_id, username FROM creator_profiles WHERE instagram_user_id = $1 AND user_id != $2`,
+    [instagramUserId, mingreeUserId]
+  );
+  if (dupCp.rows.length > 0) {
+    return {
+      allowed: false,
+      isDuplicate: true,
+      reason: "This Instagram account is already linked to another Mingree account.",
+    };
+  }
+
+  // 2. Check instagram_identities table for current user binding and 3-minute cooldown
+  const identityRes = await client.query(
+    `SELECT current_user_id, username, unlinked_at, EXTRACT(EPOCH FROM (now() - unlinked_at)) AS elapsed_seconds
+     FROM instagram_identities
+     WHERE instagram_user_id = $1`,
+    [instagramUserId]
+  );
+
+  if (identityRes.rows.length > 0) {
+    const row = identityRes.rows[0];
+    if (row.current_user_id && Number(row.current_user_id) !== mingreeUserId) {
+      return {
+        allowed: false,
+        isDuplicate: true,
+        reason: "This Instagram account is already linked to another Mingree account.",
+      };
+    }
+
+    if (row.unlinked_at && row.elapsed_seconds !== null) {
+      const elapsed = Number(row.elapsed_seconds);
+      const cooldownSeconds = 180; // 3 minute anti-churn cooldown
+      if (elapsed < cooldownSeconds) {
+        const remaining = Math.ceil(cooldownSeconds - elapsed);
+        return {
+          allowed: false,
+          isCooldown: true,
+          remainingSecs: remaining,
+          reason: `Anti-farming cooldown active. Please wait ${remaining} seconds before re-linking this Instagram account.`,
+        };
+      }
+    }
+  }
+
+  return { allowed: true };
+}
+
 export function checkIdentityBinding(
   instagramUserId: string,
   instagramUsername: string,
@@ -191,7 +246,6 @@ export function checkIdentityBinding(
   );
 
   if (identity) {
-    // Check if account is globally locked by an administrator
     if (identity.isLocked) {
       return {
         allowed: false,
@@ -199,18 +253,14 @@ export function checkIdentityBinding(
       };
     }
 
-    // Check if account is already bound to a DIFFERENT Mingree user
     if (identity.boundMingreeUserId && identity.boundMingreeUserId !== mingreeUserId) {
       return {
         allowed: false,
-        reason: `The Instagram account @${identity.instagramUsername} is already linked to another Mingree creator account. One Instagram account can only be linked to one Mingree account.`,
+        reason: "This Instagram account is already linked to another Mingree account.",
         isReclaimAttempt: true,
       };
     }
 
-    // Reclaim protection after disconnect:
-    // If the account was previously bound to another user and is currently disconnected,
-    // prevent unauthorized users from hijacking / claiming it without original ownership verification.
     if (
       !identity.boundMingreeUserId &&
       identity.historicalMingreeUserIds.length > 0 &&
@@ -218,15 +268,14 @@ export function checkIdentityBinding(
     ) {
       return {
         allowed: false,
-        reason: `The Instagram account @${identity.instagramUsername} is bound to an existing creator's history on Mingree. If you are the rightful owner, please sign in with your original Mingree account or contact Support for an ownership transfer.`,
+        reason: "This Instagram account is already linked to another Mingree account.",
         isReclaimAttempt: true,
       };
     }
 
-    // Anti-Churn / Farming Cooldown (e.g. Disconnect & rapid reconnect in < 3 minutes)
     if (identity.lastDisconnectedAt) {
       const elapsed = Date.now() - new Date(identity.lastDisconnectedAt).getTime();
-      const cooldownMs = 3 * 60 * 1000; // 3 minute anti-churn cooldown
+      const cooldownMs = 3 * 60 * 1000;
       if (elapsed < cooldownMs) {
         const waitSecs = Math.ceil((cooldownMs - elapsed) / 1000);
         return {

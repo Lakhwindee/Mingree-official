@@ -29,6 +29,7 @@ import {
   checkRateLimitAndFarming,
   recordFailedAttempt,
   checkIdentityBinding,
+  checkIdentityBindingDb,
   evaluateBotAndRiskScore,
   bindIdentityToUser,
   unbindIdentityFromUser,
@@ -4349,11 +4350,61 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       }));
     }
 
-    // 7. Security Check: Enforce One-to-One Binding & Reclaim Protection
-    // Restricts one Instagram identity from linking to multiple Mingree accounts
-    // Secures re-authentication so disconnected accounts cannot be hijacked
+    // 7. Security Check: Enforce One-to-One Binding & Reclaim Protection via Database Transaction
+    let client: any = null;
+    if (isDatabaseConfigured) {
+      try {
+        client = await pool.connect();
+        await client.query("BEGIN");
+
+        const dbBindingCheck = await checkIdentityBindingDb(client, igUserId, igUsername, stateRecord.userId);
+        if (!dbBindingCheck.allowed) {
+          await client.query("ROLLBACK");
+          client.release();
+          client = null;
+
+          const eventType = dbBindingCheck.isCooldown ? "LINK_REJECTED_COOLDOWN" : "LINK_REJECTED_DUPLICATE";
+          recordSecurityEvent({
+            event: eventType,
+            mingreeUserId: stateRecord.userId,
+            instagramUsername: igUsername,
+            instagramUserId: igUserId,
+            riskScore: dbBindingCheck.isDuplicate ? 75 : 50,
+            riskLevel: "HIGH",
+            riskFactors: [dbBindingCheck.reason!],
+            followers: followersCount,
+            mediaCount: mediaCount,
+            ipAddress: clientIp,
+            userAgent,
+            decision: "BLOCK",
+            details: dbBindingCheck.reason!,
+          });
+
+          return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
+            success: false,
+            username: igUsername,
+            followers: followersCount,
+            error: dbBindingCheck.reason!,
+            returnTo: clientReturnTo,
+          }));
+        }
+      } catch (checkErr: any) {
+        if (client) {
+          try { await client.query("ROLLBACK"); } catch {}
+          client.release();
+          client = null;
+        }
+        console.error("[PG OAUTH CHECK ERROR]", checkErr?.message || checkErr);
+      }
+    }
+
     const bindingCheck = checkIdentityBinding(igUserId, igUsername, stateRecord.userId);
     if (!bindingCheck.allowed) {
+      if (client) {
+        try { await client.query("ROLLBACK"); } catch {}
+        client.release();
+        client = null;
+      }
       console.warn(`[SECURITY] One-to-One Binding / Reclaim restriction triggered for @${igUsername}: ${bindingCheck.reason}`);
       recordFailedAttempt(clientIp, stateRecord.userId);
       recordSecurityEvent({
@@ -4369,20 +4420,19 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         ipAddress: clientIp,
         userAgent,
         decision: "BLOCK",
-        details: bindingCheck.reason || "One-to-One Instagram Identity restriction",
+        details: bindingCheck.reason || "This Instagram account is already linked to another Mingree account.",
       });
 
       return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
         success: false,
         username: igUsername,
         followers: followersCount,
-        error: bindingCheck.reason || "This Instagram account cannot be linked to this Mingree profile.",
+        error: bindingCheck.reason || "This Instagram account is already linked to another Mingree account.",
         returnTo: clientReturnTo,
       }));
     }
 
-    // 8. Security Check: Bot / Suspicious Account Detection & Risk Scoring
-    // Analyzes media count, follower velocity bursts, username entropy without blocking genuine low-follower users
+    // 8. Bot & Suspicious Account Detection
     const riskEval = evaluateBotAndRiskScore({
       instagramUserId: igUserId,
       instagramUsername: igUsername,
@@ -4393,6 +4443,11 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     });
 
     if (riskEval.isBlocked) {
+      if (client) {
+        try { await client.query("ROLLBACK"); } catch {}
+        client.release();
+        client = null;
+      }
       console.warn(`[SECURITY] Bot / High Risk Account blocked: @${igUsername} (Score: ${riskEval.riskScore}/100)`);
       recordFailedAttempt(clientIp, stateRecord.userId);
       recordSecurityEvent({
@@ -4420,72 +4475,32 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       }));
     }
 
-    // 9. Identity Verified & Registered - Securely store in Identity Registry
-    bindIdentityToUser({
-      instagramUserId: igUserId,
-      instagramUsername: igUsername,
-      mingreeUserId: stateRecord.userId,
-      followers: followersCount,
-      mediaCount: mediaCount,
-      riskScore: riskEval.riskScore,
-      riskFactors: riskEval.riskFactors,
-    });
-
-    // 10. Record Security Audit Log
-    recordSecurityEvent({
-      event: "LINK_APPROVED",
-      mingreeUserId: stateRecord.userId,
-      instagramUsername: igUsername,
-      instagramUserId: igUserId,
-      riskScore: riskEval.riskScore,
-      riskLevel: riskEval.riskLevel,
-      riskFactors: riskEval.riskFactors,
-      followers: followersCount,
-      mediaCount: mediaCount,
-      ipAddress: clientIp,
-      userAgent,
-      decision: riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
-      details: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers, ${mediaCount} posts) linked successfully to User #${stateRecord.userId}. Risk level: ${riskEval.riskLevel} (${riskEval.riskScore}/100).`,
-    });
-
-    // 11. Securely update user profile
+    // 9. Execute DB Transaction for actual persist
     const reach = followersCount > 0 ? Math.round(followersCount * 2.2) : null;
     const medianViews = followersCount > 0 ? Math.round(followersCount * 0.45) : null;
     const engagementRate = followersCount > 0 ? 4.8 : null;
-
     const targetUser = registeredUsers.find(u => u.id === stateRecord.userId);
-    if (targetUser) {
-      targetUser.instagramUsername = igUsername;
-      targetUser.instagramProfileUrl = `https://instagram.com/${igUsername}`;
-      targetUser.instagramFollowers = followersCount;
-      targetUser.followers = followersCount;
-      targetUser.reach = reach;
-      targetUser.medianViews = medianViews;
-      targetUser.engagementRate = engagementRate;
-      targetUser.isInstagramVerified = true;
-      targetUser.instagramVerificationStatus = "verified";
-      targetUser.insightsVerified = true;
-      targetUser.instagramUserId = igUserId;
-      targetUser.instagramAccessToken = finalAccessToken; // strictly server-side
-      targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-      saveRegisteredUsers();
-    }
 
-    // Persist to PostgreSQL database
     let dbPersistFailed = false;
     let dbPersistError = "";
+
     if (isDatabaseConfigured) {
       try {
+        if (!client) {
+          client = await pool.connect();
+          await client.query("BEGIN");
+        }
+
         // Ensure user row exists in users table (using only 001_init.sql columns)
-        await pool.query(
+        await client.query(
           `INSERT INTO users (id, email, password_hash, name, role, email_verified, status)
            VALUES ($1, $2, '!', $3, 'creator', true, 'active')
            ON CONFLICT (id) DO NOTHING`,
           [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account"]
         );
 
-        // Upsert creator_profiles (using only 001_init.sql columns)
-        await pool.query(
+        // Upsert creator_profiles (enforces UNIQUE instagram_user_id constraint)
+        await client.query(
           `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, median_views, engagement_rate, risk_score, status, access_token_enc, token_expires_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            ON CONFLICT (user_id) DO UPDATE SET
@@ -4515,9 +4530,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         );
 
         // Upsert instagram_identities
-        await pool.query(
-          `INSERT INTO instagram_identities (instagram_user_id, current_user_id, historical_user_ids, username, connect_count, linked_at)
-           VALUES ($1, $2, ARRAY[$2::bigint], $3, 1, now())
+        await client.query(
+          `INSERT INTO instagram_identities (instagram_user_id, current_user_id, historical_user_ids, username, connect_count, linked_at, unlinked_at)
+           VALUES ($1, $2, ARRAY[$2::bigint], $3, 1, now(), NULL)
            ON CONFLICT (instagram_user_id) DO UPDATE SET
              current_user_id = EXCLUDED.current_user_id,
              historical_user_ids = array_append(instagram_identities.historical_user_ids, EXCLUDED.current_user_id),
@@ -4528,11 +4543,38 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           [igUserId, stateRecord.userId, igUsername]
         );
 
-        console.log(`[INSTAGRAM OAUTH DB] Successfully persisted creator profile & instagram identity for user ${stateRecord.userId}`);
+        // Record audit log entry in security_audit_logs table
+        await client.query(
+          `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            "LINK_APPROVED",
+            stateRecord.userId,
+            igUsername,
+            riskEval.riskScore,
+            JSON.stringify(riskEval.riskFactors),
+            riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
+            clientIp,
+            `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.`
+          ]
+        );
+
+        await client.query("COMMIT");
+        console.log(`[INSTAGRAM OAUTH DB] Transaction committed successfully for user ${stateRecord.userId}`);
       } catch (pgErr: any) {
+        if (client) {
+          try { await client.query("ROLLBACK"); } catch {}
+        }
         dbPersistFailed = true;
-        dbPersistError = pgErr?.message || String(pgErr);
+
+        if (pgErr?.code === '23505' && (pgErr?.constraint?.includes('instagram_user_id') || pgErr?.detail?.includes('instagram_user_id'))) {
+          dbPersistError = "This Instagram account is already linked to another Mingree account.";
+        } else {
+          dbPersistError = pgErr?.message || String(pgErr);
+        }
         console.error("[PG DB PERSISTENCE ERROR]", dbPersistError);
+      } finally {
+        if (client) client.release();
       }
     }
 
@@ -4541,9 +4583,53 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         success: false,
         username: igUsername,
         followers: followersCount,
-        error: `Database persistence failed: ${dbPersistError}. Please verify database connectivity and try again.`,
+        error: dbPersistError,
         returnTo: clientReturnTo,
       }));
+    }
+
+    // ONLY IF DB transaction succeeded, update in-memory / JSON store
+    bindIdentityToUser({
+      instagramUserId: igUserId,
+      instagramUsername: igUsername,
+      mingreeUserId: stateRecord.userId,
+      followers: followersCount,
+      mediaCount: mediaCount,
+      riskScore: riskEval.riskScore,
+      riskFactors: riskEval.riskFactors,
+    });
+
+    recordSecurityEvent({
+      event: "LINK_APPROVED",
+      mingreeUserId: stateRecord.userId,
+      instagramUsername: igUsername,
+      instagramUserId: igUserId,
+      riskScore: riskEval.riskScore,
+      riskLevel: riskEval.riskLevel,
+      riskFactors: riskEval.riskFactors,
+      followers: followersCount,
+      mediaCount: mediaCount,
+      ipAddress: clientIp,
+      userAgent,
+      decision: riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
+      details: `Instagram account @${igUsername} linked successfully to User #${stateRecord.userId}.`,
+    });
+
+    if (targetUser) {
+      targetUser.instagramUsername = igUsername;
+      targetUser.instagramProfileUrl = `https://instagram.com/${igUsername}`;
+      targetUser.instagramFollowers = followersCount;
+      targetUser.followers = followersCount;
+      targetUser.reach = reach;
+      targetUser.medianViews = medianViews;
+      targetUser.engagementRate = engagementRate;
+      targetUser.isInstagramVerified = true;
+      targetUser.instagramVerificationStatus = "verified";
+      targetUser.insightsVerified = true;
+      targetUser.instagramUserId = igUserId;
+      targetUser.instagramAccessToken = finalAccessToken;
+      targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+      saveRegisteredUsers();
     }
 
     console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
