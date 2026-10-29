@@ -98,9 +98,12 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
       ALTER TABLE users ADD COLUMN IF NOT EXISTS tier text DEFAULT 'Nano';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_username text;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_instagram_verified boolean DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_verification_status text DEFAULT 'unlinked';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_followers int DEFAULT 0;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_profile_url text;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS followers int DEFAULT 0;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS city text;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS country text;
 
       INSERT INTO users (email, password_hash, name, role, email_verified, status)
       VALUES ('platform@mingree.internal', '!', 'Mingree Platform Treasury', 'admin', true, 'blocked')
