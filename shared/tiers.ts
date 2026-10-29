@@ -9,14 +9,14 @@ export interface Tier {
 
 // Manual & Fixed mode tiers with 8 canonical half-open ranges [min, max)
 export const TIERS: Tier[] = [
-  { id: 1, name: "Nano", label: "Nano", minFollowers: 5000, maxFollowers: 10000, basePayment: 0 },
-  { id: 2, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 0 },
-  { id: 3, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 0 },
-  { id: 4, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 0 },
-  { id: 5, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 500000, basePayment: 0 },
-  { id: 6, name: "Large", label: "Large", minFollowers: 500000, maxFollowers: 1000000, basePayment: 0 },
-  { id: 7, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: 2500000, basePayment: 0 },
-  { id: 8, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 0 },
+  { id: 1, name: "Nano", label: "Nano", minFollowers: 5000, maxFollowers: 10000, basePayment: 1000 },
+  { id: 2, name: "Micro", label: "Micro", minFollowers: 10000, maxFollowers: 50000, basePayment: 2500 },
+  { id: 3, name: "Mid", label: "Mid", minFollowers: 50000, maxFollowers: 100000, basePayment: 5000 },
+  { id: 4, name: "Upper-Mid", label: "Upper-Mid", minFollowers: 100000, maxFollowers: 250000, basePayment: 10000 },
+  { id: 5, name: "Macro", label: "Macro", minFollowers: 250000, maxFollowers: 500000, basePayment: 20000 },
+  { id: 6, name: "Large", label: "Large", minFollowers: 500000, maxFollowers: 1000000, basePayment: 35000 },
+  { id: 7, name: "Mega", label: "Mega", minFollowers: 1000000, maxFollowers: 2500000, basePayment: 60000 },
+  { id: 8, name: "Elite", label: "Elite", minFollowers: 2500000, maxFollowers: Infinity, basePayment: 100000 },
 ];
 
 export const FIXED_TIERS = TIERS;

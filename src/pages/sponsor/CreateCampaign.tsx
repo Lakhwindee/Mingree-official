@@ -247,6 +247,12 @@ export default function CreateCampaign() {
     ));
   };
 
+  const updateTierPayment = (tierName: string, payment: number) => {
+    setTierSelections(prev => prev.map(t => 
+      t.tierName === tierName ? { ...t, paymentPerCreator: Math.max(0, payment) } : t
+    ));
+  };
+
   const removeTierSelection = (tierName: string) => {
     setTierSelections(prev => prev.filter(t => t.tierName !== tierName));
   };
@@ -563,7 +569,18 @@ export default function CreateCampaign() {
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-muted-foreground">₹</span>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  className="w-24"
+                                  value={selection.paymentPerCreator}
+                                  onChange={(e) => updateTierPayment(selection.tierName, parseInt(e.target.value) || 0)}
+                                  placeholder="Pay/creator"
+                                  data-testid={`input-payment-${selection.tierId}`}
+                                />
+                              </div>
                               <Input
                                 type="number"
                                 min="1"
