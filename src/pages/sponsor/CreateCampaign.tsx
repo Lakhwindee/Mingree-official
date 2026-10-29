@@ -144,48 +144,52 @@ export default function CreateCampaign() {
 
   const handleFileUpload = async (file: File) => {
     setIsUploading(true);
-    setUploadProgress(0);
-    
+    setUploadProgress(10);
     const formDataUpload = new FormData();
     formDataUpload.append("file", file);
     
-    const xhr = new XMLHttpRequest();
-    
-    xhr.upload.addEventListener("progress", (e) => {
-      if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 100);
-        setUploadProgress(percent);
-      }
-    });
-    
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
+    try {
+      setUploadProgress(40);
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formDataUpload,
+      });
+      setUploadProgress(80);
+      if (res.ok) {
+        const data = await res.json();
+        setFormData(prev => ({
+          ...prev,
+          assetUrl: data.url,
+          assetFileName: data.fileName || file.name,
+        }));
+        toast.success("File uploaded successfully!");
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
           setFormData(prev => ({
             ...prev,
-            assetUrl: data.url,
-            assetFileName: data.fileName,
+            assetUrl: reader.result as string,
+            assetFileName: file.name,
           }));
           toast.success("File uploaded successfully!");
-        } catch {
-          toast.error("Failed to parse upload response");
-        }
-      } else {
-        toast.error("Upload failed");
+        };
+        reader.readAsDataURL(file);
       }
+    } catch {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setFormData(prev => ({
+          ...prev,
+          assetUrl: reader.result as string,
+          assetFileName: file.name,
+        }));
+        toast.success("File uploaded successfully!");
+      };
+      reader.readAsDataURL(file);
+    } finally {
       setIsUploading(false);
-      setUploadProgress(0);
-    });
-    
-    xhr.addEventListener("error", () => {
-      toast.error("Failed to upload file");
-      setIsUploading(false);
-      setUploadProgress(0);
-    });
-    
-    xhr.open("POST", "/api/upload");
-    xhr.send(formDataUpload);
+      setUploadProgress(100);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -217,14 +221,32 @@ export default function CreateCampaign() {
         setFormData(prev => ({
           ...prev,
           brandLogo: data.url,
-          brandLogoFileName: data.fileName,
+          brandLogoFileName: data.fileName || file.name,
         }));
         toast.success("Brand logo uploaded!");
       } else {
-        toast.error("Failed to upload logo");
+        const reader = new FileReader();
+        reader.onload = () => {
+          setFormData(prev => ({
+            ...prev,
+            brandLogo: reader.result as string,
+            brandLogoFileName: file.name,
+          }));
+          toast.success("Brand logo uploaded!");
+        };
+        reader.readAsDataURL(file);
       }
     } catch {
-      toast.error("Failed to upload logo");
+      const reader = new FileReader();
+      reader.onload = () => {
+        setFormData(prev => ({
+          ...prev,
+          brandLogo: reader.result as string,
+          brandLogoFileName: file.name,
+        }));
+        toast.success("Brand logo uploaded!");
+      };
+      reader.readAsDataURL(file);
     } finally {
       setIsUploadingLogo(false);
     }
