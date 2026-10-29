@@ -287,40 +287,18 @@ export default function Login() {
                 {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Log In"}
               </Button>
 
-              {/* Quick Demo Logins */}
-              <div className="pt-2 grid grid-cols-3 gap-2">
+               {/* Quick Demo Login */}
+              <div className="pt-2">
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="text-[11px] font-medium h-8"
-                  onClick={() => handleDemoLogin("creator@mingree.com", "creator")}
-                  disabled={isLoading}
-                  data-testid="button-demo-creator"
-                >
-                  Demo Creator
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-[11px] font-medium h-8"
-                  onClick={() => handleDemoLogin("sponsor@mingree.com", "sponsor")}
-                  disabled={isLoading}
-                  data-testid="button-demo-sponsor"
-                >
-                  Demo Sponsor
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-[11px] font-medium h-8"
+                  className="text-[11px] font-medium h-8 w-full"
                   onClick={() => handleDemoLogin("admin@mingree.com", "admin")}
                   disabled={isLoading}
                   data-testid="button-demo-admin"
                 >
-                  Demo Admin
+                  Demo Admin Login
                 </Button>
               </div>
             </form>

@@ -12,8 +12,6 @@ import { useAuth } from "@/lib/auth-context";
 const __DummyIcon = () => null;
 const Home = __DummyIcon;
 
-
-
 export default function SponsorLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -49,7 +47,7 @@ export default function SponsorLogin() {
       }
 
       if (data.__nonJson || !response.ok) {
-        // Check local registered users or demo sponsor accounts
+        // Check local registered users
         let localMatch: any = null;
         try {
           const saved = JSON.parse(localStorage.getItem("mingree_registered_users") || "[]");
@@ -60,21 +58,8 @@ export default function SponsorLogin() {
           }
         } catch {}
 
-        const isDemoSponsor =
-          ["brand@mingree.com", "sponsor@mingree.com", "artist@mingree.com"].includes(cleanEmail) &&
-          ["123456", "password123", "Password123!"].includes(password);
-
         if (localMatch) {
           data = localMatch;
-        } else if (isDemoSponsor) {
-          data = {
-            id: 2,
-            name: cleanEmail === "artist@mingree.com" ? "Rohan Verma (Artist)" : "Brand Sponsor",
-            email: cleanEmail,
-            handle: cleanEmail === "artist@mingree.com" ? "@rohanmusic" : "@sponsor",
-            role: "sponsor",
-            companyName: cleanEmail === "artist@mingree.com" ? "Rohan Records" : "Brand Sponsor",
-          };
         } else {
           throw new Error(data.error || "Invalid email or password");
         }
