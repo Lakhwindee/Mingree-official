@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
-import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured } from "./server/db";
+import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured, ensureSchemaInitialized } from "./server/db";
 import { eq } from "drizzle-orm";
 
 // Prevent container crashes from unhandled rejections or exceptions
@@ -214,6 +214,12 @@ app.use((req, res, next) => {
     const queryString = qIdx !== -1 ? req.url.slice(qIdx) : "";
     req.url = `${matchedPath}${queryString}`;
   }
+  next();
+});
+
+// Auto-initialize Postgres database schema on incoming API calls
+app.use("/api", (req, res, next) => {
+  ensureSchemaInitialized().catch(() => {});
   next();
 });
 
