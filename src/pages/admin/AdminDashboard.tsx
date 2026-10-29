@@ -118,13 +118,13 @@ function AdminSidebar({ activeTab, setActiveTab, isOpen, onClose }: {
             </div>
           </div>
           <Button
-            size="icon"
+            size="sm"
             variant="ghost"
-            className="lg:hidden text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+            className="lg:hidden text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold px-2.5"
             onClick={onClose}
             data-testid="button-close-sidebar"
           >
-            
+            ✕
           </Button>
         </div>
 
@@ -152,21 +152,19 @@ function AdminSidebar({ activeTab, setActiveTab, isOpen, onClose }: {
         <div className="mt-auto space-y-2 pt-4 border-t border-indigo-100">
           <Button
             variant="outline"
-            className="w-full border-indigo-200 bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900 rounded-xl py-2.5 shadow-sm font-medium"
-            onClick={() => window.location.href = "/"}
+            className="w-full border-indigo-200 bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-900 rounded-xl py-2.5 shadow-sm font-semibold text-xs"
+            onClick={() => setLocation("/dashboard")}
             data-testid="button-back-home"
           >
-            <Home className="h-4 w-4 mr-2 text-indigo-600" />
-            Back to Home
+            Open Creator Hub →
           </Button>
           <Button
             variant="outline"
-            className="w-full border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 rounded-xl py-2.5 shadow-sm font-medium"
+            className="w-full border-red-200 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 rounded-xl py-2.5 shadow-sm font-semibold text-xs"
             onClick={handleLogout}
             data-testid="button-admin-logout"
           >
-            
-            Sign Out
+            Sign Out (Switch Account)
           </Button>
         </div>
       </div>
@@ -5483,6 +5481,19 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [, setLocation] = useLocation();
+  const { logout } = useAuth();
+  const queryClient = useQueryClient();
+
+  const handleMobileLogout = async () => {
+    try {
+      await logout();
+      queryClient.clear();
+      toast.success("Logged out of Admin Portal");
+      setLocation("/login");
+    } catch {
+      setLocation("/login");
+    }
+  };
 
   const { data: user, isLoading: userLoading } = useQuery({
     queryKey: ["currentUser"],
@@ -5506,13 +5517,12 @@ export default function AdminDashboard() {
   if (!user || user.role !== "admin") {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
-        <Card className="bg-white shadow-md border border-indigo-100 border-indigo-100 p-8 max-w-md">
+        <Card className="bg-white shadow-md border border-indigo-100 p-8 max-w-md">
           <div className="text-center">
-            
             <h2 className="text-xl font-bold text-slate-950 mb-2">Access Denied</h2>
             <p className="text-slate-500 mb-4">You do not have admin access.</p>
-            <Button onClick={() => setLocation("/")} data-testid="button-go-home">
-              Go to Home
+            <Button onClick={() => setLocation("/dashboard")} data-testid="button-go-home">
+              Go to Creator Hub
             </Button>
           </div>
         </Card>
@@ -5530,32 +5540,54 @@ export default function AdminDashboard() {
       />
       
       <main className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden pb-24 lg:pb-8">
-        <div className="sticky top-0 bg-white/90 backdrop-blur-xl z-20 px-3 sm:px-4 py-3 lg:hidden border-b border-indigo-100 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+        <div className="sticky top-0 bg-white/95 backdrop-blur-xl z-20 px-3 sm:px-4 py-2.5 lg:hidden border-b border-indigo-100 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
             <Button
-              size="icon"
-              variant="ghost"
+              size="sm"
+              variant="outline"
               onClick={() => setSidebarOpen(true)}
-              className="text-slate-700 hover:text-slate-900 hover:bg-indigo-50 shrink-0"
+              className="text-slate-800 border-indigo-200 hover:bg-indigo-50 shrink-0 h-8 px-2.5 text-xs font-semibold"
               data-testid="button-open-sidebar"
             >
-              
+              ☰ Menu
             </Button>
-            <h1 className="text-base sm:text-lg font-bold bg-gradient-to-r from-purple-700 to-indigo-700 bg-clip-text text-transparent truncate text-center flex-1 tracking-wide">
-              {activeTab === "overview" && "Overview"}
-              {activeTab === "security-logs" && "Security & Anti-Abuse"}
-              {activeTab === "users" && "Users"}
-              {activeTab === "upi-payments" && "UPI Payments"}
-              {activeTab === "withdrawals" && "Withdrawals"}
-              {activeTab === "submissions" && "Submissions"}
-              {activeTab === "campaigns" && "Campaigns"}
-              {activeTab === "verifications" && "Verifications"}
-              {activeTab === "promo-codes" && "Promo Codes"}
-              {activeTab === "newsletter" && "Newsletter"}
-              {activeTab === "support-tickets" && "Support Tickets"}
-              {activeTab === "settings" && "Settings"}
-            </h1>
-            <div className="w-8 shrink-0" />
+            <div className="flex flex-col items-center min-w-0 flex-1">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">Admin Portal</span>
+              <h1 className="text-sm font-bold text-slate-900 truncate">
+                {activeTab === "overview" && "Overview"}
+                {activeTab === "security-logs" && "Security & Anti-Abuse"}
+                {activeTab === "users" && "Users"}
+                {activeTab === "upi-payments" && "UPI Payments"}
+                {activeTab === "withdrawals" && "Withdrawals"}
+                {activeTab === "submissions" && "Submissions"}
+                {activeTab === "campaigns" && "Campaigns"}
+                {activeTab === "verifications" && "Verifications"}
+                {activeTab === "promo-codes" && "Promo Codes"}
+                {activeTab === "newsletter" && "Newsletter"}
+                {activeTab === "support-tickets" && "Support Tickets"}
+                {activeTab === "settings" && "Settings"}
+              </h1>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setLocation("/dashboard")}
+                className="h-8 px-2.5 text-xs font-semibold border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                data-testid="button-mobile-switch-creator"
+              >
+                Creator App
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleMobileLogout}
+                className="h-8 px-2.5 text-xs font-semibold border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                data-testid="button-mobile-admin-logout"
+              >
+                Log Out
+              </Button>
+            </div>
           </div>
         </div>
 
