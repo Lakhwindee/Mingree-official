@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,85 +18,12 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
-  const handleDemoLogin = async (demoEmail: string, roleName: string) => {
-    setEmail(demoEmail);
-    setPassword("Password123!");
-    setIsLoading(true);
-
+  useEffect(() => {
+    // Purge stale local storage mock users to prevent client-side login bypasses
     try {
-      let data: any = {};
-      try {
-        const response = await fetch("/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: demoEmail, password: "Password123!" }),
-          credentials: "include",
-        });
-
-        const text = await response.text();
-        const trimmed = text ? text.trim() : "";
-        if (trimmed && (trimmed.startsWith("{") || trimmed.startsWith("["))) {
-          data = JSON.parse(trimmed);
-        }
-      } catch {
-        data = {};
-      }
-
-      const fallbackRole = (data.role || roleName) as "creator" | "sponsor" | "admin";
-      const userObj = {
-        id: data.id || (fallbackRole === "admin" ? 99 : fallbackRole === "sponsor" ? 2 : 1),
-        name:
-          data.name ||
-          (fallbackRole === "admin"
-            ? "Mingree Administrator"
-            : fallbackRole === "sponsor"
-            ? "Brand Partner"
-            : demoEmail.split("@")[0]),
-        email: demoEmail,
-        handle:
-          data.handle ||
-          (fallbackRole === "admin" ? "@admin" : fallbackRole === "sponsor" ? "@brandpartner" : `@${demoEmail.split("@")[0]}`),
-        role: fallbackRole,
-        avatar: data.avatar,
-        followers: data.followers || 0,
-        instagramFollowers: data.instagramFollowers || 0,
-        tier: data.tier || (fallbackRole === "sponsor" ? "Brand Partner" : "Rising"),
-        instagramUsername: data.instagramUsername || null,
-        isInstagramVerified: Boolean(data.isInstagramVerified),
-        balance: data.balance || "0.00",
-        stars: data.stars ?? 0,
-      };
-
-      queryClient.setQueryData(["currentUser"], userObj);
-
-      setIsSuccess(true);
-      toast({
-        title: `Demo ${fallbackRole === "admin" ? "Admin" : fallbackRole === "sponsor" ? "Sponsor" : "Creator"} Logged In`,
-        description: `Welcome back, ${userObj.name}!`,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      login(userObj);
-
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-
-      if (fallbackRole === "admin") {
-        setLocation("/admin/dashboard");
-      } else if (fallbackRole === "sponsor") {
-        setLocation("/sponsor");
-      } else {
-        setLocation("/dashboard");
-      }
-    } catch (error) {
-      toast({
-        title: "Demo Login Failed",
-        description: "Could not login to demo account",
-        variant: "destructive",
-      });
-      setIsLoading(false);
-    }
-  };
+      localStorage.removeItem("mingree_registered_users");
+    } catch {}
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,7 +38,7 @@ export default function Login() {
         credentials: "include",
       });
 
-      let data: any = { __nonJson: true };
+      let data: any = {};
       try {
         const text = await response.text();
         const trimmed = text ? text.trim() : "";
@@ -119,63 +46,24 @@ export default function Login() {
           data = JSON.parse(trimmed);
         }
       } catch {
-        data = { __nonJson: true };
+        data = {};
       }
 
-      if (data.__nonJson || !response.ok) {
-        let localMatch: any = null;
-        try {
-          const saved = JSON.parse(localStorage.getItem("mingree_registered_users") || "[]");
-          if (Array.isArray(saved)) {
-            localMatch = saved.find(
-              (u: any) => String(u.email || "").toLowerCase() === cleanEmail && (!u.password || u.password === password)
-            );
-          }
-        } catch {}
-
-        if (localMatch) {
-          data = localMatch;
-        } else {
-          throw new Error(data.error || "Invalid email or password");
-        }
+      if (!response.ok) {
+        throw new Error(data.error || "Invalid email or password");
       }
 
-      queryClient.setQueryData(["currentUser"], {
-        id: data.id || 1,
-        name: data.name || "Creator",
-        email: data.email || cleanEmail,
-        handle: data.handle || `@${(data.email || cleanEmail).split("@")[0]}`,
-        role: data.role || "creator",
-        avatar: data.avatar,
-        followers: data.followers || data.instagramFollowers || 0,
-        instagramFollowers: data.instagramFollowers || data.followers || 0,
-        tier: data.tier || "New Creator",
-        instagramUsername: data.instagramUsername,
-        isInstagramVerified: data.isInstagramVerified,
-        balance: data.balance || "0.00",
-        stars: data.stars ?? 0,
-      });
+      queryClient.setQueryData(["currentUser"], data);
 
       setIsSuccess(true);
       toast({
         title: "Welcome Back",
-        description: `Logged in as ${data.name || "Creator"}.`,
+        description: `Logged in as ${data.name || data.email}.`,
       });
 
       await new Promise((resolve) => setTimeout(resolve, 350));
 
-      login({
-        id: data.id || 1,
-        name: data.name || "Creator",
-        email: data.email || cleanEmail,
-        handle: data.handle || `@${(data.email || cleanEmail).split("@")[0]}`,
-        role: data.role || "creator",
-        avatar: data.avatar,
-        followers: data.followers || data.instagramFollowers || 0,
-        tier: data.tier || "New Creator",
-        instagramUsername: data.instagramUsername,
-        isInstagramVerified: data.isInstagramVerified,
-      });
+      login(data);
 
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
@@ -189,7 +77,7 @@ export default function Login() {
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : "Invalid email or password";
       const safeMsg =
-        rawMsg.includes("expected pattern") || rawMsg.includes("SyntaxError")
+        rawMsg.includes("expected pattern") || rawMsg.includes("SyntaxError") || rawMsg.includes("JSON")
           ? "Invalid email or password"
           : rawMsg;
       toast({
@@ -286,21 +174,6 @@ export default function Login() {
               >
                 {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Log In"}
               </Button>
-
-               {/* Quick Demo Login */}
-              <div className="pt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="text-[11px] font-medium h-8 w-full"
-                  onClick={() => handleDemoLogin("admin@mingree.com", "admin")}
-                  disabled={isLoading}
-                  data-testid="button-demo-admin"
-                >
-                  Demo Admin Login
-                </Button>
-              </div>
             </form>
 
             <div className="pt-4 text-center border-t border-border">

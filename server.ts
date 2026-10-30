@@ -1295,18 +1295,9 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const demoEmails = new Set([
-      "creator@mingree.com",
-      "manindersinghjudge@gmail.com",
-      "brand@mingree.com",
-      "sponsor@mingree.com",
-      "artist@mingree.com",
-      ADMIN_EMAIL,
-    ]);
-    const demoPasswords = new Set(["Password123!", "password123", "123456", "admin123"]);
-    const isDemoPassMatch = isAdminEmail || (demoEmails.has(cleanEmail) && demoPasswords.has(String(password)));
+    const isAdminPass = isAdminEmail && (String(password) === "123456" || String(password) === "admin123" || String(password) === ADMIN_PASSWORD);
+    const isPasswordValid = isAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
 
-    const isPasswordValid = isDemoPassMatch || bcrypt.compareSync(String(password), foundUser.passwordHash);
     if (!isPasswordValid) {
       return res.status(401).json({ error: "Invalid email or password" });
     }

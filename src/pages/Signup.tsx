@@ -291,16 +291,10 @@ export default function Signup() {
 
       const signupData = await safeParseJson(signupRes);
 
-      let finalUser: any;
-      if (signupData.__nonJson) {
-        finalUser = buildLocalUser(cleanEmail, cleanName);
-      } else if (!signupRes.ok) {
+      if (!signupRes.ok) {
         throw new Error(signupData.error || "Failed to create account");
-      } else {
-        finalUser = signupData;
-        // Also sync to local backup for offline/static resilience
-        buildLocalUser(cleanEmail, cleanName);
       }
+      const finalUser = signupData;
 
       login(finalUser);
       queryClient.setQueryData(["currentUser"], finalUser);
