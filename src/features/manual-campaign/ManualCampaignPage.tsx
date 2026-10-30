@@ -685,9 +685,15 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                               {tierObj?.label || c.tier}
                             </span>
-                            <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-full">
-                              ✓ Insta Insights
-                            </span>
+                            {c.insightsVerified && c.followers > 0 ? (
+                              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-full">
+                                ✓ Insta Insights
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-full">
+                                Instagram Unlinked
+                              </span>
+                            )}
                             <span className="text-[11px] text-muted-foreground truncate">· {c.city?.name}</span>
                           </div>
                         </div>

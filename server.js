@@ -10030,7 +10030,7 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
             instagramUsername: row.instagram_username,
             instagramFollowers: Number(row.cp_followers || 0),
             followers: Number(row.cp_followers || 0),
-            isInstagramVerified: true
+            isInstagramVerified: Boolean(row.instagram_username && Number(row.cp_followers || 0) >= 500)
           });
         } else {
           if (row.instagram_username && !existing.instagramUsername) existing.instagramUsername = row.instagram_username;
