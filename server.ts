@@ -958,9 +958,9 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
       return res.status(401).json({ error: "Unauthorized: User account not found" });
     }
 
-    // Elevate admin users automatically
+    // Elevate dedicated admin email automatically if needed
     const cleanEmail = (user.email || "").toLowerCase().trim();
-    if (cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com") {
+    if (cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com") {
       user.role = "admin";
       user.tier = "Admin";
       user.isEmailVerified = true;
@@ -979,7 +979,7 @@ export function requireRole(...allowedRoles: string[]) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const cleanEmail = (req.user.email || "").toLowerCase().trim();
-    const isAdminEmail = cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+    const isAdminEmail = cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
     if (allowedRoles.includes("admin") && isAdminEmail) {
       req.user.role = "admin";
       return next();
@@ -1014,12 +1014,22 @@ const defaultAccounts = [
     email: "manindersinghjudge@gmail.com",
     passwordHash: bcrypt.hashSync("123456", 10),
     name: "Judge Saab",
-    role: "admin",
-    handle: "@admin",
+    role: "creator",
+    handle: "@ijudgesaab",
     avatar: null,
     avatarUrl: null,
     avatar_url: null,
-    tier: "Admin",
+    tier: "Unlinked",
+    instagramUsername: null,
+    instagramProfileUrl: null,
+    instagramFollowers: 0,
+    followers: 0,
+    reach: null,
+    medianViews: null,
+    engagementRate: null,
+    isInstagramVerified: false,
+    insightsVerified: false,
+    instagramVerificationStatus: "unlinked",
     isEmailVerified: true,
   },
   {
@@ -1263,7 +1273,7 @@ app.post("/api/auth/login", async (req, res) => {
       }
     }
 
-    const isAdminEmail = cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+    const isAdminEmail = cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
 
     if (isAdminEmail) {
       if (foundUser) {
@@ -1276,8 +1286,8 @@ app.post("/api/auth/login", async (req, res) => {
         foundUser = {
           id: 99,
           email: cleanEmail,
-          passwordHash: bcrypt.hashSync("admin123", 10),
-          name: cleanEmail === "manindersinghjudge@gmail.com" ? "Maninder Singh" : "Mingree Administrator",
+          passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
+          name: "Mingree Administrator",
           role: "admin",
           handle: "@admin",
           tier: "Admin",
@@ -1295,7 +1305,7 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
-    const isAdminPass = isAdminEmail && (String(password) === "123456" || String(password) === "admin123" || String(password) === ADMIN_PASSWORD);
+    const isAdminPass = isAdminEmail && (String(password) === "admin123" || String(password) === ADMIN_PASSWORD);
     const isPasswordValid = isAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
 
     if (!isPasswordValid) {

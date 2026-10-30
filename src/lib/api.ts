@@ -771,11 +771,14 @@ export const api = {
   async getUserReservations(userId: number): Promise<ApiReservation[]> {
     try {
       const res = await fetch(`${API_BASE}/users/${userId}/reservations`);
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const json = await res.json();
+        return Array.isArray(json) ? json : [];
+      }
     } catch {
       // Fallback
     }
-    return fallbackReservations;
+    return [];
   },
 
   async reserveCampaign(userId: number, campaignId: number): Promise<ApiReservation> {

@@ -148,7 +148,7 @@ function AdminRoute() {
   }
 
   const cleanEmail = (user?.email || "").toLowerCase().trim();
-  const isAdmin = isAuthenticated && Boolean(user) && (user.role === "admin" || cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === "admin@mingree.com");
+  const isAdmin = isAuthenticated && Boolean(user) && (user.role === "admin" || cleanEmail === "admin@mingree.com");
 
   if (isAdmin) {
     return <AdminDashboard />;

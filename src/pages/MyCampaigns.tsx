@@ -92,10 +92,7 @@ export default function MyCampaigns() {
   });
 
   const reservations = useMemo(() => {
-    if (Array.isArray(serverReservations) && serverReservations.length > 0) {
-      return serverReservations;
-    }
-    return fallbackReservations;
+    return Array.isArray(serverReservations) ? serverReservations : [];
   }, [serverReservations]);
 
   const isUserPro = true;
