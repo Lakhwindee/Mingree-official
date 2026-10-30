@@ -1010,29 +1010,6 @@ function sanitizeUser(user: any) {
 
 const defaultAccounts = [
   {
-    id: 1,
-    email: "manindersinghjudge@gmail.com",
-    passwordHash: bcrypt.hashSync("123456", 10),
-    name: "Judge Saab",
-    role: "creator",
-    handle: "@ijudgesaab",
-    avatar: null,
-    avatarUrl: null,
-    avatar_url: null,
-    tier: "Unlinked",
-    instagramUsername: null,
-    instagramProfileUrl: null,
-    instagramFollowers: 0,
-    followers: 0,
-    reach: null,
-    medianViews: null,
-    engagementRate: null,
-    isInstagramVerified: false,
-    insightsVerified: false,
-    instagramVerificationStatus: "unlinked",
-    isEmailVerified: true,
-  },
-  {
     id: 99,
     email: ADMIN_EMAIL,
     passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
@@ -1299,7 +1276,7 @@ app.post("/api/auth/login", async (req, res) => {
       }
     }
 
-    if (!foundUser) {
+    if (!foundUser && !isDatabaseConfigured) {
       foundUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
     }
 
