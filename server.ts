@@ -1241,8 +1241,9 @@ app.post("/api/auth/signup", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, portal } = req.body;
     const cleanEmail = (email || "").toLowerCase().trim();
+    const isPortalAdmin = portal === "admin" || req.body.isAdminPortal === true;
 
     if (!cleanEmail || !password) {
       return res.status(400).json({ error: "Email and password are required" });
@@ -1304,6 +1305,19 @@ app.post("/api/auth/login", async (req, res) => {
 
     if (!foundUser || !foundUser.passwordHash) {
       return res.status(401).json({ error: "Invalid email or password" });
+    }
+
+    const isUserAdmin = foundUser.role === "admin" || isAdminEmail;
+
+    // Portal Access Restrictions:
+    // 1. Admin accounts attempting normal login -> Reject as Invalid Credentials
+    if (isUserAdmin && !isPortalAdmin) {
+      return res.status(401).json({ error: "Invalid email or password for user portal. Admin accounts must log in via Admin Portal." });
+    }
+
+    // 2. Non-admin accounts attempting Admin Portal login -> Reject as Invalid Admin Credentials
+    if (!isUserAdmin && isPortalAdmin) {
+      return res.status(401).json({ error: "Invalid email or password for Admin Portal." });
     }
 
     const isAdminPass = isAdminEmail && (String(password) === "admin123" || String(password) === ADMIN_PASSWORD);
