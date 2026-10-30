@@ -301,35 +301,13 @@ export default function Profile() {
   });
 
   const safeOpenPopup = (url: string) => {
-    try {
-      const popup = window.open(url, "instagram_oauth_popup", "width=600,height=750");
-      if (!popup || popup.closed || typeof popup.closed === "undefined") {
-        const tab = window.open(url, "_blank");
-        if (!tab) {
-          toast.info("Redirecting to Instagram authorization...");
-          window.location.href = url;
-        }
-      }
-      return true;
-    } catch {
-      try {
-        window.open(url, "_blank");
-        return true;
-      } catch {
-        window.location.href = url;
-        return true;
-      }
-    }
+    window.location.href = url;
+    return true;
   };
 
   const handleConnectInstagramOAuth = async () => {
     if (!user) return;
     setIsConnectingInstagram(true);
-
-    let popup: Window | null = null;
-    try {
-      popup = window.open("about:blank", "instagram_oauth_popup", "width=600,height=750");
-    } catch {}
 
     try {
       let urlToOpen = "";
@@ -348,22 +326,9 @@ export default function Profile() {
         urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
       }
 
-      toast.info("Opening official Instagram Login authorization...");
-      if (popup && !popup.closed) {
-        popup.location.href = urlToOpen;
-      } else {
-        const newTab = window.open(urlToOpen, "_blank");
-        if (!newTab) {
-          window.location.href = urlToOpen;
-        }
-      }
+      window.location.href = urlToOpen;
     } catch (err: any) {
       console.warn("[Instagram OAuth Notice]", err);
-      toast.error("Failed to launch Instagram login.");
-      if (popup && !popup.closed) {
-        try { popup.close(); } catch {}
-      }
-    } finally {
       setIsConnectingInstagram(false);
     }
   };

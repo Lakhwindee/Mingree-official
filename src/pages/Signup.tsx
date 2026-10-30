@@ -506,15 +506,7 @@ export default function Signup() {
                       />
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2">
-                      <Input
-                        type="text"
-                        placeholder="City"
-                        value={billingCity}
-                        onChange={(e) => setBillingCity(e.target.value)}
-                        className="text-xs h-9"
-                        data-testid="input-city"
-                      />
+                    <div className="grid grid-cols-2 gap-2">
                       <Input
                         type="text"
                         placeholder="State"

@@ -27,7 +27,7 @@ const STYLES: { id: CampaignDetails["promotionStyle"]; label: string; text: stri
   { id: "face_on_camera", label: "Face on camera", text: "Creator appears in the video" },
   { id: "direct_share", label: "Direct share", text: "Creator shares the file you provide" },
 ];
-const STEPS = ["Campaign Details", "Creator Selection", "Promotion Content", "Review & Launch"];
+const STEPS = ["Creator Selection", "Campaign Details", "Promotion Content", "Review & Launch"];
 const DISCLOSURE = "Add #ad or the Instagram “Paid partnership” label.";
 
 const emptyDetails: CampaignDetails = {
@@ -125,7 +125,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const [searchErr, setSearchErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (step !== 1) return;
+    if (step !== 0) return;
     let active = true;
     setSearchLoading(true);
     setSearchErr(null);
@@ -187,13 +187,13 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
   const problems: string[][] = [
     [
+      creatorIds.length === 0 && "Select at least one creator",
+    ].filter(Boolean) as string[],
+    [
       !d.title.trim() && "Add a campaign title",
       !d.songUrl.trim() && "Add the song link",
       !d.description.trim() && "Add a short description",
       !d.deadline && "Pick a deadline",
-    ].filter(Boolean) as string[],
-    [
-      creatorIds.length === 0 && "Select at least one creator",
     ].filter(Boolean) as string[],
     [!d.captionNote.trim() && "Add a caption note with the disclosure"].filter(Boolean) as string[],
     [!bill && "Waiting for the bill", bill && bill.shortfall > 0 && "Wallet balance is lower than the total"].filter(Boolean) as string[],
@@ -228,8 +228,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         <div className="w-16 hidden sm:block" />
       </div>
 
-      {/* Step 1 */}
-      {step === 0 && (
+      {/* Step 2: Campaign Details */}
+      {step === 1 && (
         <section className="rounded-2xl border bg-card p-5 sm:p-6 space-y-5">
           <header><h2 className="text-xl font-bold">Campaign Details</h2><p className="text-sm text-muted-foreground">Tell us about your song and where it should be promoted.</p></header>
           <div className="grid sm:grid-cols-2 gap-4">
@@ -320,8 +320,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         </section>
       )}
 
-      {/* Step 2 */}
-      {step === 1 && (
+      {/* Step 1: Select Creators */}
+      {step === 0 && (
         <section className="rounded-2xl border bg-card p-5 sm:p-7 space-y-6">
           <header className="text-center space-y-1.5 max-w-2xl mx-auto">
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Select Creators</h2>
