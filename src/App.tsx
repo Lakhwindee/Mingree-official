@@ -147,7 +147,10 @@ function AdminRoute() {
     );
   }
 
-  if (isAuthenticated && user?.role === "admin") {
+  const cleanEmail = (user?.email || "").toLowerCase().trim();
+  const isAdmin = isAuthenticated && Boolean(user) && (user.role === "admin" || cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === "admin@mingree.com");
+
+  if (isAdmin) {
     return <AdminDashboard />;
   }
 
@@ -237,9 +240,9 @@ function Router() {
       <Route path="/sponsor/support" component={Support} />
       
       {/* Admin Routes */}
-      <Route path="/admin" component={AdminRoute} />
       <Route path="/admin/login" component={AdminLogin} />
-      <Route path="/admin/dashboard" component={AdminDashboard} />
+      <Route path="/admin/dashboard" component={AdminRoute} />
+      <Route path="/admin" component={AdminRoute} />
       
       {/* Legal Pages */}
       <Route path="/terms" component={Terms} />

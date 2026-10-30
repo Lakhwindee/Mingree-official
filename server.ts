@@ -957,6 +957,15 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     if (!user) {
       return res.status(401).json({ error: "Unauthorized: User account not found" });
     }
+
+    // Elevate admin users automatically
+    const cleanEmail = (user.email || "").toLowerCase().trim();
+    if (cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com") {
+      user.role = "admin";
+      user.tier = "Admin";
+      user.isEmailVerified = true;
+    }
+
     req.user = user;
     next();
   } catch {
@@ -968,6 +977,12 @@ export function requireRole(...allowedRoles: string[]) {
   return (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
+    }
+    const cleanEmail = (req.user.email || "").toLowerCase().trim();
+    const isAdminEmail = cleanEmail === "manindersinghjudge@gmail.com" || cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+    if (allowedRoles.includes("admin") && isAdminEmail) {
+      req.user.role = "admin";
+      return next();
     }
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ error: "Forbidden: Insufficient role permissions" });
@@ -999,22 +1014,12 @@ const defaultAccounts = [
     email: "manindersinghjudge@gmail.com",
     passwordHash: bcrypt.hashSync("123456", 10),
     name: "Judge Saab",
-    role: "creator",
-    handle: "@ijudgesaab",
+    role: "admin",
+    handle: "@admin",
     avatar: null,
     avatarUrl: null,
     avatar_url: null,
-    tier: "Unlinked",
-    instagramUsername: null,
-    instagramProfileUrl: null,
-    instagramFollowers: 0,
-    followers: 0,
-    reach: null,
-    medianViews: null,
-    engagementRate: null,
-    isInstagramVerified: false,
-    insightsVerified: false,
-    instagramVerificationStatus: "unlinked",
+    tier: "Admin",
     isEmailVerified: true,
   },
   {

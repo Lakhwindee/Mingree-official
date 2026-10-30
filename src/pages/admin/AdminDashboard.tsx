@@ -1327,15 +1327,28 @@ function PaymentsPage() {
 
 /* ================= 8. CITIES PAGE ================= */
 function CitiesPage() {
-  const { data: citiesList, refetch: refetchCities } = useQuery({
+  const { data: citiesListRaw, refetch: refetchCities } = useQuery({
     queryKey: ["/api/admin/cities"],
-    queryFn: async () => (await fetch("/api/admin/cities")).json(),
+    queryFn: async () => {
+      const res = await fetch("/api/admin/cities");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    },
   });
 
-  const { data: cityRequests, refetch: refetchRequests } = useQuery({
+  const { data: cityRequestsRaw, refetch: refetchRequests } = useQuery({
     queryKey: ["/api/admin/city-change-requests"],
-    queryFn: async () => (await fetch("/api/admin/city-change-requests")).json(),
+    queryFn: async () => {
+      const res = await fetch("/api/admin/city-change-requests");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    },
   });
+
+  const citiesList = Array.isArray(citiesListRaw) ? citiesListRaw : [];
+  const cityRequests = Array.isArray(cityRequestsRaw) ? cityRequestsRaw : [];
 
   const queryClient = useQueryClient();
 
@@ -1372,8 +1385,8 @@ function CitiesPage() {
               <TableRow className="bg-slate-50 text-xs font-bold"><TableHead>Req ID</TableHead><TableHead>Creator</TableHead><TableHead>From City</TableHead><TableHead>To City</TableHead><TableHead>Reason</TableHead><TableHead className="text-right">Action</TableHead></TableRow>
             </TableHeader>
             <TableBody className="text-xs">
-              {cityRequests?.length === 0 ? <TableRow><TableCell colSpan={6} className="text-center py-4 text-slate-400">No pending city requests.</TableCell></TableRow> : (
-                cityRequests?.map((r: any) => (
+              {cityRequests.length === 0 ? <TableRow><TableCell colSpan={6} className="text-center py-4 text-slate-400">No pending city requests.</TableCell></TableRow> : (
+                cityRequests.map((r: any) => (
                   <TableRow key={r.id}>
                     <TableCell className="font-mono">#{r.id}</TableCell>
                     <TableCell>{r.creatorName}</TableCell>
@@ -1405,7 +1418,7 @@ function CitiesPage() {
               <TableRow className="bg-slate-50 text-xs font-bold"><TableHead>City ID</TableHead><TableHead>Name</TableHead><TableHead>State</TableHead><TableHead>Status</TableHead></TableRow>
             </TableHeader>
             <TableBody className="text-xs">
-              {citiesList?.map((c: any) => (
+              {citiesList.map((c: any) => (
                 <TableRow key={c.id}>
                   <TableCell className="font-mono">#{c.id}</TableCell>
                   <TableCell className="font-bold text-slate-900">{c.name}</TableCell>
@@ -1425,7 +1438,12 @@ function CitiesPage() {
 function SettingsPage() {
   const { data: settingsData, refetch } = useQuery({
     queryKey: ["/api/admin/settings"],
-    queryFn: async () => (await fetch("/api/admin/settings")).json(),
+    queryFn: async () => {
+      const res = await fetch("/api/admin/settings");
+      if (!res.ok) return {};
+      const json = await res.json();
+      return typeof json === "object" && json !== null ? json : {};
+    },
   });
 
   const [settings, setSettings] = useState<any>({});
@@ -1502,15 +1520,27 @@ function SettingsPage() {
 
 /* ================= 10. PROMO CODES & PRO PAGE ================= */
 function PromoCodesProPage() {
-  const { data: promoCodes, refetch: refetchPromos } = useQuery({
+  const { data: promoCodesRaw, refetch: refetchPromos } = useQuery({
     queryKey: ["/api/admin/promo-codes"],
-    queryFn: async () => (await fetch("/api/admin/promo-codes")).json(),
+    queryFn: async () => {
+      const res = await fetch("/api/admin/promo-codes");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    },
   });
 
-  const { data: proSubscribers } = useQuery({
+  const { data: proSubscribersRaw } = useQuery({
     queryKey: ["/api/admin/creator-pro"],
-    queryFn: async () => (await fetch("/api/admin/creator-pro")).json(),
+    queryFn: async () => {
+      const res = await fetch("/api/admin/creator-pro");
+      if (!res.ok) return [];
+      const json = await res.json();
+      return Array.isArray(json) ? json : [];
+    },
   });
+
+  const promoCodes = Array.isArray(promoCodesRaw) ? promoCodesRaw : [];
 
   const [code, setCode] = useState("");
   const [discountValue, setDiscountValue] = useState(100);
@@ -1552,7 +1582,7 @@ function PromoCodesProPage() {
           <Table>
             <TableHeader><TableRow className="bg-slate-50 text-xs font-bold"><TableHead>Code</TableHead><TableHead>Discount</TableHead><TableHead>Used Count</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
             <TableBody className="text-xs">
-              {promoCodes?.map((p: any) => (
+              {promoCodes.map((p: any) => (
                 <TableRow key={p.id}>
                   <TableCell className="font-mono font-bold">{p.code}</TableCell>
                   <TableCell>₹{p.discountValue}</TableCell>
@@ -1572,7 +1602,11 @@ function PromoCodesProPage() {
 function AuditLogPage() {
   const { data: auditData, isLoading, isError, refetch } = useQuery({
     queryKey: ["/api/admin/audit-logs"],
-    queryFn: async () => (await fetch("/api/admin/audit-logs")).json(),
+    queryFn: async () => {
+      const res = await fetch("/api/admin/audit-logs");
+      if (!res.ok) throw new Error("Failed to load audit logs");
+      return res.json();
+    },
   });
 
   return (
@@ -1597,7 +1631,7 @@ function AuditLogPage() {
               </TableRow>
             </TableHeader>
             <TableBody className="text-xs">
-              {auditData?.logs?.length === 0 ? (
+              {!auditData?.logs || auditData?.logs?.length === 0 ? (
                 <TableRow><TableCell colSpan={7} className="text-center py-6 text-slate-400">No audit logs recorded yet.</TableCell></TableRow>
               ) : (
                 auditData?.logs?.map((l: any) => (
