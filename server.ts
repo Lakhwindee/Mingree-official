@@ -1046,6 +1046,7 @@ const defaultAccounts = [
 ];
 
 let registeredUsers: any[] = [...defaultAccounts];
+(global as any).registeredUsers = registeredUsers;
 
 function loadRegisteredUsers() {
   // Ensure default accounts exist if not already present

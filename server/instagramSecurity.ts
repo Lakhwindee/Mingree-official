@@ -185,20 +185,43 @@ export async function checkIdentityBindingDb(
   instagramUsername: string,
   mingreeUserId: number
 ): Promise<{ allowed: boolean; reason?: string; isDuplicate?: boolean; isCooldown?: boolean; remainingSecs?: number }> {
-  // 1. Check if instagram_user_id is currently linked to a different Mingree user in creator_profiles
+  // 1. Check if instagram_user_id is currently linked to an ACTIVE creator_profile of another user
   const dupCp = await client.query(
-    `SELECT user_id, username FROM creator_profiles WHERE instagram_user_id = $1 AND user_id != $2`,
+    `SELECT cp.user_id, cp.username, cp.status, u.email 
+     FROM creator_profiles cp
+     LEFT JOIN users u ON u.id = cp.user_id
+     WHERE cp.instagram_user_id = $1 AND cp.user_id != $2 AND cp.status = 'active' AND cp.access_token_enc IS NOT NULL`,
     [instagramUserId, mingreeUserId]
   );
+
   if (dupCp.rows.length > 0) {
-    return {
-      allowed: false,
-      isDuplicate: true,
-      reason: "This Instagram account is already linked to another Mingree account.",
-    };
+    // Check if the old user ID shares the same email address as the authenticating user (e.g. account recreated or reset)
+    const currentUserRes = await client.query(`SELECT email FROM users WHERE id = $1`, [mingreeUserId]);
+    const currentEmail = currentUserRes.rows[0]?.email?.toLowerCase()?.trim();
+    const oldEmail = dupCp.rows[0]?.email?.toLowerCase()?.trim();
+
+    if (currentEmail && oldEmail && currentEmail === oldEmail) {
+      // Same owner! Unbind from old user ID so new user ID can take over seamlessly
+      const oldUserId = dupCp.rows[0].user_id;
+      console.log(`[SECURITY] Auto-rebinding Instagram @${instagramUsername} from old User #${oldUserId} to new User #${mingreeUserId} (same email: ${currentEmail})`);
+      await client.query(
+        `UPDATE creator_profiles SET instagram_user_id = NULL, access_token_enc = NULL, status = 'pending' WHERE user_id = $1`,
+        [oldUserId]
+      );
+      await client.query(
+        `UPDATE instagram_identities SET current_user_id = NULL WHERE instagram_user_id = $1`,
+        [instagramUserId]
+      );
+    } else {
+      return {
+        allowed: false,
+        isDuplicate: true,
+        reason: "This Instagram account is already linked to another active Mingree account.",
+      };
+    }
   }
 
-  // 2. Check instagram_identities table for current user binding and 3-minute cooldown
+  // 2. Check instagram_identities table for current user binding and cooldown
   const identityRes = await client.query(
     `SELECT current_user_id, username, unlinked_at, EXTRACT(EPOCH FROM (now() - unlinked_at)) AS elapsed_seconds
      FROM instagram_identities
@@ -209,23 +232,44 @@ export async function checkIdentityBindingDb(
   if (identityRes.rows.length > 0) {
     const row = identityRes.rows[0];
     if (row.current_user_id && Number(row.current_user_id) !== mingreeUserId) {
-      return {
-        allowed: false,
-        isDuplicate: true,
-        reason: "This Instagram account is already linked to another Mingree account.",
-      };
+      const activeCheck = await client.query(
+        `SELECT u.email, cp.status, cp.access_token_enc
+         FROM users u
+         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+         WHERE u.id = $1`,
+        [row.current_user_id]
+      );
+      if (activeCheck.rows.length > 0) {
+        const currentUserEmail = activeCheck.rows[0].email?.toLowerCase()?.trim();
+        const newUserRes = await client.query(`SELECT email FROM users WHERE id = $1`, [mingreeUserId]);
+        const newUserEmail = newUserRes.rows[0]?.email?.toLowerCase()?.trim();
+
+        if (currentUserEmail && newUserEmail && currentUserEmail === newUserEmail) {
+          // Same email owner - unbind old user ID
+          await client.query(`UPDATE instagram_identities SET current_user_id = NULL WHERE instagram_user_id = $1`, [instagramUserId]);
+        } else if (activeCheck.rows[0].status === 'active' && activeCheck.rows[0].access_token_enc) {
+          return {
+            allowed: false,
+            isDuplicate: true,
+            reason: "This Instagram account is already linked to another active Mingree account.",
+          };
+        } else {
+          // Old user is unlinked/inactive - clear current_user_id
+          await client.query(`UPDATE instagram_identities SET current_user_id = NULL WHERE instagram_user_id = $1`, [instagramUserId]);
+        }
+      }
     }
 
     if (row.unlinked_at && row.elapsed_seconds !== null) {
       const elapsed = Number(row.elapsed_seconds);
-      const cooldownSeconds = 180; // 3 minute anti-churn cooldown
+      const cooldownSeconds = 10; // 10 seconds anti-spam threshold
       if (elapsed < cooldownSeconds) {
         const remaining = Math.ceil(cooldownSeconds - elapsed);
         return {
           allowed: false,
           isCooldown: true,
           remainingSecs: remaining,
-          reason: `Anti-farming cooldown active. Please wait ${remaining} seconds before re-linking this Instagram account.`,
+          reason: `Please wait ${remaining} seconds before re-linking this Instagram account.`,
         };
       }
     }
@@ -254,33 +298,33 @@ export function checkIdentityBinding(
     }
 
     if (identity.boundMingreeUserId && identity.boundMingreeUserId !== mingreeUserId) {
-      return {
-        allowed: false,
-        reason: "This Instagram account is already linked to another Mingree account.",
-        isReclaimAttempt: true,
-      };
-    }
+      // Check if bound user shares the same email
+      const boundUser = (global as any).registeredUsers?.find((u: any) => u.id === identity.boundMingreeUserId);
+      const currentUser = (global as any).registeredUsers?.find((u: any) => u.id === mingreeUserId);
 
-    if (
-      !identity.boundMingreeUserId &&
-      identity.historicalMingreeUserIds.length > 0 &&
-      !identity.historicalMingreeUserIds.includes(mingreeUserId)
-    ) {
-      return {
-        allowed: false,
-        reason: "This Instagram account is already linked to another Mingree account.",
-        isReclaimAttempt: true,
-      };
+      if (boundUser && currentUser && boundUser.email?.toLowerCase()?.trim() === currentUser.email?.toLowerCase()?.trim()) {
+        console.log(`[SECURITY] Same email owner in memory. Rebinding Instagram @${instagramUsername} to User #${mingreeUserId}`);
+        identity.boundMingreeUserId = mingreeUserId;
+      } else if (boundUser && boundUser.isInstagramVerified && boundUser.instagramUsername) {
+        return {
+          allowed: false,
+          reason: "This Instagram account is already linked to another active Mingree account.",
+          isReclaimAttempt: true,
+        };
+      } else {
+        // Old user is unlinked - allow rebinding
+        identity.boundMingreeUserId = mingreeUserId;
+      }
     }
 
     if (identity.lastDisconnectedAt) {
       const elapsed = Date.now() - new Date(identity.lastDisconnectedAt).getTime();
-      const cooldownMs = 3 * 60 * 1000;
+      const cooldownMs = 10 * 1000; // 10s cooldown
       if (elapsed < cooldownMs) {
         const waitSecs = Math.ceil((cooldownMs - elapsed) / 1000);
         return {
           allowed: false,
-          reason: `Anti-farming cooldown active. Please wait ${waitSecs} seconds before re-linking this Instagram account.`,
+          reason: `Please wait ${waitSecs} seconds before re-linking this Instagram account.`,
         };
       }
     }
