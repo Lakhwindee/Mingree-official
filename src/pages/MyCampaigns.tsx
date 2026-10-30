@@ -207,18 +207,7 @@ export default function MyCampaigns() {
     <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <Sidebar />
 
-      {/* Mobile Sticky Top Header */}
-      <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full shadow-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-base font-bold text-foreground truncate">My Campaigns</h1>
-          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">
-            {counts.all}
-          </span>
-        </div>
-        {user && <NotificationDropdown userId={user.id} />}
-      </header>
-
-      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
+      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pt-14 md:pt-0 pb-8">
         <div className="w-full max-w-7xl mx-auto px-3.5 py-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
           
           {/* Desktop Executive Header Bar */}

@@ -202,17 +202,7 @@ export default function Earnings() {
   return (
     <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <Sidebar />
-      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] md:pb-8">
-        {/* Mobile Header */}
-        <header className="sticky top-0 z-40 flex items-center justify-between bg-background/95 backdrop-blur-md px-4 pt-[max(0.75rem,env(safe-area-inset-top,0px))] pb-3 border-b border-border md:hidden w-full max-w-full">
-          <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-base font-bold text-foreground truncate">Earnings & Wallet</h1>
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground uppercase tracking-wider">
-              {activeUser.tier || "Creator"}
-            </span>
-          </div>
-          <NotificationDropdown userId={activeUser.id} />
-        </header>
+      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pt-14 md:pt-0 pb-8">
 
         <div className="w-full max-w-6xl mx-auto px-4 py-5 sm:px-6 sm:py-8 space-y-6 sm:space-y-8">
           {/* Desktop Executive Header Bar */}

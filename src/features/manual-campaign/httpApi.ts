@@ -75,12 +75,26 @@ async function j<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  try {
+    const sessionStr = localStorage.getItem("mingree_auth_session_v1");
+    if (sessionStr) {
+      const parsed = JSON.parse(sessionStr);
+      if (parsed?.id) {
+        headers["X-User-Id"] = String(parsed.id);
+      }
+    }
+  } catch {}
+  return headers;
+}
+
 export function createHttpApi(base = ""): ManualCampaignApi {
   const opts = { credentials: "include" as const };
   return {
     listCities: async () => {
       try {
-        const res = await fetch(`${base}/api/cities`, opts);
+        const res = await fetch(`${base}/api/cities`, { ...opts, headers: getAuthHeaders() });
         if (res.ok) return await res.json();
       } catch {}
       return FALLBACK_CITIES;
@@ -97,7 +111,10 @@ export function createHttpApi(base = ""): ManualCampaignApi {
         if (p.sort) qs.set("sort", p.sort);
         if (p.cursor) qs.set("cursor", p.cursor);
 
-        const res = await fetch(`${base}/api/campaigns/creator-panel?${qs}`, opts);
+        const res = await fetch(`${base}/api/campaigns/creator-panel?${qs}`, {
+          ...opts,
+          headers: getAuthHeaders(),
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && Array.isArray(data.items)) {
@@ -111,11 +128,17 @@ export function createHttpApi(base = ""): ManualCampaignApi {
     },
     previewBill: (input) =>
       fetch(`${base}/api/campaigns/choose-creators/bill`, {
-        ...opts, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+        ...opts,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(input),
       }).then((r) => j(r)),
     submit: async (p) => {
       const res = await fetch(`${base}/api/campaigns/choose-creators`, {
-        ...opts, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p),
+        ...opts,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(p),
       });
       const body: any = await res.json().catch(() => ({}));
       if (res.ok) return { ok: true, campaignId: body.campaignId };

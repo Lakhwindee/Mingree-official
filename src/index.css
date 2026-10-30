@@ -206,3 +206,10 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
+
+@media (max-width: 767px) {
+  aside ~ main {
+    padding-top: 3.5rem !important;
+  }
+}
+

@@ -48,12 +48,7 @@ export default function SponsorDashboard() {
   return (
     <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <SponsorSidebar />
-      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pb-28 md:pb-6">
-        {/* Mobile Header with Notification */}
-        <div className="sticky top-0 z-40 flex items-center justify-between bg-background/95 backdrop-blur-md px-4 py-3 border-b border-border md:hidden w-full max-w-full">
-          <h1 className="text-base font-bold text-foreground">Dashboard</h1>
-          <NotificationDropdown userId={activeSponsor.id} />
-        </div>
+      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pt-14 md:pt-0 pb-6">
         
         <div className="w-full max-w-5xl mx-auto p-4 sm:p-6 overflow-x-hidden space-y-6">
           <div className="rounded-xl border border-border bg-card p-6 sm:p-8">
