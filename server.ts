@@ -993,22 +993,6 @@ const defaultAccounts = [
     isEmailVerified: true,
   },
   {
-    id: 3,
-    email: "creator@mingree.com",
-    passwordHash: bcrypt.hashSync("password123", 10),
-    name: "Creator Account",
-    role: "creator",
-    handle: "@creator",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150",
-    tier: "Unlinked",
-    instagramUsername: null,
-    instagramProfileUrl: null,
-    instagramFollowers: 0,
-    followers: 0,
-    isInstagramVerified: false,
-    isEmailVerified: true,
-  },
-  {
     id: 99,
     email: ADMIN_EMAIL,
     passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
@@ -1019,42 +1003,6 @@ const defaultAccounts = [
     tier: "Admin",
     isEmailVerified: true,
   },
-  {
-    id: 2,
-    email: "brand@mingree.com",
-    passwordHash: bcrypt.hashSync("123456", 10),
-    name: "Brand Sponsor",
-    role: "sponsor",
-    handle: "@sponsor",
-    avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-    tier: "Brand Partner",
-    companyName: "Brand Sponsor",
-    isEmailVerified: true,
-  },
-  {
-    id: 4,
-    email: "artist@mingree.com",
-    passwordHash: bcrypt.hashSync("password123", 10),
-    name: "Rohan Verma (Artist)",
-    role: "sponsor",
-    handle: "@rohanmusic",
-    companyName: "Rohan Records",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150",
-    tier: "Standard",
-    isEmailVerified: true,
-  },
-  {
-    id: 5,
-    email: "sponsor@mingree.com",
-    passwordHash: bcrypt.hashSync("123456", 10),
-    name: "Brand Partner",
-    role: "sponsor",
-    handle: "@brandpartner",
-    companyName: "Mingree Brand Partner",
-    avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-    tier: "Brand Partner",
-    isEmailVerified: true,
-  }
 ];
 
 let registeredUsers: any[] = [...defaultAccounts];
@@ -5876,10 +5824,17 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       return "micro";
     };
 
-    // 1. Collect all real registered creators from memory and database
+    // 1. Collect all real registered creators from memory and database (strictly exclude any demo/fake accounts)
     const realCreatorsMap = new Map<number, any>();
+    const fakeEmails = new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com"]);
+    const fakeHandles = new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic"]);
 
     for (const u of registeredUsers) {
+      const email = (u.email || "").toLowerCase().trim();
+      const handle = (u.handle || "").toLowerCase().trim();
+      if (fakeEmails.has(email) || fakeHandles.has(handle) || email.includes("demo") || email.includes("example")) {
+        continue;
+      }
       if (u.role === "creator") {
         realCreatorsMap.set(u.id, { ...u });
       }
@@ -5892,9 +5847,17 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         FROM users u
         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
         WHERE u.role = 'creator'
+          AND LOWER(u.email) NOT IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
+          AND LOWER(COALESCE(u.handle, '')) NOT IN ('@creator', 'creator', '@sponsor', 'sponsor', '@brandpartner', 'brandpartner', '@rohanmusic', 'rohanmusic')
       `);
       for (const row of dbRes.rows) {
         const id = Number(row.id);
+        const email = (row.email || "").toLowerCase().trim();
+        const handle = (row.handle || "").toLowerCase().trim();
+        const igUser = (row.instagram_username || "").toLowerCase().trim();
+        if (fakeEmails.has(email) || fakeHandles.has(handle) || fakeHandles.has(igUser)) {
+          continue;
+        }
         const existing = realCreatorsMap.get(id);
         if (!existing) {
           realCreatorsMap.set(id, {
@@ -5931,21 +5894,17 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
       const price = Math.round(tierObj.basePrice * deliverableMultiplier);
 
-      let creatorCity = CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase());
-      if (!creatorCity) {
-        if (cityIds.length > 0) {
-          creatorCity = CITIES_LIST.find((c) => cityIds.includes(c.id)) || CITIES_LIST[0];
-        } else {
-          creatorCity = CITIES_LIST[0]; // Mumbai default
-        }
-      }
+      // Only display city if user actually configured one (never fake Mumbai default)
+      const creatorCity = u.city
+        ? (CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase()) || { id: 0, name: u.city, state: "" })
+        : null;
 
       const cleanHandle = (u.instagramUsername || u.handle?.replace(/^@/, "") || `creator_${u.id}`).trim();
       const displayName = u.name || cleanHandle;
       const avatarUrl = u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
 
-      const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.42) : 0);
-      const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : 0);
+      const mViews = u.medianViews ? Number(u.medianViews) : (u.isInstagramVerified && followers > 0 ? Math.round(followers * 0.42) : null);
+      const mReach = Number(u.reach || u.instagramReach) || (u.isInstagramVerified && followers > 0 ? Math.round(followers * 2.2) : null);
 
       realCreatorCards.push({
         id: Number(u.id),
@@ -5957,16 +5916,16 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         tier: tierId,
         rawTier: u.tier,
         followers,
-        engagementRate: u.engagementRate ? Number(u.engagementRate) : (followers > 0 ? 4.8 : 0),
+        engagementRate: u.engagementRate ? Number(u.engagementRate) : (u.isInstagramVerified && followers > 0 ? 4.8 : null),
         medianViews: mViews,
         reach: mReach,
         insightsVerified: Boolean(u.isInstagramVerified),
-        audienceIndiaPct: followers > 0 ? 95 : 0,
-        topAudienceCities: followers > 0 ? ["Mumbai", "Delhi", "Chandigarh"] : [],
-        indiaAudiencePct: followers > 0 ? 95 : 0,
+        audienceIndiaPct: Boolean(u.isInstagramVerified && followers > 0) ? (u.indiaAudiencePct || 95) : null,
+        topAudienceCities: Boolean(u.isInstagramVerified && followers > 0) ? ["Mumbai", "Delhi", "Chandigarh"] : [],
+        indiaAudiencePct: Boolean(u.isInstagramVerified && followers > 0) ? (u.indiaAudiencePct || 95) : null,
         metricsSource: u.isInstagramVerified ? "api_verified" : "unlinked",
-        completedDeals: 0,
-        onTimeRate: 100,
+        completedDeals: u.completedDeals || 0,
+        onTimeRate: u.completedDeals > 0 ? (u.onTimeRate || 100) : null,
         genres: ["Music", "Lifestyle", "Fashion", "Entertainment"],
         recentReels: [
           { thumbUrl: avatarUrl }
@@ -5984,7 +5943,6 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
     if (requestedTier && requestedTier !== "all") {
       items = items.filter((c) => {
         if (c.tier === requestedTier) return true;
-        // If it's a real registered creator, also match if their badge or follower bracket corresponds
         if (c.isRealRegisteredCreator) {
           const raw = (c.rawTier || "").toLowerCase().trim();
           if (requestedTier === "micro" && (raw === "micro" || raw === "small" || (c.followers >= 5000 && c.followers <= 50000))) {
@@ -6004,7 +5962,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         if (c.isRealRegisteredCreator) {
           return true; // Real registered creators are always eligible across campaign cities
         }
-        return cityIds.includes(c.city.id);
+        return c.city && cityIds.includes(c.city.id);
       });
     }
 
@@ -6014,7 +5972,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       items = items.filter((c) =>
         c.username.toLowerCase().includes(qLower) ||
         c.displayName.toLowerCase().includes(qLower) ||
-        c.city.name.toLowerCase().includes(qLower)
+        (c.city && c.city.name.toLowerCase().includes(qLower))
       );
     }
 
@@ -6559,58 +6517,19 @@ async function startServer() {
         console.log(`[SEED] Admin account seeded: ${adminEmail}`);
       }
 
-      // Seed Artist if not present
-      const artistEmail = "artist@mingree.com";
-      const artistRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [artistEmail]);
-      if (artistRes.rows.length === 0) {
-        const hash = bcrypt.hashSync("password123", 10);
-        const inserted = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name)
-           VALUES ($1, $2, 'Rohan Verma (Artist)', 'sponsor', true, 'active', 'Rohan Records')
-           RETURNING id`,
-          [artistEmail, hash]
+      // Purge any fake or demo accounts from PostgreSQL database
+      await pool.query(`
+        DELETE FROM creator_profiles 
+        WHERE user_id IN (
+          SELECT id FROM users 
+          WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
+             OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner')
         );
-        await pool.query(
-          `INSERT INTO wallets (user_id, balance, escrow_held)
-           VALUES ($1, 500000.00, 0.00)
-           ON CONFLICT (user_id) DO NOTHING`,
-          [inserted.rows[0].id]
-        );
-        console.log(`[SEED] Artist account seeded: ${artistEmail}`);
-      }
-
-      // Seed Creator if not present
-      const creatorEmail = "creator@mingree.com";
-      const creatorRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [creatorEmail]);
-      if (creatorRes.rows.length === 0) {
-        const hash = bcrypt.hashSync("password123", 10);
-        const inserted = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
-           VALUES ($1, $2, 'Creator Account', 'creator', true, 'active')
-           RETURNING id`,
-          [creatorEmail, hash]
-        );
-        await pool.query(
-          `INSERT INTO wallets (user_id, balance, escrow_held)
-           VALUES ($1, 12500.00, 0.00)
-           ON CONFLICT (user_id) DO NOTHING`,
-          [inserted.rows[0].id]
-        );
-        await pool.query(
-          `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, india_audience_pct, tier_label, risk_score, status)
-           VALUES ($1, NULL, 0, 0, 0.0, 92.00, 'Micro', 5, 'pending')
-           ON CONFLICT (user_id) DO NOTHING`,
-          [inserted.rows[0].id]
-        );
-        console.log(`[SEED] Creator account seeded: ${creatorEmail}`);
-      }
-
-      // Clear any pre-seeded fake Instagram connections across all profiles
-      await pool.query(
-        `UPDATE creator_profiles
-         SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL
-         WHERE access_token_enc IS NULL OR username IN ('priyareels', 'priya_reels_official', 'judgesaab')`
-      ).catch(() => {});
+        DELETE FROM users 
+        WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
+           OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
+      `).catch(() => {});
+      console.log("[DB] Purged fake/demo accounts from PostgreSQL");
     } catch (seedErr: any) {
       console.log("[SEED] Skipped database seeding:", seedErr.message);
     }

@@ -405,7 +405,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             <span>{c.displayName}</span>
                             {c.city?.name && <span>· {c.city.name}</span>}
                             <span>·</span>
-                            <span className="text-sky-600 font-semibold">📡 {compact(c.reach || Math.round(c.followers * 2.2))} reach</span>
+                            <span className="text-sky-600 font-semibold">📡 {c.reach ? compact(c.reach) : (c.followers > 0 ? compact(Math.round(c.followers * 2.2)) : "—")} reach</span>
                             <span>·</span>
                             <span className="text-foreground font-medium">👁️ {c.medianViews ? compact(c.medianViews) : "—"} views</span>
                           </div>
@@ -538,7 +538,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       {/* 4 Performance & Insights Stats */}
                       <div className="grid grid-cols-4 gap-1 rounded-lg bg-muted/40 p-1.5 text-center text-xs">
                         <div className="bg-background/80 rounded py-1 px-0.5">
-                          <div className="font-bold tabular-nums text-foreground text-xs">{compact(reachVal)}</div>
+                          <div className="font-bold tabular-nums text-foreground text-xs">{reachVal ? compact(reachVal) : "—"}</div>
                           <div className="text-[9px] text-muted-foreground uppercase font-semibold">Reach</div>
                         </div>
                         <div className="bg-background/80 rounded py-1 px-0.5">
@@ -556,8 +556,16 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       </div>
 
                       <div className="flex items-center justify-between text-[10px] text-muted-foreground px-0.5">
-                        <span>📍 {c.indiaAudiencePct || 95}% India Audience</span>
-                        <span className="text-emerald-600 font-semibold">{c.onTimeRate || 98}% On-Time</span>
+                        {c.indiaAudiencePct ? (
+                          <span>📍 {c.indiaAudiencePct}% India Audience</span>
+                        ) : (
+                          <span className="text-muted-foreground/80">📍 Audience: Link Instagram</span>
+                        )}
+                        {c.completedDeals > 0 && c.onTimeRate ? (
+                          <span className="text-emerald-600 font-semibold">{c.onTimeRate}% On-Time</span>
+                        ) : (
+                          <span className="text-muted-foreground/80">New Creator</span>
+                        )}
                       </div>
                     </div>
 

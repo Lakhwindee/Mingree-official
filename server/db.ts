@@ -77,7 +77,7 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
     }
     if (initSql) {
       await localClient.query(initSql);
-      // Purge any residual demo campaigns from DB
+      // Purge any residual demo campaigns and demo users from DB
       await localClient.query(`
         DELETE FROM campaigns
         WHERE title ILIKE '%boAt%' OR title ILIKE '%Myntra%' OR title ILIKE '%Spotify%'
@@ -85,9 +85,20 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
            OR title ILIKE '%Puma%' OR title ILIKE '%OnePlus%' OR title ILIKE '%Noise%'
            OR title ILIKE '%Swiggy%' OR title ILIKE '%CRED%' OR title ILIKE '%Cult.fit%'
            OR title ILIKE '%Lookbook%';
+
+        DELETE FROM creator_profiles 
+        WHERE user_id IN (
+          SELECT id FROM users 
+          WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
+             OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner')
+        );
+
+        DELETE FROM users 
+        WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
+           OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
       `).catch(() => {});
       schemaInitialized = true;
-      console.log("[DB SCHEMA] Applied migrations/001_init.sql successfully.");
+      console.log("[DB SCHEMA] Applied migrations/001_init.sql and purged demo accounts successfully.");
     }
   } catch (err: any) {
     console.error("[DB SCHEMA INIT ERROR]", err?.message || err);
