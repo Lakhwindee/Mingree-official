@@ -18,6 +18,8 @@ export const users = pgTable("users", {
   gstin: text("gstin"),
   pan: text("pan"),
   billingAddress: text("billing_address"),
+  avatar: text("avatar"),
+  avatarUrl: text("avatar_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -54,6 +56,7 @@ export const creatorProfiles = pgTable("creator_profiles", {
   riskScore: integer("risk_score").notNull().default(0),
   status: text("status").notNull().default("pending"),
   statusNote: text("status_note"),
+  avatarUrl: text("avatar_url"),
   accessTokenEnc: text("access_token_enc"),
   tokenExpiresAt: timestamp("token_expires_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

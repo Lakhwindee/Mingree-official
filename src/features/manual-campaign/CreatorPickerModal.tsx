@@ -25,18 +25,16 @@ const SORTS: { v: NonNullable<CreatorSearchParams["sort"]>; l: string }[] = [
   { v: "price_desc", l: "💰 Price: high to low" },
 ];
 
-function Avatar({ c, size = 52 }: { c: Pick<CreatorCard, "avatarUrl" | "displayName">; size?: number }) {
-  const initials = c.displayName.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-  return c.avatarUrl ? (
-    <img src={c.avatarUrl} alt="" className="rounded-full object-cover shrink-0" style={{ width: size, height: size }} />
-  ) : (
-    <div
-      className="rounded-full shrink-0 flex items-center justify-center font-semibold text-white bg-gradient-to-br from-pink-400 to-fuchsia-600"
-      style={{ width: size, height: size, fontSize: size * 0.34 }}
-      aria-hidden
-    >
-      {initials}
-    </div>
+import { CreatorAvatar } from "@/components/CreatorAvatar";
+
+function Avatar({ c, size = 52 }: { c: Pick<CreatorCard, "avatarUrl" | "displayName" | "username">; size?: number }) {
+  return (
+    <CreatorAvatar
+      avatarUrl={c.avatarUrl}
+      displayName={c.displayName}
+      username={c.username}
+      size={size}
+    />
   );
 }
 

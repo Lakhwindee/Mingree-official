@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
   gstin text,
   pan text,
   billing_address text,
+  avatar text,
+  avatar_url text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status);
@@ -39,6 +41,7 @@ CREATE TABLE IF NOT EXISTS creator_profiles (
   risk_score int NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'needs_review', 'blocked')),
   status_note text,
+  avatar_url text,
   access_token_enc text,
   token_expires_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()

@@ -9,7 +9,7 @@ export const fallbackCreatorUser: ApiUser = {
   followers: 68757,
   engagement: "4.8",
   reach: 151265,
-  avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+  avatar: "/uploads/avatars/creator_1.jpg",
   isVerified: true,
   tier: "Tier 14",
   balance: "0.00",

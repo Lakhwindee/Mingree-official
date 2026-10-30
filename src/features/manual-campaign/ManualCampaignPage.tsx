@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { compact, inr } from "./tiers";
 import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
+import { CreatorAvatar } from "@/components/CreatorAvatar";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -385,13 +386,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       onClick={() => toggleCreator(c)}
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
-                        {c.avatarUrl ? (
-                          <img src={c.avatarUrl} alt={c.displayName} className="h-10 w-10 rounded-full object-cover shrink-0 ring-1 ring-border" />
-                        ) : (
-                          <div className="h-10 w-10 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 text-white font-bold flex items-center justify-center shrink-0 text-xs">
-                            {c.displayName.slice(0, 2).toUpperCase()}
-                          </div>
-                        )}
+                        <CreatorAvatar
+                          avatarUrl={c.avatarUrl}
+                          displayName={c.displayName}
+                          username={c.username}
+                          size={40}
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 truncate">
                             <span className="font-bold text-sm text-foreground truncate">@{c.username}</span>
@@ -501,13 +501,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   >
                     <div className="space-y-2.5">
                       <div className="flex items-center gap-3">
-                        {c.avatarUrl && !c.avatarUrl.includes("unsplash.com") ? (
-                          <img src={c.avatarUrl} alt={c.username} className="h-12 w-12 rounded-full object-cover shrink-0 ring-1 ring-border shadow-2xs" />
-                        ) : (
-                          <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 text-white font-bold flex items-center justify-center shrink-0 shadow-2xs text-sm">
-                            {c.username.replace(/^[^a-zA-Z0-9]+/, "").slice(0, 2).toUpperCase() || "IG"}
-                          </div>
-                        )}
+                        <CreatorAvatar
+                          avatarUrl={c.avatarUrl}
+                          displayName={c.displayName}
+                          username={c.username}
+                          size={48}
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span className="font-bold text-sm text-foreground truncate">@{c.username}</span>
@@ -620,13 +619,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               <div className="divide-y rounded-xl border bg-card overflow-hidden">
                 {[...selected.values()].map((c) => (
                   <div key={c.id} className="flex items-center gap-3 p-3.5 hover:bg-muted/10 transition">
-                    {c.avatarUrl ? (
-                      <img src={c.avatarUrl} alt={c.displayName} className="h-9 w-9 rounded-full object-cover shrink-0" />
-                    ) : (
-                      <div className="h-9 w-9 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0 text-xs">
-                        {c.displayName.slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
+                    <CreatorAvatar
+                      avatarUrl={c.avatarUrl}
+                      displayName={c.displayName}
+                      username={c.username}
+                      size={36}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold truncate flex items-center gap-1.5">
                         <span>@{c.username}</span>

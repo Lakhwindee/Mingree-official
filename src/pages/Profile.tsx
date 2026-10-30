@@ -491,7 +491,11 @@ export default function Profile() {
                 {/* Avatar with Camera Overlay Button */}
                 <div className="relative group self-center sm:self-start">
                   <Avatar className="h-24 w-24 sm:h-28 sm:w-28 rounded-2xl ring-4 ring-card bg-card shadow-md">
-                    <AvatarImage src={(user.avatar && !user.avatar.includes("unsplash.com")) ? user.avatar : undefined} className="object-cover" />
+                    <AvatarImage
+                      src={(user.avatar && !user.avatar.includes("unsplash.com")) ? user.avatar : undefined}
+                      className="object-cover"
+                      referrerPolicy="no-referrer"
+                    />
                     <AvatarFallback className="text-2xl font-bold bg-muted text-foreground">
                       {creatorDisplayName.replace(/^@/, "").charAt(0).toUpperCase()}
                     </AvatarFallback>
@@ -718,7 +722,11 @@ export default function Profile() {
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3.5">
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar className="h-12 w-12 border border-border shrink-0 shadow-2xs">
-                          <AvatarImage src={(activeUser.avatar && !activeUser.avatar.includes("unsplash.com")) ? activeUser.avatar : undefined} className="object-cover" />
+                          <AvatarImage
+                            src={(activeUser.avatar && !activeUser.avatar.includes("unsplash.com")) ? activeUser.avatar : undefined}
+                            className="object-cover"
+                            referrerPolicy="no-referrer"
+                          />
                           <AvatarFallback className="font-bold bg-muted text-foreground">
                             {activeUser.instagramUsername ? activeUser.instagramUsername.charAt(0).toUpperCase() : "IG"}
                           </AvatarFallback>

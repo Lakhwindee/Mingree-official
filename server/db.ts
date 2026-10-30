@@ -77,6 +77,12 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
     }
     if (initSql) {
       await localClient.query(initSql);
+      await localClient.query(`
+        ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS avatar_url text;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
+      `).catch(() => {});
+
       // Purge any residual demo campaigns and demo users from DB
       await localClient.query(`
         DELETE FROM campaigns

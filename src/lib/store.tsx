@@ -61,7 +61,7 @@ const defaultUser: UserProfile = {
   balance: 0,
   engagement: "0.0%",
   reach: "0",
-  avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+  avatar: "",
   isVerified: false,
   tier: "New Creator"
 };

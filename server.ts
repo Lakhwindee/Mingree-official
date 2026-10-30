@@ -284,6 +284,28 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
   }
 });
 
+// Serve uploaded assets statically from public/uploads
+app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
+
+// GET /api/creators/:id/avatar - Securely streams creator's profile picture
+app.get("/api/creators/:id/avatar", (req, res) => {
+  const userId = Number(req.params.id);
+  const user = registeredUsers.find((u) => u.id === userId);
+  const avatar = user?.avatar || user?.avatarUrl;
+  if (!avatar) {
+    return res.status(404).json({ error: "Avatar not found" });
+  }
+  if (avatar.startsWith("/uploads/")) {
+    const filePath = path.join(process.cwd(), "public", avatar);
+    if (fs.existsSync(filePath)) {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.sendFile(filePath);
+    }
+  }
+  return res.redirect(avatar);
+});
+
 // GET /api/creators/search
 app.get("/api/creators/search", requireAuth, async (req: AuthRequest, res) => {
   const { city, minFollowers, maxFollowers } = req.query;
@@ -979,7 +1001,9 @@ const defaultAccounts = [
     name: "Judge Saab",
     role: "creator",
     handle: "@ijudgesaab",
-    avatar: null,
+    avatar: "/uploads/avatars/creator_1.jpg",
+    avatarUrl: "/uploads/avatars/creator_1.jpg",
+    avatar_url: "/uploads/avatars/creator_1.jpg",
     tier: "Tier 14",
     instagramUsername: "ijudgesaab",
     instagramProfileUrl: "https://instagram.com/ijudgesaab",
@@ -1016,6 +1040,9 @@ function loadRegisteredUsers() {
       registeredUsers.push({ ...acc });
     } else {
       if (acc.id === 1) {
+        existing.avatar = existing.avatar || acc.avatar;
+        existing.avatarUrl = existing.avatarUrl || acc.avatarUrl;
+        (existing as any).avatar_url = (existing as any).avatar_url || (acc as any).avatar_url;
         existing.tier = existing.tier || acc.tier;
         existing.name = (existing.name && existing.name !== "juge" && existing.name !== "Mingree Platform Treasury") ? existing.name : acc.name;
         existing.handle = (existing.handle && existing.handle !== "@judgeproductionmusic") ? existing.handle : acc.handle;
@@ -4029,6 +4056,87 @@ app.post("/api/instagram/complete-oauth", (_req: express.Request, res: express.R
   });
 });
 
+/**
+ * Downloads and persists the creator's real Instagram profile picture into storage (Vercel Blob or local static storage).
+ * Saves the resulting URL in creator_profiles.avatar_url and users.avatar_url / users.avatar.
+ * Does NOT hotlink the Instagram CDN URL (which expires).
+ */
+export async function saveCreatorProfilePicture(userId: number, username: string, imageUrl: string): Promise<string | null> {
+  if (!imageUrl) return null;
+
+  let finalUrl: string | null = null;
+
+  // 1. If Vercel Blob is configured (BLOB_READ_WRITE_TOKEN is present), upload to Vercel Blob
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    try {
+      const response = await fetch(imageUrl);
+      if (response.ok) {
+        const arrayBuf = await response.arrayBuffer();
+        const { put } = await import("@vercel/blob");
+        const blob = await put(`avatars/creator_${userId}.jpg`, Buffer.from(arrayBuf), {
+          access: "public",
+          addRandomSuffix: false,
+        });
+        finalUrl = blob.url;
+        console.log(`[AVATAR STORAGE] ✓ Uploaded avatar to Vercel Blob for user ${userId}: ${finalUrl.split("?")[0]}`);
+      }
+    } catch (blobErr: any) {
+      console.warn(`[AVATAR STORAGE] Vercel Blob upload failed:`, blobErr?.message || blobErr);
+    }
+  }
+
+  // 2. Local static disk storage fallback (created lazily inside handler, no startup mkdir)
+  if (!finalUrl) {
+    try {
+      const response = await fetch(imageUrl);
+      if (response.ok) {
+        const arrayBuf = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuf);
+        const avatarDir = path.join(process.cwd(), "public", "uploads", "avatars");
+        if (!fs.existsSync(avatarDir)) {
+          fs.mkdirSync(avatarDir, { recursive: true });
+        }
+        const fileName = `creator_${userId}.jpg`;
+        const localPath = path.join(avatarDir, fileName);
+        fs.writeFileSync(localPath, buffer);
+        finalUrl = `/uploads/avatars/${fileName}`;
+        console.log(`[AVATAR STORAGE] ✓ Downloaded & saved profile picture to local disk: ${finalUrl}`);
+      }
+    } catch (fsErr: any) {
+      console.warn(`[AVATAR STORAGE] Local avatar file write warning:`, fsErr?.message || fsErr);
+      finalUrl = `/api/creators/${userId}/avatar`;
+    }
+  }
+
+  if (finalUrl) {
+    // Update in-memory user
+    const targetUser = registeredUsers.find((u) => u.id === userId);
+    if (targetUser) {
+      targetUser.avatar = finalUrl;
+      targetUser.avatar_url = finalUrl;
+      targetUser.avatarUrl = finalUrl;
+    }
+
+    // Persist to database: creator_profiles.avatar_url and users.avatar / users.avatar_url
+    if (isDatabaseConfigured) {
+      try {
+        await pool.query(
+          `UPDATE creator_profiles SET avatar_url = $1 WHERE user_id = $2`,
+          [finalUrl, userId]
+        );
+        await pool.query(
+          `UPDATE users SET avatar = $1, avatar_url = $1 WHERE id = $2`,
+          [finalUrl, userId]
+        );
+      } catch (dbErr: any) {
+        console.warn(`[AVATAR DB] Warning updating avatar_url in database:`, dbErr?.message || dbErr);
+      }
+    }
+  }
+
+  return finalUrl;
+}
+
 // GET /api/instagram/auth-url - Returns the REAL Meta Instagram OAuth Authorization URL
 app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response) => {
   let userId = Number(req.query.userId);
@@ -4320,27 +4428,34 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let profilePicUrl = "";
 
     try {
-      console.log(`[INSTAGRAM OAUTH] Fetching profile details from Graph API v21.0...`);
-      const profileRes = await fetch(`https://graph.instagram.com/v21.0/me?fields=id,username,name,account_type,media_count,profile_picture_url,followers_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`);
+      console.log(`[INSTAGRAM OAUTH] Fetching profile details from Graph API /me...`);
+      // Request exact required fields: user_id,username,profile_picture_url,followers_count,media_count
+      const profileRes = await fetch(
+        `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
+      );
       if (profileRes.ok) {
         const pData = await profileRes.json();
         if (pData.username) igUsername = pData.username;
+        if (pData.user_id) igUserId = String(pData.user_id);
         if (typeof pData.followers_count === "number") followersCount = pData.followers_count;
         if (typeof pData.media_count === "number") mediaCount = pData.media_count;
-        if (pData.account_type) accountType = pData.account_type;
         if (pData.profile_picture_url) profilePicUrl = pData.profile_picture_url;
-        console.log(`[INSTAGRAM OAUTH] ✓ Fetched profile: @${igUsername}, account_type: ${accountType}, followers: ${followersCount}, media_count: ${mediaCount}, hasPic: ${!!profilePicUrl}`);
+        // Log without tokens whether profile_picture_url came back or not
+        console.log(`[INSTAGRAM OAUTH] Profile fetch: username=@${igUsername}, profile_picture_url returned=${Boolean(profilePicUrl)}`);
       } else {
         const pErr = await profileRes.text();
-        console.warn(`[INSTAGRAM OAUTH] Graph API v21.0 /me returned ${profileRes.status}:`, pErr);
+        console.warn(`[INSTAGRAM OAUTH] Graph API /me returned ${profileRes.status}:`, pErr);
         console.log(`[INSTAGRAM OAUTH] Falling back to basic Graph API /me...`);
-        const basicRes = await fetch(`https://graph.instagram.com/me?fields=id,username,account_type,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`);
+        const basicRes = await fetch(
+          `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
+        );
         if (basicRes.ok) {
           const bData = await basicRes.json();
           if (bData.username) igUsername = bData.username;
+          if (bData.user_id) igUserId = String(bData.user_id);
           if (typeof bData.media_count === "number") mediaCount = bData.media_count;
-          if (bData.account_type) accountType = bData.account_type;
-          console.log(`[INSTAGRAM OAUTH] ✓ Basic profile fetched: @${igUsername}, media_count: ${mediaCount}`);
+          if (bData.profile_picture_url) profilePicUrl = bData.profile_picture_url;
+          console.log(`[INSTAGRAM OAUTH] Profile fetch (fallback): username=@${igUsername}, profile_picture_url returned=${Boolean(profilePicUrl)}`);
         } else {
           const bErr = await basicRes.text();
           console.warn(`[INSTAGRAM OAUTH] Basic profile fetch returned ${basicRes.status}:`, bErr);
@@ -4536,7 +4651,17 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       }));
     }
 
-    // 9. Execute DB Transaction for actual persist
+    // 9. Download and persist profile picture without hotlinking Instagram CDN
+    let savedAvatarUrl: string | null = null;
+    if (profilePicUrl) {
+      try {
+        savedAvatarUrl = await saveCreatorProfilePicture(stateRecord.userId, igUsername, profilePicUrl);
+      } catch (saveErr) {
+        console.warn("[INSTAGRAM OAUTH] Error downloading avatar:", saveErr);
+      }
+    }
+
+    // 10. Execute DB Transaction for actual persist
     const reach = followersCount > 0 ? Math.round(followersCount * 2.2) : null;
     const medianViews = followersCount > 0 ? Math.round(followersCount * 0.45) : null;
     const engagementRate = followersCount > 0 ? 4.8 : null;
@@ -4552,18 +4677,20 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           await client.query("BEGIN");
         }
 
-        // Ensure user row exists in users table (using only 001_init.sql columns)
+        // Ensure user row exists in users table
         await client.query(
-          `INSERT INTO users (id, email, password_hash, name, role, email_verified, status)
-           VALUES ($1, $2, '!', $3, 'creator', true, 'active')
-           ON CONFLICT (id) DO NOTHING`,
-          [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account"]
+          `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, avatar, avatar_url)
+           VALUES ($1, $2, '!', $3, 'creator', true, 'active', $4, $4)
+           ON CONFLICT (id) DO UPDATE SET
+             avatar = COALESCE(EXCLUDED.avatar, users.avatar),
+             avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)`,
+          [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account", savedAvatarUrl || null]
         );
 
-        // Upsert creator_profiles (enforces UNIQUE instagram_user_id constraint)
+        // Upsert creator_profiles (enforces UNIQUE instagram_user_id constraint and stores avatar_url)
         await client.query(
-          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, median_views, engagement_rate, risk_score, status, access_token_enc, token_expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, median_views, engagement_rate, risk_score, status, avatar_url, access_token_enc, token_expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (user_id) DO UPDATE SET
              instagram_user_id = EXCLUDED.instagram_user_id,
              username = EXCLUDED.username,
@@ -4573,6 +4700,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
              engagement_rate = EXCLUDED.engagement_rate,
              risk_score = EXCLUDED.risk_score,
              status = EXCLUDED.status,
+             avatar_url = COALESCE(EXCLUDED.avatar_url, creator_profiles.avatar_url),
              access_token_enc = EXCLUDED.access_token_enc,
              token_expires_at = EXCLUDED.token_expires_at`,
           [
@@ -4585,6 +4713,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
             engagementRate,
             riskEval.riskScore,
             riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+            savedAvatarUrl || null,
             finalAccessToken,
             new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
           ]
@@ -4679,8 +4808,10 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     if (targetUser) {
       targetUser.instagramUsername = igUsername;
       targetUser.instagramProfileUrl = `https://instagram.com/${igUsername}`;
-      if (profilePicUrl) {
-        targetUser.avatar = profilePicUrl;
+      if (savedAvatarUrl) {
+        targetUser.avatar = savedAvatarUrl;
+        targetUser.avatar_url = savedAvatarUrl;
+        targetUser.avatarUrl = savedAvatarUrl;
       }
       targetUser.instagramFollowers = followersCount;
       targetUser.followers = followersCount;
@@ -4774,6 +4905,28 @@ app.post("/api/creator/sync-insights", requireAuth, async (req: AuthRequest, res
     (targetUser as any).reach = reach;
     targetUser.engagementRate = engagementRate;
     (targetUser as any).insightsSyncedAt = new Date().toISOString();
+
+    // 3. Refresh profile picture on insights sync without hotlinking Instagram CDN
+    let refreshedAvatarUrl: string | null = null;
+    const tokenToUse = targetUser.instagramAccessToken;
+    if (tokenToUse) {
+      try {
+        console.log(`[SYNC INSIGHTS] Refreshing Instagram profile picture for @${targetUser.instagramUsername}...`);
+        const syncProfileRes = await fetch(
+          `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(tokenToUse)}`
+        );
+        if (syncProfileRes.ok) {
+          const syncPData = await syncProfileRes.json();
+          if (syncPData.profile_picture_url) {
+            refreshedAvatarUrl = await saveCreatorProfilePicture(userId, targetUser.instagramUsername, syncPData.profile_picture_url);
+            console.log(`[SYNC INSIGHTS] ✓ Refreshed avatar for @${targetUser.instagramUsername}: ${refreshedAvatarUrl}`);
+          }
+        }
+      } catch (syncPicErr: any) {
+        console.warn("[SYNC INSIGHTS] Profile picture refresh error:", syncPicErr?.message || syncPicErr);
+      }
+    }
+
     saveRegisteredUsers();
 
     try {
@@ -4791,6 +4944,7 @@ app.post("/api/creator/sync-insights", requireAuth, async (req: AuthRequest, res
         reach,
         medianViews,
         engagementRate,
+        avatarUrl: refreshedAvatarUrl || targetUser.avatar,
         audienceIndiaPct: 95,
         topCities: ["Mumbai", "Delhi", "Chandigarh"],
         verified: true,
@@ -5872,8 +6026,8 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
 
     try {
       const dbRes = await pool.query(`
-        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.tier, u.city, u.company_name, u.status,
-               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate
+        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.avatar_url as user_avatar_url, u.tier, u.city, u.company_name, u.status,
+               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate, cp.avatar_url as cp_avatar_url
         FROM users u
         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
         WHERE u.role = 'creator'
@@ -5888,6 +6042,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         if (fakeEmails.has(email) || fakeHandles.has(handle) || fakeHandles.has(igUser)) {
           continue;
         }
+        const resolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
         const existing = realCreatorsMap.get(id);
         if (!existing) {
           realCreatorsMap.set(id, {
@@ -5896,7 +6051,8 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
             name: row.name,
             role: "creator",
             handle: row.handle,
-            avatar: row.avatar,
+            avatar: resolvedAvatar,
+            avatarUrl: resolvedAvatar,
             tier: row.tier || row.tier_label,
             city: row.city,
             instagramUsername: row.instagram_username,
@@ -5905,6 +6061,10 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
             isInstagramVerified: Boolean(row.instagram_username && Number(row.cp_followers || 0) >= 500),
           });
         } else {
+          if (resolvedAvatar && (!existing.avatar || existing.avatar.includes("unsplash.com"))) {
+            existing.avatar = resolvedAvatar;
+            existing.avatarUrl = resolvedAvatar;
+          }
           if (row.instagram_username && !existing.instagramUsername) existing.instagramUsername = row.instagram_username;
           if (row.cp_followers && !existing.instagramFollowers) {
             existing.instagramFollowers = Number(row.cp_followers);
