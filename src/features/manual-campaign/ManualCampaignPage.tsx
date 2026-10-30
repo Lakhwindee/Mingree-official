@@ -5,9 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { CreatorPickerModal } from "./CreatorPickerModal";
-import { TIERS, compact, inr, tierRange } from "./tiers";
-import type { Bill, CampaignDetails, City, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
+import { compact, inr } from "./tiers";
+import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -16,8 +15,6 @@ const Instagram = __DummyIcon;
 const Upload = __DummyIcon;
 const File = __DummyIcon;
 const Check = __DummyIcon;
-
-
 
 const DELIVERABLES: { id: DeliverableType; label: string }[] = [
   { id: "reel", label: "Reel" },
@@ -40,7 +37,7 @@ const emptyDetails: CampaignDetails = {
   language: "Hindi & English", 
   deliverable: "reel", 
   deadline: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-  cityIds: [1, 2, 3], 
+  cityIds: [], 
   accountsToMention: [], 
   requiredTags: ["#MingreePromotions"], 
   captionNote: "Check out this brand new release! Use official audio.", 
@@ -98,31 +95,11 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const [d, setD] = useState<CampaignDetails>(emptyDetails);
   const set = <K extends keyof CampaignDetails>(k: K, v: CampaignDetails[K]) => setD((p) => ({ ...p, [k]: v }));
 
-  const [cities, setCities] = useState<City[]>([]);
-  const [citiesErr, setCitiesErr] = useState<string | null>(null);
-  const [cityQ, setCityQ] = useState("");
-  useEffect(() => {
-    api.listCities().then(setCities).catch((e) => setCitiesErr(e?.message || "Could not load cities"));
-  }, [api]);
-
   const [selected, setSelected] = useState<Map<number, CreatorCard>>(new Map());
-  const [pickerTier, setPickerTier] = useState<string | null>(null);
-  const selectedCities = useMemo(() => cities.filter((c) => d.cityIds.includes(c.id)), [cities, d.cityIds]);
 
-  // Changing cities or the deliverable changes who is eligible and what they cost, so the old picks are dropped.
+  // Changing deliverable resets selection
   const resetSelection = () => { setSelected(new Map()); setBill(null); };
-  const toggleCity = (id: number) => {
-    set("cityIds", d.cityIds.includes(id) ? d.cityIds.filter((x) => x !== id) : [...d.cityIds, id]);
-    if (selected.size) resetSelection();
-  };
   const setDeliverable = (x: DeliverableType) => { set("deliverable", x); if (selected.size) resetSelection(); };
-
-  const applyTier = (tierId: string, next: CreatorCard[]) =>
-    setSelected((prev) => {
-      const m = new Map([...prev].filter(([, c]) => c.tier !== tierId));
-      next.forEach((c) => m.set(c.id, c));
-      return m;
-    });
   const remove = (id: number) => setSelected((p) => { const m = new Map(p); m.delete(id); return m; });
 
   // Bill always comes from the server.
@@ -139,9 +116,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   }, [api, creatorIds, d.deliverable]);
   useEffect(() => { const t = setTimeout(refreshBill, 250); return () => clearTimeout(t); }, [refreshBill]);
 
-  // Live Google-style search & tier creator browser state
+  // Live direct creator search state
   const [globalSearchQ, setGlobalSearchQ] = useState("");
-  const [activeTierFilter, setActiveTierFilter] = useState<string>("all");
   const [activeSort, setActiveSort] = useState<NonNullable<CreatorSearchParams["sort"]>>("relevance");
   const [searchResults, setSearchResults] = useState<CreatorCard[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -156,8 +132,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
     const timer = setTimeout(async () => {
       try {
         const res = await api.searchCreators({
-          cityIds: d.cityIds,
-          tierId: activeTierFilter === "all" ? "all" : activeTierFilter,
+          cityIds: [],
+          tierId: "all",
           deliverable: d.deliverable,
           q: globalSearchQ.trim() || undefined,
           sort: activeSort,
@@ -178,7 +154,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       active = false;
       clearTimeout(timer);
     };
-  }, [step, globalSearchQ, activeTierFilter, activeSort, d.cityIds, d.deliverable, api]);
+  }, [step, globalSearchQ, activeSort, d.deliverable, api]);
 
   const toggleCreator = (creator: CreatorCard) => {
     setSelected((prev) => {
@@ -216,7 +192,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       !d.deadline && "Pick a deadline",
     ].filter(Boolean) as string[],
     [
-      d.cityIds.length === 0 && "Choose at least one target city",
       creatorIds.length === 0 && "Select at least one creator",
     ].filter(Boolean) as string[],
     [!d.captionNote.trim() && "Add a caption note with the disclosure"].filter(Boolean) as string[],
@@ -225,7 +200,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const stepOk = problems[step].length === 0;
   const today = new Date().toISOString().slice(0, 10);
 
-  const visibleCities = cities.filter((c) => c.name.toLowerCase().includes(cityQ.toLowerCase()) || c.state.toLowerCase().includes(cityQ.toLowerCase()));
   const perCreator = new Map(bill?.lines.map((l) => [l.creatorId, l]) ?? []);
 
   return (
@@ -349,9 +323,9 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       {step === 1 && (
         <section className="rounded-2xl border bg-card p-5 sm:p-7 space-y-6">
           <header className="text-center space-y-1.5 max-w-2xl mx-auto">
-            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Select Tiers &amp; Creators</h2>
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Select Creators</h2>
             <p className="text-xs sm:text-sm text-muted-foreground">
-              Search any creator directly by name or @handle, or pick a follower tier below. Verified creator rate cards are locked in.
+              Search any creator directly by name or @handle. Add verified creators to your campaign with transparent rates.
             </p>
           </header>
 
@@ -385,22 +359,20 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             {globalSearchQ.trim().length > 0 && (
               <div className="absolute top-full left-0 right-0 z-50 mt-2 bg-card border rounded-2xl shadow-2xl overflow-hidden divide-y divide-border/40 max-h-[380px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
                 <div className="px-4 py-2 bg-muted/40 text-[11px] font-bold tracking-wider text-muted-foreground flex items-center justify-between uppercase">
-                  <span>
-                    Results in {selectedCities.map((c) => c.name).join(", ") || "Selected Cities"}
-                  </span>
+                  <span>Creators</span>
                   <span>{searchResults.length} match{searchResults.length === 1 ? "" : "es"}</span>
                 </div>
 
                 {searchLoading && (
                   <div className="p-4 text-center text-xs text-muted-foreground animate-pulse">
-                    Searching creators in {selectedCities.map((c) => c.name).join(", ") || "selected cities"}...
+                    Searching creators...
                   </div>
                 )}
 
                 {!searchLoading && searchResults.length === 0 && (
                   <div className="p-5 text-center text-xs text-muted-foreground space-y-1">
                     <p className="font-semibold text-foreground">No creator found matching “{globalSearchQ}”</p>
-                    <p className="text-[11px]">in {selectedCities.map((c) => c.name).join(", ") || "selected cities"}. Try adding more cities below.</p>
+                    <p className="text-[11px]">Try searching by handle or name.</p>
                   </div>
                 )}
 
@@ -431,8 +403,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                           </div>
                           <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5 flex-wrap">
                             <span>{c.displayName}</span>
-                            <span>·</span>
-                            <span className="font-semibold text-foreground">{c.city?.name}</span>
+                            {c.city?.name && <span>· {c.city.name}</span>}
                             <span>·</span>
                             <span className="text-sky-600 font-semibold">📡 {compact(c.reach || Math.round(c.followers * 2.2))} reach</span>
                             <span>·</span>
@@ -471,147 +442,14 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             )}
           </div>
 
-          {/* City Selection directly inside Creator Selection */}
-          <div className="space-y-2.5 rounded-2xl border bg-muted/20 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wider">
-                <span>📍 Target Cities</span>
-                <span className="text-muted-foreground font-normal lowercase">({selectedCities.length} selected)</span>
-              </span>
-              <div className="flex items-center gap-2 text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => set("cityIds", cities.map((c) => c.id))}
-                  className="text-primary hover:underline"
-                >
-                  Select All
-                </button>
-                <span className="text-muted-foreground">•</span>
-                <button
-                  type="button"
-                  onClick={() => set("cityIds", [])}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  Clear All
-                </button>
-              </div>
-            </div>
-
-            {/* Selected City Pills */}
-            {selectedCities.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {selectedCities.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => toggleCity(c.id)}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground px-3 py-1 text-xs font-semibold hover:bg-primary/90 transition shadow-xs cursor-pointer"
-                    title={`Click to remove ${c.name}`}
-                  >
-                    <span>{c.name}</span>
-                    <span className="text-[10px] opacity-80">✕</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-destructive font-medium">Please select at least one city to see available creators.</p>
-            )}
-
-            {/* Unselected Cities Quick-Add Bar */}
-            {cities.filter((c) => !d.cityIds.includes(c.id)).length > 0 && (
-              <div className="pt-1 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
-                <span className="text-[11px] text-muted-foreground shrink-0 font-medium">Add city:</span>
-                {cities.filter((c) => !d.cityIds.includes(c.id)).slice(0, 15).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => toggleCity(c.id)}
-                    className="inline-flex items-center gap-1 rounded-full border bg-background hover:border-primary/60 px-2.5 py-0.5 text-xs text-muted-foreground hover:text-foreground shrink-0 transition cursor-pointer"
-                  >
-                    <span>+ {c.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Tier Selector Pills */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Follower Tiers</span>
-              <div className="flex items-center gap-3">
-                {activeTierFilter !== "all" && (
-                  <button
-                    type="button"
-                    onClick={() => setActiveTierFilter("all")}
-                    className="text-xs text-primary hover:underline font-medium"
-                  >
-                    View All Tiers
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setPickerTier(activeTierFilter === "all" ? "nano" : activeTierFilter)}
-                  className="text-xs text-primary hover:underline font-medium"
-                >
-                  Open Advanced Filters
-                </button>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
-              <button
-                type="button"
-                onClick={() => setActiveTierFilter("all")}
-                className={cn(
-                  "px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap transition-all border shrink-0",
-                  activeTierFilter === "all"
-                    ? "bg-primary text-primary-foreground border-primary shadow-xs"
-                    : "bg-background hover:bg-muted/60 text-muted-foreground hover:text-foreground border-border"
-                )}
-              >
-                All Tiers ({searchResults.length})
-              </button>
-              {TIERS.map((t) => {
-                const countInSelected = [...selected.values()].filter((c) => c.tier === t.id).length;
-                const isCurrent = activeTierFilter === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setActiveTierFilter(isCurrent ? "all" : t.id)}
-                    className={cn(
-                      "px-3.5 py-2 rounded-full text-xs font-medium whitespace-nowrap transition-all border shrink-0 flex items-center gap-1.5",
-                      isCurrent
-                        ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
-                        : "bg-background hover:bg-muted/60 text-foreground border-border"
-                    )}
-                  >
-                    <span>{t.label}</span>
-                    <span className="text-[10px] opacity-75">({tierRange(t)})</span>
-                    {countInSelected > 0 && (
-                      <span className={cn(
-                        "h-4 min-w-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center",
-                        isCurrent ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
-                      )}>
-                        {countInSelected}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Creators Drawer / Live Results for Search or Tier */}
+          {/* Creators Drawer / Live Results for Direct Search */}
           <div className="space-y-3 rounded-2xl border bg-muted/10 p-4 sm:p-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
               <h3 className="font-semibold text-sm flex items-center gap-2">
                 <span>
                   {globalSearchQ.trim()
                     ? `Matching Creators for “${globalSearchQ.trim()}”`
-                    : activeTierFilter === "all"
-                    ? "Creators (Ranked by High Reach & Views)"
-                    : `${TIERS.find((t) => t.id === activeTierFilter)?.label} Tier Creators`}
+                    : "Available Creators (Ranked by High Reach & Views)"}
                 </span>
                 <span className="text-xs text-muted-foreground font-normal">
                   ({searchResults.length} {searchResults.length === 1 ? "creator" : "creators"})
@@ -642,7 +480,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             {!searchLoading && searchResults.length === 0 && (
               <div className="p-8 text-center text-sm text-muted-foreground space-y-2">
                 <p>No creators match “{globalSearchQ}”.</p>
-                <Button variant="outline" size="sm" onClick={() => { setGlobalSearchQ(""); setActiveTierFilter("all"); }}>
+                <Button variant="outline" size="sm" onClick={() => setGlobalSearchQ("")}>
                   Show All Creators
                 </Button>
               </div>
@@ -652,7 +490,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 max-h-[490px] overflow-y-auto p-1">
               {searchResults.map((c) => {
                 const isChosen = selected.has(c.id);
-                const tierObj = TIERS.find((t) => t.id === c.tier);
                 const reachVal = c.reach || Math.round(c.followers * 2.2);
                 return (
                   <div
@@ -682,9 +519,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                           </div>
                           <div className="text-xs text-muted-foreground truncate">{c.displayName}</div>
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            <span className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                              {tierObj?.label || c.tier}
-                            </span>
                             {c.insightsVerified && c.followers > 0 ? (
                               <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-full">
                                 ✓ Insta Insights
@@ -694,7 +528,9 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                 Instagram Unlinked
                               </span>
                             )}
-                            <span className="text-[11px] text-muted-foreground truncate">· {c.city?.name}</span>
+                            {c.city?.name && (
+                              <span className="text-[11px] text-muted-foreground truncate">· {c.city.name}</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -777,7 +613,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               <div className="text-center rounded-2xl border-2 border-dashed p-7 bg-muted/5 space-y-1">
                 <p className="text-sm font-medium">No creators selected yet</p>
                 <p className="text-xs text-muted-foreground">
-                  Use the search bar above or click any tier to pick creators for your campaign.
+                  Use the search bar above to browse and pick creators for your campaign.
                 </p>
               </div>
             ) : (
@@ -801,7 +637,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                         )}
                       </div>
                       <div className="text-xs text-muted-foreground truncate">
-                        {c.displayName} · {TIERS.find((t) => t.id === c.tier)?.label || c.tier} · {c.city?.name} · {compact(c.followers)} followers
+                        {c.displayName} · {compact(c.followers)} followers {c.city?.name ? `· ${c.city.name}` : ""}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -860,7 +696,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           <dl className="grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
             <div className="flex justify-between gap-3 min-w-0"><dt className="text-muted-foreground">Campaign</dt><dd className="font-medium text-right truncate min-w-0">{d.title}</dd></div>
             <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Content type</dt><dd className="font-medium">{DELIVERABLES.find((x) => x.id === d.deliverable)?.label}</dd></div>
-            <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Cities</dt><dd className="font-medium text-right">{selectedCities.map((c) => c.name).join(", ")}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Selection</dt><dd className="font-medium text-right">Direct Creator Pick ({selected.size})</dd></div>
             <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Post by</dt><dd className="font-medium">{d.deadline}</dd></div>
           </dl>
           {notice && (
@@ -912,19 +748,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           )}
         </div>
       </div>
-
-      {pickerTier && (
-        <CreatorPickerModal
-          open
-          onOpenChange={(o) => !o && setPickerTier(null)}
-          api={api}
-          tierId={pickerTier}
-          cities={selectedCities}
-          deliverable={d.deliverable}
-          selected={selected}
-          onApply={applyTier}
-        />
-      )}
     </div>
   );
 }
