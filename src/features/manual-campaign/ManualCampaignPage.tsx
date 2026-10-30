@@ -479,10 +479,21 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
             {!searchLoading && searchResults.length === 0 && (
               <div className="p-8 text-center text-sm text-muted-foreground space-y-2">
-                <p>No creators match “{globalSearchQ}”.</p>
-                <Button variant="outline" size="sm" onClick={() => setGlobalSearchQ("")}>
-                  Show All Creators
-                </Button>
+                {globalSearchQ.trim() ? (
+                  <>
+                    <p>No creators match “{globalSearchQ.trim()}”.</p>
+                    <Button variant="outline" size="sm" onClick={() => setGlobalSearchQ("")}>
+                      Clear Search
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium text-foreground">No active verified creators found.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Creators will automatically appear in this marketplace once they connect and verify their Instagram accounts.
+                    </p>
+                  </>
+                )}
               </div>
             )}
 

@@ -100,7 +100,7 @@ export function createHttpApi(base = ""): ManualCampaignApi {
         const res = await fetch(`${base}/api/campaigns/creator-panel?${qs}`, opts);
         if (res.ok) {
           const data = await res.json();
-          if (data && Array.isArray(data.items) && data.items.length > 0) {
+          if (data && Array.isArray(data.items)) {
             return data;
           }
         }

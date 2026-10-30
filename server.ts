@@ -1001,20 +1001,20 @@ const defaultAccounts = [
     name: "Judge Saab",
     role: "creator",
     handle: "@ijudgesaab",
-    avatar: "/uploads/avatars/creator_1.jpg",
-    avatarUrl: "/uploads/avatars/creator_1.jpg",
-    avatar_url: "/uploads/avatars/creator_1.jpg",
-    tier: "Tier 14",
-    instagramUsername: "ijudgesaab",
-    instagramProfileUrl: "https://instagram.com/ijudgesaab",
-    instagramFollowers: 68757,
-    followers: 68757,
-    reach: 151265,
-    medianViews: 30941,
-    engagementRate: 4.8,
-    isInstagramVerified: true,
-    insightsVerified: true,
-    instagramVerificationStatus: "verified",
+    avatar: null,
+    avatarUrl: null,
+    avatar_url: null,
+    tier: "Unlinked",
+    instagramUsername: null,
+    instagramProfileUrl: null,
+    instagramFollowers: 0,
+    followers: 0,
+    reach: null,
+    medianViews: null,
+    engagementRate: null,
+    isInstagramVerified: false,
+    insightsVerified: false,
+    instagramVerificationStatus: "unlinked",
     isEmailVerified: true,
   },
   {
@@ -1033,28 +1033,11 @@ const defaultAccounts = [
 let registeredUsers: any[] = [...defaultAccounts];
 
 function loadRegisteredUsers() {
-  // Ensure default accounts exist
+  // Ensure default accounts exist if not already present
   for (const acc of defaultAccounts) {
     const existing = registeredUsers.find((u) => u.email.toLowerCase() === acc.email.toLowerCase() || u.id === acc.id);
     if (!existing) {
       registeredUsers.push({ ...acc });
-    } else {
-      if (acc.id === 1) {
-        existing.avatar = existing.avatar || acc.avatar;
-        existing.avatarUrl = existing.avatarUrl || acc.avatarUrl;
-        (existing as any).avatar_url = (existing as any).avatar_url || (acc as any).avatar_url;
-        existing.tier = existing.tier || acc.tier;
-        existing.name = (existing.name && existing.name !== "juge" && existing.name !== "Mingree Platform Treasury") ? existing.name : acc.name;
-        existing.handle = (existing.handle && existing.handle !== "@judgeproductionmusic") ? existing.handle : acc.handle;
-        existing.instagramUsername = existing.instagramUsername || acc.instagramUsername;
-        existing.instagramFollowers = existing.instagramFollowers || acc.instagramFollowers;
-        existing.followers = existing.followers || acc.followers;
-        existing.reach = existing.reach || acc.reach;
-        existing.medianViews = existing.medianViews || acc.medianViews;
-        existing.engagementRate = existing.engagementRate || acc.engagementRate;
-        existing.isInstagramVerified = existing.isInstagramVerified ?? acc.isInstagramVerified;
-        existing.insightsVerified = existing.insightsVerified ?? acc.insightsVerified;
-      }
     }
   }
 
@@ -1601,6 +1584,7 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
         `UPDATE creator_profiles
          SET instagram_user_id = NULL,
              username = NULL,
+             avatar_url = NULL,
              followers = 0,
              media_count = 0,
              median_views = 0,
@@ -1609,6 +1593,16 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
              access_token_enc = NULL,
              token_expires_at = NULL
          WHERE user_id = $1`,
+        [targetId]
+      );
+
+      await client.query(
+        `UPDATE users
+         SET avatar = NULL,
+             avatar_url = NULL,
+             tier = 'Unlinked',
+             followers = 0
+         WHERE id = $1`,
         [targetId]
       );
 
@@ -1691,12 +1685,16 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
   user.medianViews = 0;
   user.engagementRate = 0;
   user.isInstagramVerified = false;
+  user.insightsVerified = false;
   user.instagramVerificationCode = null;
   user.instagramVerificationStatus = "unlinked";
   user.instagramAccessToken = null;
   user.instagramUserId = null;
   user.instagramTokenExpiresAt = null;
   user.tier = "Unlinked";
+  user.avatar = null;
+  user.avatarUrl = null;
+  user.avatar_url = null;
 
   const regUser = registeredUsers.find((u) => u.id === targetId || u.email?.toLowerCase() === user.email?.toLowerCase());
   if (regUser) {
@@ -1708,11 +1706,15 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
     regUser.medianViews = 0;
     regUser.engagementRate = 0;
     regUser.isInstagramVerified = false;
+    regUser.insightsVerified = false;
     regUser.instagramVerificationStatus = "unlinked";
     regUser.instagramAccessToken = null;
     regUser.instagramUserId = null;
     regUser.instagramTokenExpiresAt = null;
     regUser.tier = "Unlinked";
+    regUser.avatar = null;
+    regUser.avatarUrl = null;
+    regUser.avatar_url = null;
   }
 
   saveRegisteredUsers();
@@ -6008,18 +6010,25 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       return "micro";
     };
 
-    // 1. Collect all real registered creators from memory and database (strictly exclude any demo/fake accounts)
+    // 1. Collect all real registered creators from memory and database who have an ACTIVE, CONNECTED Instagram account
     const realCreatorsMap = new Map<number, any>();
-    const fakeEmails = new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com"]);
-    const fakeHandles = new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic"]);
+    const fakeEmails = new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com", "platform@mingree.internal"]);
+    const fakeHandles = new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
 
     for (const u of registeredUsers) {
       const email = (u.email || "").toLowerCase().trim();
       const handle = (u.handle || "").toLowerCase().trim();
-      if (fakeEmails.has(email) || fakeHandles.has(handle) || email.includes("demo") || email.includes("example")) {
+      if (fakeEmails.has(email) || fakeHandles.has(handle) || email.includes("demo") || email.includes("example") || email.includes("platform")) {
         continue;
       }
-      if (u.role === "creator") {
+      // ONLY creators with an active, verified Instagram account can appear to sponsors
+      const isConnected = Boolean(
+        u.role === "creator" &&
+        u.instagramUsername &&
+        u.isInstagramVerified &&
+        u.instagramVerificationStatus !== "unlinked"
+      );
+      if (isConnected) {
         realCreatorsMap.set(u.id, { ...u });
       }
     }
@@ -6027,12 +6036,16 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
     try {
       const dbRes = await pool.query(`
         SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.avatar_url as user_avatar_url, u.tier, u.city, u.company_name, u.status,
-               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate, cp.avatar_url as cp_avatar_url
+               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate, cp.avatar_url as cp_avatar_url,
+               cp.status as cp_status
         FROM users u
-        LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+        INNER JOIN creator_profiles cp ON cp.user_id = u.id
         WHERE u.role = 'creator'
-          AND LOWER(u.email) NOT IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-          AND LOWER(COALESCE(u.handle, '')) NOT IN ('@creator', 'creator', '@sponsor', 'sponsor', '@brandpartner', 'brandpartner', '@rohanmusic', 'rohanmusic')
+          AND cp.username IS NOT NULL
+          AND cp.username != ''
+          AND cp.status = 'active'
+          AND LOWER(u.email) NOT IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com', 'platform@mingree.internal')
+          AND LOWER(COALESCE(u.handle, '')) NOT IN ('@creator', 'creator', '@sponsor', 'sponsor', '@brandpartner', 'brandpartner', '@rohanmusic', 'rohanmusic', '@platform', 'platform')
       `);
       for (const row of dbRes.rows) {
         const id = Number(row.id);
@@ -6042,36 +6055,27 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         if (fakeEmails.has(email) || fakeHandles.has(handle) || fakeHandles.has(igUser)) {
           continue;
         }
-        const resolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
-        const existing = realCreatorsMap.get(id);
-        if (!existing) {
-          realCreatorsMap.set(id, {
-            id,
-            email: row.email,
-            name: row.name,
-            role: "creator",
-            handle: row.handle,
-            avatar: resolvedAvatar,
-            avatarUrl: resolvedAvatar,
-            tier: row.tier || row.tier_label,
-            city: row.city,
-            instagramUsername: row.instagram_username,
-            instagramFollowers: Number(row.cp_followers || 0),
-            followers: Number(row.cp_followers || 0),
-            isInstagramVerified: Boolean(row.instagram_username && Number(row.cp_followers || 0) >= 500),
-          });
-        } else {
-          if (resolvedAvatar && (!existing.avatar || existing.avatar.includes("unsplash.com"))) {
-            existing.avatar = resolvedAvatar;
-            existing.avatarUrl = resolvedAvatar;
-          }
-          if (row.instagram_username && !existing.instagramUsername) existing.instagramUsername = row.instagram_username;
-          if (row.cp_followers && !existing.instagramFollowers) {
-            existing.instagramFollowers = Number(row.cp_followers);
-            existing.followers = Number(row.cp_followers);
-          }
-          if (row.city && !existing.city) existing.city = row.city;
+        if (!row.instagram_username || row.cp_status !== "active") {
+          realCreatorsMap.delete(id);
+          continue;
         }
+        const resolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
+        realCreatorsMap.set(id, {
+          id,
+          email: row.email,
+          name: row.name,
+          role: "creator",
+          handle: row.handle,
+          avatar: resolvedAvatar,
+          avatarUrl: resolvedAvatar,
+          tier: row.tier || row.tier_label,
+          city: row.city,
+          instagramUsername: row.instagram_username,
+          instagramFollowers: Number(row.cp_followers || 0),
+          followers: Number(row.cp_followers || 0),
+          isInstagramVerified: true,
+          instagramVerificationStatus: "verified",
+        });
       }
     } catch {
       // Memory fallback handles state
@@ -6079,10 +6083,13 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
 
     const realCreatorCards: any[] = [];
     for (const u of realCreatorsMap.values()) {
+      // Strictly exclude unlinked creators
+      if (!u.instagramUsername || !u.isInstagramVerified || u.instagramVerificationStatus === "unlinked") {
+        continue;
+      }
+
       const followers = Number(u.instagramFollowers || u.followers) || 0;
-      const cleanHandle = (u.instagramUsername || (u.handle ? u.handle.replace(/^@/, "") : "")).trim();
-      
-      // Only include creators with Instagram account
+      const cleanHandle = u.instagramUsername.trim().replace(/^@+/, "");
       if (!cleanHandle) {
         continue;
       }
@@ -6106,7 +6113,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         username: cleanHandle,
         displayName: `@${cleanHandle}`,
         avatarUrl: avatarUrl,
-        igVerifiedBadge: Boolean(u.isInstagramVerified || followers >= 500),
+        igVerifiedBadge: true,
         city: creatorCity,
         tier: tierId,
         rawTier: u.tier,
@@ -6114,7 +6121,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         engagementRate: engRate,
         medianViews: mViews,
         reach: mReach,
-        insightsVerified: Boolean(u.isInstagramVerified || followers >= 500),
+        insightsVerified: true,
         audienceIndiaPct: followers > 0 ? (u.indiaAudiencePct || 95) : null,
         topAudienceCities: followers > 0 ? ["Mumbai", "Delhi", "Chandigarh"] : [],
         indiaAudiencePct: followers > 0 ? (u.indiaAudiencePct || 95) : null,
