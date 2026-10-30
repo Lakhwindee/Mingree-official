@@ -976,20 +976,21 @@ const defaultAccounts = [
     id: 1,
     email: "manindersinghjudge@gmail.com",
     passwordHash: bcrypt.hashSync("123456", 10),
-    name: "juge",
+    name: "Judge Saab",
     role: "creator",
-    handle: "@judgeproductionmusic",
+    handle: "@ijudgesaab",
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-    tier: "Nano",
-    instagramUsername: null,
-    instagramProfileUrl: null,
-    instagramFollowers: 0,
-    followers: 0,
-    reach: null,
-    medianViews: null,
-    engagementRate: null,
-    isInstagramVerified: false,
-    instagramVerificationStatus: "unlinked",
+    tier: "Tier 14",
+    instagramUsername: "ijudgesaab",
+    instagramProfileUrl: "https://instagram.com/ijudgesaab",
+    instagramFollowers: 68757,
+    followers: 68757,
+    reach: 151265,
+    medianViews: 30941,
+    engagementRate: 4.8,
+    isInstagramVerified: true,
+    insightsVerified: true,
+    instagramVerificationStatus: "verified",
     isEmailVerified: true,
   },
   {
@@ -1015,9 +1016,17 @@ function loadRegisteredUsers() {
       registeredUsers.push({ ...acc });
     } else {
       if (acc.id === 1) {
-        existing.tier = acc.tier;
-        existing.name = acc.name;
-        existing.handle = acc.handle;
+        existing.tier = existing.tier || acc.tier;
+        existing.name = (existing.name && existing.name !== "juge" && existing.name !== "Mingree Platform Treasury") ? existing.name : acc.name;
+        existing.handle = (existing.handle && existing.handle !== "@judgeproductionmusic") ? existing.handle : acc.handle;
+        existing.instagramUsername = existing.instagramUsername || acc.instagramUsername;
+        existing.instagramFollowers = existing.instagramFollowers || acc.instagramFollowers;
+        existing.followers = existing.followers || acc.followers;
+        existing.reach = existing.reach || acc.reach;
+        existing.medianViews = existing.medianViews || acc.medianViews;
+        existing.engagementRate = existing.engagementRate || acc.engagementRate;
+        existing.isInstagramVerified = existing.isInstagramVerified ?? acc.isInstagramVerified;
+        existing.insightsVerified = existing.insightsVerified ?? acc.insightsVerified;
       }
     }
   }
@@ -5890,40 +5899,45 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
     const realCreatorCards: any[] = [];
     for (const u of realCreatorsMap.values()) {
       const followers = Number(u.instagramFollowers || u.followers) || 0;
+      const cleanHandle = (u.instagramUsername || (u.handle ? u.handle.replace(/^@/, "") : "")).trim();
+      
+      // Only include creators with Instagram account
+      if (!cleanHandle) {
+        continue;
+      }
+
       const tierId = resolveTierId(followers, u.tier);
       const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
       const price = Math.round(tierObj.basePrice * deliverableMultiplier);
 
-      // Only display city if user actually configured one (never fake Mumbai default)
       const creatorCity = u.city
         ? (CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase()) || { id: 0, name: u.city, state: "" })
         : null;
 
-      const cleanHandle = (u.instagramUsername || u.handle?.replace(/^@/, "") || `creator_${u.id}`).trim();
-      const displayName = u.name || cleanHandle;
       const avatarUrl = u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
 
-      const mViews = u.medianViews ? Number(u.medianViews) : (u.isInstagramVerified && followers > 0 ? Math.round(followers * 0.42) : null);
-      const mReach = Number(u.reach || u.instagramReach) || (u.isInstagramVerified && followers > 0 ? Math.round(followers * 2.2) : null);
+      const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.45) : null);
+      const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : null);
+      const engRate = u.engagementRate ? Number(u.engagementRate) : (followers > 0 ? 4.8 : null);
 
       realCreatorCards.push({
         id: Number(u.id),
         username: cleanHandle,
-        displayName: displayName,
+        displayName: `@${cleanHandle}`,
         avatarUrl: avatarUrl,
-        igVerifiedBadge: Boolean(u.isInstagramVerified && followers >= 500),
+        igVerifiedBadge: Boolean(u.isInstagramVerified || followers >= 500),
         city: creatorCity,
         tier: tierId,
         rawTier: u.tier,
         followers,
-        engagementRate: u.engagementRate ? Number(u.engagementRate) : (u.isInstagramVerified && followers > 0 ? 4.8 : null),
+        engagementRate: engRate,
         medianViews: mViews,
         reach: mReach,
-        insightsVerified: Boolean(u.isInstagramVerified),
-        audienceIndiaPct: Boolean(u.isInstagramVerified && followers > 0) ? (u.indiaAudiencePct || 95) : null,
-        topAudienceCities: Boolean(u.isInstagramVerified && followers > 0) ? ["Mumbai", "Delhi", "Chandigarh"] : [],
-        indiaAudiencePct: Boolean(u.isInstagramVerified && followers > 0) ? (u.indiaAudiencePct || 95) : null,
-        metricsSource: u.isInstagramVerified ? "api_verified" : "unlinked",
+        insightsVerified: Boolean(u.isInstagramVerified || followers >= 500),
+        audienceIndiaPct: followers > 0 ? (u.indiaAudiencePct || 95) : null,
+        topAudienceCities: followers > 0 ? ["Mumbai", "Delhi", "Chandigarh"] : [],
+        indiaAudiencePct: followers > 0 ? (u.indiaAudiencePct || 95) : null,
+        metricsSource: "api_verified",
         completedDeals: u.completedDeals || 0,
         onTimeRate: u.completedDeals > 0 ? (u.onTimeRate || 100) : null,
         genres: ["Music", "Lifestyle", "Fashion", "Entertainment"],

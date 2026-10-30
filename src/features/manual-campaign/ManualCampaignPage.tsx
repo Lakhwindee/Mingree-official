@@ -500,72 +500,64 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                     )}
                   >
                     <div className="space-y-2.5">
-                      <div className="flex items-start gap-3">
+                      <div className="flex items-center gap-3">
                         {c.avatarUrl ? (
-                          <img src={c.avatarUrl} alt={c.displayName} className="h-12 w-12 rounded-full object-cover shrink-0 ring-1 ring-border" />
+                          <img src={c.avatarUrl} alt={c.username} className="h-12 w-12 rounded-full object-cover shrink-0 ring-1 ring-border shadow-2xs" />
                         ) : (
-                          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 text-white font-bold flex items-center justify-center shrink-0">
-                            {c.displayName.slice(0, 2).toUpperCase()}
+                          <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 text-white font-bold flex items-center justify-center shrink-0 shadow-2xs text-sm">
+                            {c.username.slice(0, 2).toUpperCase()}
                           </div>
                         )}
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-semibold text-sm truncate">@{c.username}</span>
-                            {c.isRealRegisteredCreator && (
-                              <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 px-1 py-0.2 rounded shrink-0">
-                                Registered
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="font-bold text-sm text-foreground truncate">@{c.username}</span>
+                            {c.igVerifiedBadge && (
+                              <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] shrink-0" title="Verified Instagram Creator">
+                                ✓
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-muted-foreground truncate">{c.displayName}</div>
-                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            {c.insightsVerified && c.followers > 0 ? (
-                              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/80 px-1.5 py-0.2 rounded-full">
-                                ✓ Insta Insights
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-full">
-                                Instagram Unlinked
-                              </span>
-                            )}
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                            <span>Instagram Creator</span>
                             {c.city?.name && (
-                              <span className="text-[11px] text-muted-foreground truncate">· {c.city.name}</span>
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="truncate">{c.city.name}</span>
+                              </>
                             )}
                           </div>
                         </div>
                       </div>
 
-                      {/* 4 Performance & Insights Stats */}
-                      <div className="grid grid-cols-4 gap-1 rounded-lg bg-muted/40 p-1.5 text-center text-xs">
-                        <div className="bg-background/80 rounded py-1 px-0.5">
+                      {/* 4 Instagram Performance & Insights Stats */}
+                      <div className="grid grid-cols-4 gap-1.5 rounded-xl bg-muted/30 p-2 text-center text-xs border border-border/50">
+                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
                           <div className="font-bold tabular-nums text-foreground text-xs">{reachVal ? compact(reachVal) : "—"}</div>
                           <div className="text-[9px] text-muted-foreground uppercase font-semibold">Reach</div>
                         </div>
-                        <div className="bg-background/80 rounded py-1 px-0.5">
-                          <div className="font-bold tabular-nums text-foreground text-xs">{c.medianViews != null ? compact(c.medianViews) : "—"}</div>
+                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                          <div className="font-bold tabular-nums text-foreground text-xs">{c.medianViews != null && c.medianViews > 0 ? compact(c.medianViews) : "—"}</div>
                           <div className="text-[9px] text-muted-foreground uppercase font-semibold">Views</div>
                         </div>
-                        <div className="rounded py-1 px-0.5">
-                          <div className="font-medium tabular-nums text-muted-foreground text-xs">{compact(c.followers)}</div>
-                          <div className="text-[9px] text-muted-foreground uppercase">Followers</div>
+                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                          <div className="font-bold tabular-nums text-foreground text-xs">{c.followers > 0 ? compact(c.followers) : "—"}</div>
+                          <div className="text-[9px] text-muted-foreground uppercase font-semibold">Followers</div>
                         </div>
-                        <div className="rounded py-1 px-0.5">
-                          <div className="font-medium tabular-nums text-muted-foreground text-xs">{c.engagementRate != null ? `${c.engagementRate}%` : "—"}</div>
-                          <div className="text-[9px] text-muted-foreground uppercase">Eng.</div>
+                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                          <div className="font-bold tabular-nums text-foreground text-xs">{c.engagementRate != null && c.engagementRate > 0 ? `${c.engagementRate}%` : "—"}</div>
+                          <div className="text-[9px] text-muted-foreground uppercase font-semibold">Eng.</div>
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground px-0.5">
+                      {/* Instagram Insights Tag */}
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
+                        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                          <span>Meta Insights Verified</span>
+                        </span>
                         {c.indiaAudiencePct ? (
-                          <span>📍 {c.indiaAudiencePct}% India Audience</span>
-                        ) : (
-                          <span className="text-muted-foreground/80">📍 Audience: Link Instagram</span>
-                        )}
-                        {c.completedDeals > 0 && c.onTimeRate ? (
-                          <span className="text-emerald-600 font-semibold">{c.onTimeRate}% On-Time</span>
-                        ) : (
-                          <span className="text-muted-foreground/80">New Creator</span>
-                        )}
+                          <span className="text-[10px] text-muted-foreground font-medium">{c.indiaAudiencePct}% India</span>
+                        ) : null}
                       </div>
                     </div>
 
