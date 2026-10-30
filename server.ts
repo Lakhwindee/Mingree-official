@@ -6291,9 +6291,32 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
     if (reqDeliv === "story") multiplier = 0.5;
     else if (reqDeliv === "collab_post") multiplier = 1.4;
 
+    const creatorMap = new Map<number, { tier?: string; followers?: number }>();
+    for (const u of registeredUsers) {
+      creatorMap.set(u.id, { tier: u.tier, followers: u.instagramFollowers || u.followers });
+    }
+
+    if (isDatabaseConfigured) {
+      try {
+        const dbRes = await pool.query(
+          `SELECT u.id, u.tier, cp.tier_label, cp.followers
+           FROM users u
+           LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+           WHERE u.id = ANY($1::bigint[])`,
+          [creatorIds]
+        );
+        for (const row of dbRes.rows) {
+          creatorMap.set(Number(row.id), {
+            tier: row.tier_label || row.tier,
+            followers: Number(row.followers || 0),
+          });
+        }
+      } catch {}
+    }
+
     const lines = creatorIds.map((id: number) => {
-      const creator = registeredUsers.find((u) => u.id === id);
-      let tierKey = "micro";
+      const creator = creatorMap.get(id);
+      let tierKey = "nano";
       if (creator) {
         const rawTier = (creator.tier || "").toLowerCase().trim();
         if (rawTier === "micro" || rawTier === "small") tierKey = "micro";
@@ -6305,7 +6328,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
         else if (rawTier === "mega") tierKey = "mega";
         else if (rawTier === "elite") tierKey = "elite";
         else {
-          const f = Number(creator.instagramFollowers || creator.followers) || 0;
+          const f = Number(creator.followers) || 0;
           if (f >= 2500000) tierKey = "elite";
           else if (f >= 1000000) tierKey = "mega";
           else if (f >= 500000) tierKey = "large";
@@ -6316,7 +6339,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
           else tierKey = "nano";
         }
       }
-      const basePrice = tierPrices[tierKey] || 2800;
+      const basePrice = tierPrices[tierKey] || 1200;
       const price = Math.round(basePrice * multiplier);
       const feeArtist = Math.round(price * 0.075 * 100) / 100;
       const gstInFee = Math.round(feeArtist * 0.18 * 100) / 100;
