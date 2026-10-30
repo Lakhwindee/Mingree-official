@@ -501,11 +501,11 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   >
                     <div className="space-y-2.5">
                       <div className="flex items-center gap-3">
-                        {c.avatarUrl ? (
+                        {c.avatarUrl && !c.avatarUrl.includes("unsplash.com") ? (
                           <img src={c.avatarUrl} alt={c.username} className="h-12 w-12 rounded-full object-cover shrink-0 ring-1 ring-border shadow-2xs" />
                         ) : (
                           <div className="h-12 w-12 rounded-full bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 text-white font-bold flex items-center justify-center shrink-0 shadow-2xs text-sm">
-                            {c.username.slice(0, 2).toUpperCase()}
+                            {c.username.replace(/^[^a-zA-Z0-9]+/, "").slice(0, 2).toUpperCase() || "IG"}
                           </div>
                         )}
                         <div className="min-w-0 flex-1">

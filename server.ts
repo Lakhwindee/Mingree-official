@@ -979,7 +979,7 @@ const defaultAccounts = [
     name: "Judge Saab",
     role: "creator",
     handle: "@ijudgesaab",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+    avatar: null,
     tier: "Tier 14",
     instagramUsername: "ijudgesaab",
     instagramProfileUrl: "https://instagram.com/ijudgesaab",
@@ -1433,7 +1433,7 @@ app.put("/api/users/:id/profile", requireAuth, (req: AuthRequest, res) => {
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const { name, handle, city } = req.body;
+  const { name, handle, city, avatar } = req.body;
   const user = req.user!;
   if (name !== undefined && name.trim()) user.name = name.trim();
   if (handle !== undefined && handle.trim()) {
@@ -1441,6 +1441,11 @@ app.put("/api/users/:id/profile", requireAuth, (req: AuthRequest, res) => {
     user.handle = `@${cleanHandle}`;
   }
   if (city !== undefined) user.city = city.trim();
+  if (avatar !== undefined) {
+    user.avatar = avatar;
+    const existing = registeredUsers.find((u) => u.id === user.id);
+    if (existing) existing.avatar = avatar;
+  }
   saveRegisteredUsers();
   res.json(sanitizeUser(user));
 });
@@ -1744,6 +1749,17 @@ app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit
 
 // POST /api/users/:id/avatar
 app.post("/api/users/:id/avatar", requireAuth, (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const { avatar } = req.body || {};
+  if (avatar) {
+    req.user!.avatar = avatar;
+    const existing = registeredUsers.find((u) => u.id === req.user!.id);
+    if (existing) existing.avatar = avatar;
+    saveRegisteredUsers();
+  }
   res.json(sanitizeUser(req.user));
 });
 
@@ -4301,6 +4317,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let followersCount = 0;
     let mediaCount = 0;
     let accountType = "BUSINESS";
+    let profilePicUrl = "";
 
     try {
       console.log(`[INSTAGRAM OAUTH] Fetching profile details from Graph API v21.0...`);
@@ -4311,7 +4328,8 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         if (typeof pData.followers_count === "number") followersCount = pData.followers_count;
         if (typeof pData.media_count === "number") mediaCount = pData.media_count;
         if (pData.account_type) accountType = pData.account_type;
-        console.log(`[INSTAGRAM OAUTH] ✓ Fetched profile: @${igUsername}, account_type: ${accountType}, followers: ${followersCount}, media_count: ${mediaCount}`);
+        if (pData.profile_picture_url) profilePicUrl = pData.profile_picture_url;
+        console.log(`[INSTAGRAM OAUTH] ✓ Fetched profile: @${igUsername}, account_type: ${accountType}, followers: ${followersCount}, media_count: ${mediaCount}, hasPic: ${!!profilePicUrl}`);
       } else {
         const pErr = await profileRes.text();
         console.warn(`[INSTAGRAM OAUTH] Graph API v21.0 /me returned ${profileRes.status}:`, pErr);
@@ -4661,6 +4679,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     if (targetUser) {
       targetUser.instagramUsername = igUsername;
       targetUser.instagramProfileUrl = `https://instagram.com/${igUsername}`;
+      if (profilePicUrl) {
+        targetUser.avatar = profilePicUrl;
+      }
       targetUser.instagramFollowers = followersCount;
       targetUser.followers = followersCount;
       targetUser.reach = reach;
@@ -5914,7 +5935,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         ? (CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase()) || { id: 0, name: u.city, state: "" })
         : null;
 
-      const avatarUrl = u.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+      const avatarUrl = (u.avatar && !u.avatar.includes("unsplash.com")) ? u.avatar : null;
 
       const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.45) : null);
       const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : null);
