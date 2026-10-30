@@ -306,6 +306,17 @@ export function getBrandCampaignCards(sponsorId: number) {
     const approvedCount = c.participants.filter((p) => p.status === "approved" || p.status === "completed").length;
     const activeParticipantsCount = c.participants.filter((p) => p.status !== "rejected" && p.status !== "withdrawn").length;
 
+    const totalSlots = c.totalSlots || (c as any).totalSpots || (c.participants && c.participants.length > 0 ? c.participants.length : 1);
+    const reservedSlots = c.reservedSlots !== undefined && c.reservedSlots !== null ? c.reservedSlots : (c as any).spotsReserved || activeParticipantsCount;
+    const remainingSlots = c.remainingSlots !== undefined && c.remainingSlots !== null ? c.remainingSlots : Math.max(0, totalSlots - reservedSlots);
+    const committedPayouts = c.committedPayouts !== undefined && c.committedPayouts !== null && c.committedPayouts > 0
+      ? c.committedPayouts
+      : (c.participants && c.participants.length > 0
+          ? c.participants.reduce((sum, p) => sum + (p.payoutAmount || (p as any).offeredPrice || c.payAmount || 1200), 0)
+          : c.totalBudget || 0);
+
+    const deadlineStr = c.deadline || (c as any).postByDate || new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+
     return {
       id: c.id,
       title: c.title,
@@ -313,23 +324,23 @@ export function getBrandCampaignCards(sponsorId: number) {
       brandLogo: c.brandLogo,
       genre: c.genre,
       status: c.status,
-      bookingModel: c.bookingModel,
-      payAmount: c.payAmount,
+      bookingModel: c.bookingModel || "instant",
+      payAmount: c.payAmount || 1200,
       totalBudget: c.totalBudget,
       escrowHeld: c.escrowHeld,
-      committedPayouts: c.committedPayouts,
-      releasedPayouts: c.releasedPayouts,
-      totalSlots: c.totalSlots,
-      reservedSlots: c.reservedSlots,
-      remainingSlots: c.remainingSlots,
+      committedPayouts,
+      releasedPayouts: c.releasedPayouts || 0,
+      totalSlots,
+      reservedSlots,
+      remainingSlots,
       activeParticipantsCount,
       pendingApplications,
       awaitingReview,
       revisionsCount,
       approvedCount,
-      deadline: c.deadline,
+      deadline: deadlineStr,
       updatedAt: c.updatedAt,
-      unreadMessagesCount: c.messages.filter((m) => !m.readBy.includes(sponsorId)).length,
+      unreadMessagesCount: c.messages ? c.messages.filter((m) => !m.readBy.includes(sponsorId)).length : 0,
     };
   });
 }

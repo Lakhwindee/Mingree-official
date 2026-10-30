@@ -2314,7 +2314,7 @@ app.get("/api/creator/analytics", requireAuth, async (req: AuthRequest, res) => 
 });
 
 // GET /api/campaigns/:id/workspace - Full Campaign Workspace for Brand and Participating Creators
-app.get("/api/campaigns/:id/workspace", requireAuth, (req: AuthRequest, res) => {
+app.get("/api/campaigns/:id/workspace", requireAuth, async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.id);
   const workspace = getWorkspaceById(campaignId);
   if (!workspace) {
@@ -2325,19 +2325,86 @@ app.get("/api/campaigns/:id/workspace", requireAuth, (req: AuthRequest, res) => 
     return res.status(403).json({ error: "Forbidden: You are not authorized to view this campaign's workspace" });
   }
 
+  // Ensure participants list has hydrated creator information
+  const hydratedParticipants = await Promise.all((workspace.participants || []).map(async (p: any) => {
+    const creatorId = Number(p.creatorId || p.id);
+    let creatorName = p.creatorName;
+    let creatorHandle = p.creatorHandle;
+    let creatorAvatar = p.creatorAvatar;
+    let creatorFollowers = p.creatorFollowers;
+    let creatorMedianViews = p.creatorMedianViews;
+
+    if (!creatorName || !creatorHandle || !creatorAvatar || String(creatorName).startsWith("Creator #")) {
+      const memoryUser = registeredUsers.find((u) => u.id === creatorId);
+      if (memoryUser) {
+        creatorName = creatorName || memoryUser.name;
+        creatorHandle = creatorHandle || memoryUser.instagramUsername || memoryUser.handle;
+        creatorAvatar = creatorAvatar || memoryUser.avatar;
+        creatorFollowers = creatorFollowers || memoryUser.instagramFollowers || memoryUser.followers;
+        creatorMedianViews = creatorMedianViews || memoryUser.medianViews;
+      }
+      if (isDatabaseConfigured) {
+        try {
+          const dbRes = await pool.query(
+            `SELECT u.name, u.email, u.handle, u.avatar, cp.username, cp.followers, cp.median_views, cp.avatar_url
+             FROM users u
+             LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+             WHERE u.id = $1`,
+            [creatorId]
+          );
+          if (dbRes.rows.length > 0) {
+            const row = dbRes.rows[0];
+            creatorName = row.name || creatorName || `Creator #${creatorId}`;
+            creatorHandle = row.username ? `@${row.username}` : (row.handle || creatorHandle || `@user${creatorId}`);
+            creatorAvatar = row.avatar_url || row.avatar || creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+            creatorFollowers = Number(row.followers || creatorFollowers || 10000);
+            creatorMedianViews = Number(row.median_views || creatorMedianViews || 4000);
+          }
+        } catch {}
+      }
+    }
+
+    return {
+      id: p.id || creatorId,
+      campaignId: p.campaignId || campaignId,
+      creatorId,
+      creatorName: creatorName || `Creator #${creatorId}`,
+      creatorHandle: creatorHandle || `@user${creatorId}`,
+      creatorAvatar: creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+      creatorFollowers: creatorFollowers || 10000,
+      creatorMedianViews: creatorMedianViews || 4000,
+      status: p.status || "reserved",
+      payoutAmount: p.payoutAmount || p.offeredPrice || workspace.payAmount || 1200,
+      reservedAt: p.reservedAt || workspace.createdAt || new Date().toISOString(),
+      expiresAt: p.expiresAt || new Date(Date.now() + 14 * 86400000).toISOString(),
+      briefAcknowledgedVersion: p.briefAcknowledgedVersion || (workspace.briefVersions ? workspace.briefVersions.length : 1),
+      submission: p.submission || null,
+      revisions: p.revisions || [],
+      draftSubmission: p.draftSubmission || null,
+      draftStatus: p.draftStatus || "none",
+    };
+  }));
+
+  // Ensure workspace stats exist and match
+  const totalSlots = workspace.totalSlots || (workspace as any).totalSpots || hydratedParticipants.length || 1;
+  const activeParticipantsCount = hydratedParticipants.filter((p) => p.status !== "rejected" && p.status !== "withdrawn").length;
+  const reservedSlots = workspace.reservedSlots !== undefined && workspace.reservedSlots !== null ? workspace.reservedSlots : activeParticipantsCount;
+  const remainingSlots = workspace.remainingSlots !== undefined && workspace.remainingSlots !== null ? workspace.remainingSlots : Math.max(0, totalSlots - reservedSlots);
+  const committedPayouts = hydratedParticipants.reduce((sum, p) => sum + (p.payoutAmount || 1200), 0);
+  const deadlineStr = workspace.deadline || (workspace as any).postByDate || new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+
   // Filter messages for privacy: creator only sees group channel + their own 1:1 messages
   const userRole = req.user!.role;
   const userId = req.user!.id;
-  const filteredMessages = workspace.messages.filter(m => {
+  const filteredMessages = (workspace.messages || []).filter(m => {
     if (userRole === "admin" || userId === workspace.sponsorId) return true;
     return m.recipientId === null || m.recipientId === userId || m.senderId === userId;
   });
 
   // Filter participants view for creator: they see self and public aggregates, brand/admin sees all
-  let visibleParticipants = workspace.participants;
+  let visibleParticipants = hydratedParticipants;
   if (userRole === "creator") {
-    // Return all participants with safe non-sensitive data so creators see who else is in the campaign
-    visibleParticipants = workspace.participants.map(p => ({
+    visibleParticipants = hydratedParticipants.map(p => ({
       id: p.id,
       campaignId: p.campaignId,
       creatorId: p.creatorId,
@@ -2353,11 +2420,35 @@ app.get("/api/campaigns/:id/workspace", requireAuth, (req: AuthRequest, res) => 
       briefAcknowledgedVersion: p.briefAcknowledgedVersion,
       submission: p.creatorId === userId ? p.submission : (p.submission ? { postUrl: p.submission.postUrl, submittedAt: p.submission.submittedAt } as any : null),
       revisions: p.creatorId === userId ? p.revisions : [],
+      draftSubmission: p.creatorId === userId ? p.draftSubmission : null,
+      draftStatus: p.creatorId === userId ? p.draftStatus : ("none" as const),
     }));
   }
 
   res.json({
     ...workspace,
+    totalSlots,
+    reservedSlots,
+    remainingSlots,
+    committedPayouts,
+    deadline: deadlineStr,
+    briefVersions: workspace.briefVersions || [{
+      version: 1,
+      timestamp: workspace.createdAt || new Date().toISOString(),
+      updatedBy: workspace.sponsorId,
+      changesSummary: "Campaign brief",
+      diffs: [],
+      briefSnapshot: {
+        title: workspace.title,
+        description: workspace.description,
+        requiredCaptionNote: workspace.requiredCaptionNote || workspace.description || "",
+        requiredTags: workspace.requiredTags || [],
+        requiredMentions: workspace.requiredMentions || [],
+        disclosureInstructions: workspace.disclosureInstructions || "Include #ad #collab in caption",
+        audioUrl: workspace.audioUrl || "",
+        deadline: deadlineStr,
+      }
+    }],
     participants: visibleParticipants,
     messages: filteredMessages,
   });
@@ -6431,6 +6522,58 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     const allWorkspaces = loadAllWorkspaces();
     const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map(w => w.id || 0)) + 1 : 1;
 
+    // Build hydrated creator participant objects
+    const hydratedParticipants = await Promise.all(creatorIds.map(async (cid: number) => {
+      let memoryUser = registeredUsers.find((u) => u.id === cid);
+      let creatorName = memoryUser?.name;
+      let creatorHandle = memoryUser?.instagramUsername || memoryUser?.handle;
+      let creatorAvatar = memoryUser?.avatar;
+      let creatorFollowers = memoryUser?.instagramFollowers || memoryUser?.followers;
+      let creatorMedianViews = memoryUser?.medianViews;
+
+      if (isDatabaseConfigured) {
+        try {
+          const dbRes = await pool.query(
+            `SELECT u.id, u.name, u.email, u.handle, u.avatar, u.avatar_url, cp.username as instagram_username, cp.followers, cp.median_views, cp.avatar_url as cp_avatar_url
+             FROM users u
+             LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+             WHERE u.id = $1`,
+            [cid]
+          );
+          if (dbRes.rows.length > 0) {
+            const row = dbRes.rows[0];
+            creatorName = row.name || creatorName || `Creator #${cid}`;
+            creatorHandle = row.instagram_username ? `@${row.instagram_username}` : (row.handle || creatorHandle || `@creator${cid}`);
+            creatorAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+            creatorFollowers = Number(row.followers || creatorFollowers || 10000);
+            creatorMedianViews = Number(row.median_views || creatorMedianViews || 4000);
+          }
+        } catch {}
+      }
+
+      return {
+        id: cid,
+        campaignId: newId,
+        creatorId: cid,
+        creatorName: creatorName || `Creator #${cid}`,
+        creatorHandle: creatorHandle || `@creator${cid}`,
+        creatorAvatar: creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+        creatorFollowers: creatorFollowers || 10000,
+        creatorMedianViews: creatorMedianViews || 4000,
+        status: "reserved" as const,
+        payoutAmount: billData.subtotal / (creatorIds.length || 1),
+        reservedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+        briefAcknowledgedVersion: 1,
+        submission: null,
+        revisions: [],
+        draftSubmission: null,
+        draftStatus: "none" as const,
+      };
+    }));
+
+    const deadlineStr = details?.postByDate || new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+
     const newWorkspace = {
       id: newId,
       sponsorId,
@@ -6443,19 +6586,61 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
       contentTypes: [details?.deliverable || "Reel"],
       promotionStyle: details?.promotionStyle || "Hook Step",
       audioUrl: details?.songUrl || "",
+      referenceVideoUrl: "",
+      productAssets: [],
+      payAmount: billData.subtotal / (creatorIds.length || 1),
       totalBudget: totalPayable,
       escrowHeld: totalPayable,
-      totalSpots: creatorIds.length,
-      spotsRemaining: creatorIds.length,
-      status: "filling_slots",
+      committedPayouts: billData.subtotal,
+      releasedPayouts: 0,
+      totalSlots: creatorIds.length,
+      reservedSlots: creatorIds.length,
+      remainingSlots: 0,
+      bookingModel: "instant" as const,
+      minFollowers: 5000,
+      minMedianViews: 2000,
+      targetCountries: ["India"],
+      targetCities: ["All"],
+      requiredCaptionNote: details?.description || "Check out this song!",
+      requiredTags: [],
+      requiredMentions: [],
+      disclosureInstructions: "Include #ad #collab in caption",
+      minDurationSecs: 15,
+      deadline: deadlineStr,
+      status: "filling_slots" as const,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      participants: creatorIds.map((cid: number) => ({
-        id: cid,
-        status: "invited",
-        offeredPrice: 1500,
-      })),
-      messages: [],
+      briefVersions: [{
+        version: 1,
+        timestamp: new Date().toISOString(),
+        updatedBy: sponsorId,
+        changesSummary: "Campaign initial creation",
+        diffs: [],
+        briefSnapshot: {
+          title: details?.title || "Choose Creators Campaign",
+          description: details?.description || "",
+          requiredCaptionNote: details?.description || "",
+          requiredTags: [],
+          requiredMentions: [],
+          disclosureInstructions: "Include #ad #collab in caption",
+          audioUrl: details?.songUrl || "",
+          deadline: deadlineStr,
+        }
+      }],
+      participants: hydratedParticipants,
+      messages: [{
+        id: Date.now(),
+        campaignId: newId,
+        senderId: sponsorId,
+        senderName: req.user!.name,
+        senderRole: "sponsor" as const,
+        senderAvatar: req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+        recipientId: null,
+        content: `Welcome to the campaign workspace! Selected creators have been reserved for this campaign.`,
+        isAnnouncement: true,
+        createdAt: new Date().toISOString(),
+        readBy: [sponsorId],
+      }],
     };
 
     saveSingleWorkspace(newWorkspace as any);

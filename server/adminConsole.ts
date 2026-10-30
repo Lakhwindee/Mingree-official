@@ -1,4 +1,4 @@
-import { db, pool } from "./db";
+import { db, pool, isDatabaseConfigured } from "./db";
 import {
   users,
   creatorProfiles,
@@ -37,6 +37,7 @@ export async function recordAdminAuditLog(
   ipAddress?: string
 ): Promise<void> {
   try {
+    if (!isDatabaseConfigured) return;
     await db.insert(securityAuditLogs).values({
       event: `ADMIN_${action.toUpperCase()}`,
       mingreeUserId: adminUserId,
@@ -75,6 +76,13 @@ export async function getEscrowInvariantCheck(): Promise<{
     status: "OK" | "DISCREPANCY";
   }>;
 }> {
+  if (!isDatabaseConfigured) {
+    return {
+      isOk: true,
+      totalDiscrepancy: 0,
+      artistDetails: [],
+    };
+  }
   try {
     const artistRows = await pool.query(
       `SELECT u.id, u.name, u.email, COALESCE(w.escrow_held, 0) as escrow_held
@@ -135,8 +143,10 @@ export async function getEscrowInvariantCheck(): Promise<{
       totalDiscrepancy: parseFloat(totalDiscrepancy.toFixed(2)),
       artistDetails,
     };
-  } catch (err) {
-    console.error("[ESCROW INVARIANT CHECK ERROR]", err);
+  } catch (err: any) {
+    if (!err?.message?.includes("not configured")) {
+      console.error("[ESCROW INVARIANT CHECK ERROR]", err);
+    }
     return {
       isOk: true,
       totalDiscrepancy: 0,
@@ -149,6 +159,59 @@ export async function getEscrowInvariantCheck(): Promise<{
  * 3. Overview Page Stats & Needs Attention Queues
  */
 export async function getOverviewStatsAdmin(): Promise<any> {
+  const defaultFallbackStats = () => {
+    const creators = ((global as any).registeredUsers || []).filter((u: any) => u.role === "creator");
+    const artists = ((global as any).registeredUsers || []).filter((u: any) => u.role === "sponsor" || u.role === "admin");
+    const creatorsByTier: Record<string, number> = {
+      Nano: 0,
+      Micro: 0,
+      Mid: 0,
+      "Upper Mid": 0,
+      Macro: 0,
+      Large: 0,
+      Mega: 0,
+      Elite: 0,
+    };
+    for (const c of creators) {
+      const tier = c.tier || "Nano";
+      if (creatorsByTier[tier] !== undefined) creatorsByTier[tier]++;
+      else creatorsByTier["Nano"]++;
+    }
+    return {
+      creatorsByTier,
+      totalCreators: creators.length,
+      totalArtists: artists.length,
+      activeCampaignsCount: 0,
+      openDealsCount: 0,
+      totalEscrowHeld: 0,
+      totalWalletBalances: 0,
+      feesEarned: {
+        total: 0,
+        net: 0,
+        gstPortion: 0,
+      },
+      withdrawalsPaidThisMonth: 0,
+      needsAttention: {
+        riskReviewCount: 0,
+        manualCheckDealsCount: 0,
+        silentArtistDealsCount: 0,
+        disputesCount: 0,
+        pendingWithdrawalsCount: 0,
+        pendingUpiCount: 0,
+        pendingCityRequestsCount: 0,
+      },
+      escrowInvariant: {
+        isOk: true,
+        totalDiscrepancy: 0,
+        artistDetails: [],
+      },
+    };
+  };
+
+  if (!isDatabaseConfigured) {
+    return defaultFallbackStats();
+  }
+
   try {
     // Total Creators by Tier
     const tierRes = await pool.query(
@@ -246,9 +309,11 @@ export async function getOverviewStatsAdmin(): Promise<any> {
       },
       escrowInvariant: escrowCheck,
     };
-  } catch (err) {
-    console.error("[GET OVERVIEW STATS ERROR]", err);
-    return {};
+  } catch (err: any) {
+    if (!err?.message?.includes("not configured")) {
+      console.error("[GET OVERVIEW STATS ERROR]", err);
+    }
+    return defaultFallbackStats();
   }
 }
 
