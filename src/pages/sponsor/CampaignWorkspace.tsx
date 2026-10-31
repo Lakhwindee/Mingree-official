@@ -369,33 +369,6 @@ export default function CampaignWorkspace() {
                                 </div>
                               </div>
 
-                              {/* Campaign Instructions & Mentions/Tags Briefing Strip */}
-                              <div className="rounded-xl border border-border bg-muted/20 p-3 space-y-2 text-xs">
-                                <div>
-                                  <span className="text-[10px] uppercase font-bold text-muted-foreground block">
-                                    Campaign Brief & Instructions
-                                  </span>
-                                  <p className="text-foreground mt-0.5 text-xs leading-relaxed whitespace-pre-line">
-                                    {workspace.description || workspace.requiredCaptionNote || "Promote brand audio / product on Instagram Reels across top creator channels."}
-                                  </p>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border/60 text-[11px]">
-                                  {workspace.requiredMentions && workspace.requiredMentions.length > 0 && (
-                                    <span className="font-semibold text-primary">
-                                      Mentions: {workspace.requiredMentions.join(" ")}
-                                    </span>
-                                  )}
-                                  {workspace.requiredTags && workspace.requiredTags.length > 0 && (
-                                    <span className="text-muted-foreground">
-                                      Tags: {workspace.requiredTags.join(" ")}
-                                    </span>
-                                  )}
-                                  <span className="text-muted-foreground/80">
-                                    {workspace.disclosureInstructions || "#ad | Paid Partnership"}
-                                  </span>
-                                </div>
-                              </div>
-
                               {/* Submitted Reel Details or Waiting State */}
                               {p.submission?.postUrl ? (
                                 <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
