@@ -349,15 +349,20 @@ export default function CreatorCampaignWorkspace() {
               <LiveCountdownTimer expiresAt={expiryTime} variant="badge" />
             )}
 
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setIsRateChatOpen(true)}
-              className="h-9 px-3 rounded-xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
-            >
-              <IndianRupee className="h-3.5 w-3.5 mr-1" />
-              Rate Chat (₹)
-            </Button>
+            {/* Rate Chat (₹) - Hidden once rate is fixed / deal done */}
+            {participant.negotiationStatus !== "accepted" &&
+              participantStatus !== "approved" &&
+              participantStatus !== "completed" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsRateChatOpen(true)}
+                  className="h-9 px-3 rounded-xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+                >
+                  <IndianRupee className="h-3.5 w-3.5 mr-1" />
+                  Rate Chat (₹)
+                </Button>
+            )}
 
             <div className="text-right px-3.5 py-1.5 rounded-xl border border-border/80 bg-card">
               <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">Escrow Payout</span>
@@ -772,7 +777,15 @@ export default function CreatorCampaignWorkspace() {
       </main>
 
       {/* SEPARATE 2-WAY RATE NEGOTIATION CHAT BAR MODAL */}
-      <Dialog open={isRateChatOpen} onOpenChange={setIsRateChatOpen}>
+      <Dialog
+        open={
+          isRateChatOpen &&
+          participant.negotiationStatus !== "accepted" &&
+          participantStatus !== "approved" &&
+          participantStatus !== "completed"
+        }
+        onOpenChange={setIsRateChatOpen}
+      >
         <DialogContent className="max-w-md p-0 overflow-hidden border-0 bg-transparent shadow-none">
           <div>
             <DialogHeader className="sr-only">

@@ -356,6 +356,11 @@ export default function CreatorRequests() {
                     const isInvited =
                       ws.status === "invited" || ws.status === "applied" || ws.status === "pending";
                     const isCompleted = ws.status === "approved" || ws.status === "completed";
+                    const isRateFixed =
+                      ws.negotiationStatus === "accepted" ||
+                      isCompleted ||
+                      ws.status === "deal_done" ||
+                      Boolean(ws.dealDone);
 
                     return (
                       <Card
@@ -434,7 +439,7 @@ export default function CreatorRequests() {
                             </div>
                           </div>
 
-                          {/* Two Separate Action Buttons: 1) Files & Submit Reel  2) Rate Chat (₹) */}
+                          {/* Action Buttons: Files & Submit Reel (Rate Chat is completely hidden once rate is fixed / deal done) */}
                           <div className="flex items-center gap-2">
                             {isInvited ? (
                               <Button
@@ -467,16 +472,18 @@ export default function CreatorRequests() {
                               </Button>
                             )}
 
-                            <Button
-                              variant="outline"
-                              className={cn(
-                                "font-bold text-xs h-10 px-3.5 rounded-xl cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
-                              )}
-                              onClick={() => setNegotiatingCampaignId(ws.campaignId)}
-                            >
-                              <IndianRupee className="h-3.5 w-3.5 mr-1" />
-                              Rate Chat (₹)
-                            </Button>
+                            {!isRateFixed && (
+                              <Button
+                                variant="outline"
+                                className={cn(
+                                  "font-bold text-xs h-10 px-3.5 rounded-xl cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
+                                )}
+                                onClick={() => setNegotiatingCampaignId(ws.campaignId)}
+                              >
+                                <IndianRupee className="h-3.5 w-3.5 mr-1" />
+                                Rate Chat (₹)
+                              </Button>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -777,7 +784,13 @@ export default function CreatorRequests() {
 
       {/* ================= POPUP 2: 2-WAY RATE NEGOTIATION CHAT BAR (SEPARATE FROM FILE DOWNLOAD) ================= */}
       <Dialog
-        open={negotiatingCampaignId !== null && !!negotiatingDeal}
+        open={
+          negotiatingCampaignId !== null &&
+          !!negotiatingDeal &&
+          negotiatingDeal.negotiationStatus !== "accepted" &&
+          negotiatingDeal.status !== "approved" &&
+          negotiatingDeal.status !== "completed"
+        }
         onOpenChange={(open) => {
           if (!open) setNegotiatingCampaignId(null);
         }}

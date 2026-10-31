@@ -325,8 +325,19 @@ export default function CampaignWorkspace() {
                               }}
                               className="h-8 px-3 text-xs font-bold rounded-lg cursor-pointer"
                             >
-                              <IndianRupee className="mr-1 h-3.5 w-3.5" />
-                              Rate Chat (₹)
+                              {p.negotiationStatus === "accepted" ||
+                              p.status === "approved" ||
+                              p.status === "completed" ? (
+                                <>
+                                  <CheckCircle2 className="mr-1 h-3.5 w-3.5 text-emerald-500" />
+                                  Creator Details
+                                </>
+                              ) : (
+                                <>
+                                  <IndianRupee className="mr-1 h-3.5 w-3.5" />
+                                  Rate Chat (₹)
+                                </>
+                              )}
                               {isExpanded ? (
                                 <ChevronUp className="ml-1.5 h-3.5 w-3.5" />
                               ) : (
@@ -619,30 +630,50 @@ export default function CampaignWorkspace() {
                               )}
                             </div>
 
-                            {/* 2. Two-Way Rate Negotiation Chat Bar (₹ Only) */}
-                            <RateNegotiationChat
-                              campaignId={workspace.id}
-                              viewerRole="sponsor"
-                              brandName={workspace.brand || "Brand"}
-                              brandLogo={workspace.brandLogo}
-                              creatorId={p.creatorId}
-                              creatorName={p.creatorName}
-                              creatorHandle={p.creatorHandle}
-                              creatorAvatar={p.creatorAvatar}
-                              currentPayoutAmount={Number(
-                                p.payoutAmount || workspace.payAmount || 1200
-                              )}
-                              basePayAmount={Number(
-                                p.baseRate || workspace.payAmount || p.payoutAmount || 1200
-                              )}
-                              lastOfferedPrice={Math.min(
-                                Number(p.baseRate || workspace.payAmount || 1200),
-                                Number(p.lastOfferedPrice || p.payoutAmount || 1200)
-                              )}
-                              lastOfferBy={p.lastOfferBy}
-                              negotiationStatus={p.negotiationStatus}
-                              messages={workspace.messages || []}
-                            />
+                            {/* 2. Two-Way Rate Negotiation Chat Bar (₹ Only) - Hidden once rate is fixed / deal done */}
+                            {p.negotiationStatus !== "accepted" &&
+                            p.status !== "approved" &&
+                            p.status !== "completed" ? (
+                              <RateNegotiationChat
+                                campaignId={workspace.id}
+                                viewerRole="sponsor"
+                                brandName={workspace.brand || "Brand"}
+                                brandLogo={workspace.brandLogo}
+                                creatorId={p.creatorId}
+                                creatorName={p.creatorName}
+                                creatorHandle={p.creatorHandle}
+                                creatorAvatar={p.creatorAvatar}
+                                currentPayoutAmount={Number(
+                                  p.payoutAmount || workspace.payAmount || 1200
+                                )}
+                                basePayAmount={Number(
+                                  p.baseRate || workspace.payAmount || p.payoutAmount || 1200
+                                )}
+                                lastOfferedPrice={Math.min(
+                                  Number(p.baseRate || workspace.payAmount || 1200),
+                                  Number(p.lastOfferedPrice || p.payoutAmount || 1200)
+                                )}
+                                lastOfferBy={p.lastOfferBy}
+                                negotiationStatus={p.negotiationStatus}
+                                messages={workspace.messages || []}
+                              />
+                            ) : (
+                              <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold">
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                                  <span>
+                                    Deal finalized & rate locked at{" "}
+                                    {formatINR(p.payoutAmount || workspace.payAmount || 1200)}
+                                  </span>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/40"
+                                >
+                                  Rate Locked
+                                </Badge>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
