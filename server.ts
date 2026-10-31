@@ -2919,7 +2919,7 @@ app.get(["/api/users/:userId/reservations", "/api/reservations"], requireAuth, (
         expiresAt: participant.expiresAt || new Date(Date.now() + 48 * 3600000).toISOString(),
         submittedAt: participant.submission ? participant.submission.submittedAt : null,
         reviewedAt: participant.submission ? (participant.submission as any).reviewedAt : null,
-        postUrl: participant.submission ? (participant.submission as any).reelUrl : null,
+        postUrl: participant.submission ? (participant.submission.postUrl || (participant.submission as any).reelUrl || null) : null,
         clipUrl: participant.submission ? (participant.submission as any).draftVideoUrl : null,
         campaign: {
           id: c.id,

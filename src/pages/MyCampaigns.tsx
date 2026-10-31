@@ -15,6 +15,7 @@ import { motion } from "framer-motion";
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "wouter";
 import { toast } from "sonner";
+import { CheckCircle2, Clock, ExternalLink } from "lucide-react";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = (_props?: any) => null;
@@ -112,6 +113,9 @@ export default function MyCampaigns() {
 
   const filteredReservations = useMemo(() => {
     if (statusFilter === "all") return activeReservations;
+    if (statusFilter === "submitted") {
+      return activeReservations.filter((r: ApiReservation) => r.status === 'submitted' || (r.status as string) === 'content_submitted');
+    }
     return activeReservations.filter((r: ApiReservation) => r.status === statusFilter);
   }, [activeReservations, statusFilter]);
 
@@ -194,13 +198,15 @@ export default function MyCampaigns() {
       case 'submitted': 
       case 'content_submitted':
         return (
-          <span className="inline-flex items-center text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md border border-blue-500/20">
-            In Review
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
+            <Clock className="h-3 w-3 text-amber-600" />
+            Pending Review
           </span>
         );
       case 'approved': 
         return (
-          <span className="inline-flex items-center text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
             Approved
           </span>
         );
@@ -294,7 +300,7 @@ export default function MyCampaigns() {
                   : "bg-muted text-muted-foreground hover:text-foreground"
               }`}
             >
-              In Review ({counts.submitted})
+              Pending Review ({counts.submitted})
             </button>
             <button
               type="button"
@@ -336,6 +342,10 @@ export default function MyCampaigns() {
                 const campaign = reservation.campaign;
                 if (!campaign) return null;
                 const isPendingInvite = (reservation.status as string) === "pending";
+                const isSubmittedPending =
+                  reservation.status === "submitted" ||
+                  (reservation.status as string) === "content_submitted";
+                const isApproved = reservation.status === "approved";
 
                 return (
                   <motion.div
@@ -349,6 +359,10 @@ export default function MyCampaigns() {
                       className={`relative flex flex-col justify-between h-full min-h-[165px] sm:min-h-[180px] overflow-hidden rounded-2xl border bg-card p-3.5 sm:p-4 hover:shadow-xs transition-all ${
                         isPendingInvite
                           ? "border-amber-500/50 ring-1 ring-amber-500/20"
+                          : isSubmittedPending
+                          ? "border-amber-500/40 bg-card"
+                          : isApproved
+                          ? "border-emerald-500/40 bg-card"
                           : "border-zinc-200 dark:border-zinc-800"
                       }`}
                       data-testid={`card-reservation-${reservation.id}`}
@@ -364,6 +378,16 @@ export default function MyCampaigns() {
                         {isPendingInvite ? (
                           <span className="text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-xl">
                             Invited — Not Reserved
+                          </span>
+                        ) : isSubmittedPending ? (
+                          <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-xl inline-flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-amber-600 shrink-0" />
+                            Pending Review
+                          </span>
+                        ) : isApproved ? (
+                          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-xl inline-flex items-center gap-1">
+                            <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
+                            Approved
                           </span>
                         ) : reservation.expiresAt ? (
                           <RedCountdownBadge expiresAt={reservation.expiresAt} />
@@ -399,6 +423,30 @@ export default function MyCampaigns() {
                             className="h-9 px-3.5 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-600 text-white shrink-0 cursor-pointer shadow-xs"
                           >
                             {acceptInvitationMutation.isPending ? "Reserving..." : "Reserve Ad"}
+                          </Button>
+                        ) : isSubmittedPending ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedReservation(reservation);
+                              setIsSubmitModalOpen(true);
+                            }}
+                            className="h-9 px-3 text-xs font-bold rounded-xl border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 shrink-0 cursor-pointer shadow-2xs"
+                          >
+                            Pending Review
+                          </Button>
+                        ) : isApproved ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedReservation(reservation);
+                              setIsSubmitModalOpen(true);
+                            }}
+                            className="h-9 px-3 text-xs font-bold rounded-xl border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 shrink-0 cursor-pointer shadow-2xs"
+                          >
+                            Approved
                           </Button>
                         ) : (
                           <Button
@@ -474,7 +522,17 @@ export default function MyCampaigns() {
 
                     <div className="p-2.5 rounded-xl bg-muted/40 border border-border/80 flex flex-col">
                       <span className="text-[10px] text-muted-foreground uppercase font-medium">Countdown</span>
-                      {selectedReservation.expiresAt ? (
+                      {selectedReservation.status === 'submitted' || (selectedReservation.status as string) === 'content_submitted' ? (
+                        <span className="text-xs font-bold text-amber-700 dark:text-amber-400 mt-1 flex items-center gap-1">
+                          <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                          Pending Review
+                        </span>
+                      ) : selectedReservation.status === 'approved' ? (
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                          Approved
+                        </span>
+                      ) : selectedReservation.expiresAt ? (
                         <RedCountdownBadge expiresAt={selectedReservation.expiresAt} />
                       ) : (
                         <span className="text-xs font-bold text-foreground">48 Hours</span>
@@ -517,7 +575,7 @@ export default function MyCampaigns() {
                     </div>
                   )}
 
-                  {/* Submission Input Fields */}
+                  {/* Submission Status & Input Fields */}
                   {selectedReservation.status === 'reserved' ? (
                     <div className="space-y-3 pt-1">
                       <h4 className="text-xs font-semibold text-foreground">
@@ -536,17 +594,38 @@ export default function MyCampaigns() {
                         />
                       </div>
                     </div>
-                  ) : selectedReservation.status === 'submitted' ? (
-                    <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs space-y-1 text-blue-900 dark:text-blue-300">
-                      <p className="font-semibold">Submission is under Admin / Brand review:</p>
-                      <p className="truncate font-mono">{selectedReservation.postUrl}</p>
+                  ) : selectedReservation.status === 'submitted' || (selectedReservation.status as string) === 'content_submitted' ? (
+                    <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs space-y-1.5 text-amber-900 dark:text-amber-200">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
+                        <Clock className="h-4 w-4 text-amber-600 shrink-0" />
+                        Reel Link Submitted — Pending Brand Review
+                      </div>
+                      <p className="text-muted-foreground text-[11px] leading-relaxed">
+                        Aapka Instagram Reel link submit ho gaya hai. Brand / Sponsor ise verify karke approval aur payout release karega.
+                      </p>
+                      {selectedReservation.postUrl && (
+                        <div className="pt-1.5 border-t border-amber-500/20">
+                          <a
+                            href={selectedReservation.postUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="font-mono text-xs text-primary hover:underline truncate flex items-center gap-1"
+                          >
+                            <ExternalLink className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{selectedReservation.postUrl}</span>
+                          </a>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/20 text-xs space-y-1 text-green-900 dark:text-green-300">
-                      <p className="font-semibold">Content verified and approved!</p>
-                      <p className="text-muted-foreground">Payout has been credited to your wallet balance.</p>
+                  ) : selectedReservation.status === 'approved' ? (
+                    <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs space-y-1 text-emerald-900 dark:text-emerald-300">
+                      <p className="font-bold flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="h-4 w-4 shrink-0" />
+                        Content verified and approved!
+                      </p>
+                      <p className="text-muted-foreground text-[11px]">Payout has been credited to your wallet balance.</p>
                     </div>
-                  )}
+                  ) : null}
 
                 </div>
               </ScrollArea>
