@@ -22,6 +22,20 @@ const User = __DummyIcon;
 
 const API_BASE = "/api";
 
+function getAuthHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  try {
+    const saved = localStorage.getItem("mingree_auth_session_v1");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed?.id) {
+        headers["X-User-Id"] = String(parsed.id);
+      }
+    }
+  } catch {}
+  return headers;
+}
+
 export function formatINR(amount: number | string | null | undefined): string {
   if (amount === null || amount === undefined || amount === "") return "₹0";
   const num = typeof amount === 'string' ? parseFloat(amount) : Number(amount);
@@ -429,7 +443,10 @@ export const api = {
 
   // Campaign Workspace APIs
   async getCampaignWorkspace(campaignId: number): Promise<WorkspaceDetails> {
-    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/workspace`, { credentials: "include" });
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/workspace`, {
+      headers: getAuthHeaders(),
+      credentials: "include",
+    });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Failed to load campaign workspace");
@@ -440,7 +457,7 @@ export const api = {
   async applyOrReserveSlot(campaignId: number): Promise<{ success: boolean; participant: WorkspaceParticipant; message: string }> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/reserve-or-apply`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
     });
     if (!res.ok) {
@@ -453,7 +470,7 @@ export const api = {
   async updateCampaignBrief(campaignId: number, data: { updatedBrief: any; changesSummary: string }): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/brief`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(data),
     });
@@ -467,7 +484,7 @@ export const api = {
   async acknowledgeBriefChange(campaignId: number, version: number): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/acknowledge-brief`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify({ version }),
     });
@@ -485,7 +502,7 @@ export const api = {
   async submitDraftPreview(campaignId: number, data: { videoUrl: string; notes?: string }): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/submit-draft`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(data),
     });
@@ -499,7 +516,7 @@ export const api = {
   async reviewDraftPreview(campaignId: number, data: { participantId: number; action: "approve" | "request_revision"; notes?: string }): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/review-draft`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(data),
     });
@@ -513,7 +530,7 @@ export const api = {
   async submitCreatorReel(campaignId: number, data: { postUrl: string; audioConfirmed?: boolean; proofScreenshotUrl?: string }): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/submit-reel`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(data),
     });
@@ -530,7 +547,7 @@ export const api = {
   ): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/review-submission`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(data),
     });
@@ -544,7 +561,7 @@ export const api = {
   async handleApplicationAction(campaignId: number, participantId: number, action: "accept" | "decline"): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/participants/${participantId}/action`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify({ action }),
     });
@@ -558,7 +575,7 @@ export const api = {
   async acceptCampaignInvitation(campaignId: number): Promise<any> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/accept-invitation`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
     });
     if (!res.ok) {
@@ -573,7 +590,10 @@ export const api = {
     if (thread) params.set("thread", thread);
     if (since) params.set("since", since);
     const qs = params.toString() ? `?${params.toString()}` : "";
-    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/messages${qs}`, { credentials: "include" });
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/messages${qs}`, {
+      headers: getAuthHeaders(),
+      credentials: "include",
+    });
     if (!res.ok) {
       return [];
     }
@@ -586,7 +606,7 @@ export const api = {
   ): Promise<WorkspaceMessage> {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
       credentials: "include",
       body: JSON.stringify(data),
     });
@@ -600,7 +620,7 @@ export const api = {
   async getBrandCampaignCards(sponsorId?: number): Promise<BrandCampaignCard[]> {
     try {
       const url = sponsorId ? `${API_BASE}/sponsors/${sponsorId}/campaign-cards` : `${API_BASE}/sponsor/campaign-cards`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(url, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) return await res.json();
     } catch {
       // ignore
@@ -611,7 +631,7 @@ export const api = {
   async getCreatorCampaignWorkspaces(creatorId?: number): Promise<CreatorCampaignItem[]> {
     try {
       const url = creatorId ? `${API_BASE}/creators/${creatorId}/campaign-workspaces` : `${API_BASE}/creator/campaign-workspaces`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(url, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) return await res.json();
     } catch {
       // ignore
@@ -628,7 +648,7 @@ export const api = {
       const url = params.toString() 
         ? `${API_BASE}/campaigns?${params.toString()}`
         : `${API_BASE}/campaigns`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(url, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) return await res.json();
     } catch {
       // Fallback
@@ -639,7 +659,7 @@ export const api = {
   // User (Creator)
   async getCurrentUser(): Promise<ApiUser> {
     try {
-      const res = await fetch(`${API_BASE}/users/current`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/users/current`, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) {
         const u = await res.json();
         const followers = u.followers || u.instagramFollowers || 0;
@@ -678,7 +698,7 @@ export const api = {
   // Sponsor - uses dedicated sponsor endpoint
   async getCurrentSponsor(): Promise<ApiUser> {
     try {
-      const res = await fetch(`${API_BASE}/sponsors/current`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/sponsors/current`, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) return await res.json();
     } catch {
       // Fallback
@@ -688,7 +708,7 @@ export const api = {
 
   async getSponsorCampaigns(sponsorId: number): Promise<ApiCampaign[]> {
     try {
-      const res = await fetch(`${API_BASE}/sponsors/${sponsorId}/campaigns`);
+      const res = await fetch(`${API_BASE}/sponsors/${sponsorId}/campaigns`, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) return await res.json();
     } catch {
       // Fallback
@@ -726,7 +746,8 @@ export const api = {
   }): Promise<ApiCampaign> {
     const res = await fetch(`${API_BASE}/sponsors/${sponsorId}/campaigns`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -737,7 +758,7 @@ export const api = {
   },
 
   async getCampaignReservations(campaignId: number): Promise<ApiReservation[]> {
-    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/reservations`);
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/reservations`, { headers: getAuthHeaders(), credentials: "include" });
     if (!res.ok) throw new Error("Failed to fetch reservations");
     return res.json();
   },
@@ -745,7 +766,8 @@ export const api = {
   async updateCampaignStatus(campaignId: number, status: string) {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}/status`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
       body: JSON.stringify({ status }),
     });
     if (!res.ok) throw new Error("Failed to update campaign status");
@@ -755,6 +777,7 @@ export const api = {
   async deleteCampaign(campaignId: number) {
     const res = await fetch(`${API_BASE}/campaigns/${campaignId}`, {
       method: "DELETE",
+      headers: getAuthHeaders(),
       credentials: "include",
     });
     if (!res.ok) {
@@ -766,7 +789,7 @@ export const api = {
 
   // Sponsor Wallet
   async getSponsorWallet(sponsorId: number): Promise<ApiWallet> {
-    const res = await fetch(`${API_BASE}/sponsors/${sponsorId}/wallet`);
+    const res = await fetch(`${API_BASE}/sponsors/${sponsorId}/wallet`, { headers: getAuthHeaders(), credentials: "include" });
     if (!res.ok) throw new Error("Failed to fetch wallet");
     return res.json();
   },
@@ -774,7 +797,8 @@ export const api = {
   async depositToWallet(sponsorId: number, amount: number, description?: string): Promise<{ success: boolean; newBalance: string; transaction: ApiTransaction }> {
     const res = await fetch(`${API_BASE}/sponsors/${sponsorId}/wallet/deposit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
       body: JSON.stringify({ amount: amount.toString(), description }),
     });
     if (!res.ok) throw new Error("Failed to process deposit");
@@ -784,7 +808,7 @@ export const api = {
   // Reservations
   async getUserReservations(userId: number): Promise<ApiReservation[]> {
     try {
-      const res = await fetch(`${API_BASE}/users/${userId}/reservations`);
+      const res = await fetch(`${API_BASE}/users/${userId}/reservations`, { headers: getAuthHeaders(), credentials: "include" });
       if (res.ok) {
         const json = await res.json();
         return Array.isArray(json) ? json : [];
@@ -798,7 +822,8 @@ export const api = {
   async reserveCampaign(userId: number, campaignId: number): Promise<ApiReservation> {
     const res = await fetch(`${API_BASE}/reservations`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
       body: JSON.stringify({ userId, campaignId }),
     });
     if (!res.ok) {

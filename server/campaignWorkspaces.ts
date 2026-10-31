@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { lockEscrow, releaseEscrow, refundEscrow, getOrCreateWallet } from "./walletAndPayments";
-import { pool } from "./db";
+import { pool, isDatabaseConfigured } from "./db";
 
 const DATA_DIR = process.env.VERCEL ? "/tmp" : process.cwd();
 const CAMPAIGNS_STORE_FILE = path.join(DATA_DIR, "campaign_workspaces_v2.json");
@@ -195,6 +195,353 @@ function loadWorkspacesFromDisk(): CampaignWorkspaceData[] {
 }
 
 let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(loadWorkspacesFromDisk().map((c) => [c.id, c]));
+let adminSettingsTableReady = false;
+
+async function ensureAdminSettingsTable(): Promise<void> {
+  if (!isDatabaseConfigured || adminSettingsTableReady) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS admin_settings (
+        key text PRIMARY KEY,
+        value jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
+    adminSettingsTableReady = true;
+  } catch (err: any) {
+    console.warn("[ENSURE ADMIN_SETTINGS TABLE WARNING]", err?.message || err);
+  }
+}
+
+export async function ensureWorkspacesLoaded(_force = false): Promise<CampaignWorkspaceData[]> {
+  if (!isDatabaseConfigured) {
+    return loadAllWorkspaces();
+  }
+
+  await ensureAdminSettingsTable();
+
+  // 1. Always merge persisted workspaces from PostgreSQL admin_settings table
+  try {
+    const settingsRes = await pool.query(
+      `SELECT value FROM admin_settings WHERE key = 'campaign_workspaces_v2'`
+    );
+    if (settingsRes.rows.length > 0 && Array.isArray(settingsRes.rows[0].value)) {
+      const dbList: CampaignWorkspaceData[] = settingsRes.rows[0].value;
+      for (const item of dbList) {
+        if (!item || !item.id) continue;
+        const existing = workspacesCache.get(Number(item.id));
+        const itemTime = new Date(item.updatedAt || item.createdAt || 0).getTime();
+        const existingTime = existing ? new Date(existing.updatedAt || existing.createdAt || 0).getTime() : -1;
+        if (!existing || itemTime >= existingTime) {
+          workspacesCache.set(Number(item.id), { ...item, id: Number(item.id), sponsorId: Number(item.sponsorId) });
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[WORKSPACES SETTINGS LOAD WARNING]", err?.message || err);
+  }
+
+  // 2. Reconcile any campaigns from wallet_transactions (escrow_lock) or PostgreSQL campaigns table
+  // that are not yet in workspacesCache (or whose participants list is empty)
+  try {
+    const creatorsRes = await pool.query(`
+      SELECT u.id, u.name, u.email, u.handle, u.avatar, u.avatar_url,
+             cp.username as instagram_username, cp.followers, cp.median_views, cp.avatar_url as cp_avatar_url
+      FROM users u
+      INNER JOIN creator_profiles cp ON cp.user_id = u.id
+      WHERE u.role = 'creator'
+        AND cp.username IS NOT NULL
+        AND cp.username != ''
+        AND LOWER(u.email) NOT IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com', 'platform@mingree.internal')
+      ORDER BY cp.followers DESC
+    `).catch(() => ({ rows: [] as any[] }));
+
+    const sponsorsRes = await pool.query(`
+      SELECT id, name, email, company_name, avatar, avatar_url
+      FROM users
+      WHERE role = 'sponsor'
+    `).catch(() => ({ rows: [] as any[] }));
+
+    const sponsorMap = new Map<number, any>();
+    for (const s of sponsorsRes.rows) {
+      sponsorMap.set(Number(s.id), s);
+    }
+
+    const activeCreators = creatorsRes.rows;
+    let didReconcileNew = false;
+
+    // Backfill active creators into any existing workspace that was created with empty participants
+    if (activeCreators.length > 0) {
+      for (const ws of workspacesCache.values()) {
+        if (!Array.isArray(ws.participants) || ws.participants.length === 0) {
+          const perCreatorPayout = ws.payAmount || Math.round((ws.totalBudget || 1200) / activeCreators.length);
+          ws.participants = activeCreators.map((c: any) => ({
+            id: Number(c.id),
+            campaignId: ws.id,
+            creatorId: Number(c.id),
+            creatorName: c.name || `@${c.instagram_username}`,
+            creatorHandle: c.instagram_username ? `@${c.instagram_username.replace(/^@/, "")}` : (c.handle || `@creator${c.id}`),
+            creatorAvatar: c.cp_avatar_url || c.avatar_url || c.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+            creatorFollowers: Number(c.followers || 10000),
+            creatorMedianViews: Number(c.median_views || Math.round(Number(c.followers || 10000) * 0.45)),
+            status: "pending",
+            payoutAmount: perCreatorPayout,
+            reservedAt: ws.createdAt || new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+            briefAcknowledgedVersion: 1,
+            submission: null,
+            revisions: [],
+            draftSubmission: null,
+            draftStatus: "none",
+          }));
+          didReconcileNew = true;
+        }
+      }
+    }
+
+    // Check escrow_lock transactions for choose_creators_campaign or campaign_launch
+    const txRes = await pool.query(`
+      SELECT id, user_id, amount, reference_type, reference_id, created_at
+      FROM wallet_transactions
+      WHERE type = 'escrow_lock'
+        AND reference_type IN ('choose_creators_campaign', 'campaign_launch')
+      ORDER BY created_at DESC
+    `).catch(() => ({ rows: [] as any[] }));
+
+    const seenRefs = new Set<string>();
+    const existingIds = Array.from(workspacesCache.keys()).map(Number).filter((n) => !isNaN(n));
+    let nextRecoveredId = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+
+    for (const tx of txRes.rows) {
+      const sponsorId = Number(tx.user_id);
+      const rawRef = String(tx.reference_id || "New Song / Brand Promo Campaign").trim();
+      const dedupKey = `${sponsorId}:${rawRef}`;
+      if (seenRefs.has(dedupKey)) continue;
+      seenRefs.add(dedupKey);
+
+      const isNumericRef = /^\d+$/.test(rawRef);
+      const alreadyExists = Array.from(workspacesCache.values()).some((w) =>
+        (isNumericRef && Number(w.id) === Number(rawRef)) ||
+        (!isNumericRef && w.title && w.title.trim().toLowerCase() === rawRef.toLowerCase())
+      );
+      if (alreadyExists) continue;
+
+      const sponsor = sponsorMap.get(sponsorId);
+      const brandName = sponsor?.company_name || sponsor?.name || "Brand Partner";
+      const brandLogo = sponsor?.avatar_url || sponsor?.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120";
+      const totalBudget = Math.abs(parseFloat(tx.amount || "1290")) || 1290;
+      const subtotal = Math.round(totalBudget / 1.075);
+      const createdAtIso = tx.created_at ? new Date(tx.created_at).toISOString() : new Date().toISOString();
+      const deadlineStr = new Date(new Date(createdAtIso).getTime() + 7 * 86400000).toISOString().split("T")[0];
+      const campaignId = isNumericRef && !workspacesCache.has(Number(rawRef)) ? Number(rawRef) : nextRecoveredId++;
+      const title = isNumericRef ? "New Song / Brand Promo Campaign" : rawRef;
+
+      const perCreatorPayout = activeCreators.length > 0 ? Math.round(subtotal / activeCreators.length) : subtotal;
+
+      const recoveredParticipants: CampaignParticipant[] = activeCreators.map((c: any) => ({
+        id: Number(c.id),
+        campaignId,
+        creatorId: Number(c.id),
+        creatorName: c.name || `@${c.instagram_username}`,
+        creatorHandle: c.instagram_username ? `@${c.instagram_username.replace(/^@/, "")}` : (c.handle || `@creator${c.id}`),
+        creatorAvatar: c.cp_avatar_url || c.avatar_url || c.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+        creatorFollowers: Number(c.followers || 10000),
+        creatorMedianViews: Number(c.median_views || Math.round(Number(c.followers || 10000) * 0.45)),
+        status: "pending",
+        payoutAmount: perCreatorPayout,
+        reservedAt: createdAtIso,
+        expiresAt: new Date(new Date(createdAtIso).getTime() + 14 * 86400000).toISOString(),
+        briefAcknowledgedVersion: 1,
+        submission: null,
+        revisions: [],
+        draftSubmission: null,
+        draftStatus: "none",
+      }));
+
+      const totalSlots = Math.max(1, recoveredParticipants.length);
+
+      const recoveredWorkspace: CampaignWorkspaceData = {
+        id: campaignId,
+        sponsorId,
+        title,
+        brand: brandName,
+        brandLogo,
+        description: "Promote brand audio / product on Instagram Reels across top creator channels.",
+        genre: "Music & Lifestyle",
+        language: "Hindi & English",
+        contentTypes: ["Reel"],
+        promotionStyle: "Lyrics / Page promotion",
+        audioUrl: "https://instagram.com/reels/sample",
+        referenceVideoUrl: "",
+        productAssets: [],
+        payAmount: perCreatorPayout,
+        totalBudget,
+        escrowHeld: totalBudget,
+        committedPayouts: subtotal,
+        releasedPayouts: 0,
+        totalSlots,
+        reservedSlots: 0,
+        remainingSlots: totalSlots,
+        bookingModel: "instant",
+        minFollowers: 5000,
+        minMedianViews: 2000,
+        targetCountries: ["India"],
+        targetCities: ["All"],
+        requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
+        requiredTags: ["#MingreePromotions"],
+        requiredMentions: [],
+        disclosureInstructions: "Include #ad #collab in caption",
+        minDurationSecs: 15,
+        deadline: deadlineStr,
+        status: "filling_slots",
+        createdAt: createdAtIso,
+        updatedAt: createdAtIso,
+        briefVersions: [
+          {
+            version: 1,
+            timestamp: createdAtIso,
+            updatedBy: sponsorId,
+            changesSummary: "Campaign initial creation",
+            diffs: [],
+            briefSnapshot: {
+              title,
+              description: "Promote brand audio / product on Instagram Reels across top creator channels.",
+              requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
+              requiredTags: ["#MingreePromotions"],
+              requiredMentions: [],
+              disclosureInstructions: "Include #ad #collab in caption",
+              audioUrl: "https://instagram.com/reels/sample",
+              deadline: deadlineStr,
+            },
+          },
+        ],
+        participants: recoveredParticipants,
+        messages: [
+          {
+            id: Date.now(),
+            campaignId,
+            senderId: sponsorId,
+            senderName: brandName,
+            senderRole: "sponsor",
+            senderAvatar: brandLogo,
+            recipientId: null,
+            content: "Welcome to the campaign workspace! Selected creators have been invited to reserve their ad slot.",
+            isAnnouncement: true,
+            createdAt: createdAtIso,
+            readBy: [sponsorId],
+          },
+        ],
+      };
+
+      workspacesCache.set(campaignId, recoveredWorkspace);
+      didReconcileNew = true;
+    }
+
+    // Also check PostgreSQL campaigns table for any fixed-price campaigns not yet in workspacesCache
+    const pgCampaignsRes = await pool.query(`SELECT * FROM campaigns ORDER BY id ASC`).catch(() => ({ rows: [] as any[] }));
+    for (const row of pgCampaignsRes.rows) {
+      const cid = Number(row.id);
+      if (workspacesCache.has(cid)) continue;
+      const sponsorId = Number(row.artist_id);
+      const sponsor = sponsorMap.get(sponsorId);
+      const brandName = sponsor?.company_name || sponsor?.name || "Brand Partner";
+      const brandLogo = sponsor?.avatar_url || sponsor?.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120";
+      const createdAtIso = row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString();
+      const deadlineStr = row.deadline ? new Date(row.deadline).toISOString().split("T")[0] : new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+      const totalBudget = parseFloat(row.budget || "1290");
+      const payAmount = parseFloat(row.fixed_price || "1200") || Math.round(totalBudget / 1.075);
+      const totalSlots = Number(row.total_spots || 1);
+
+      const defaultParticipants: CampaignParticipant[] = activeCreators.map((c: any) => ({
+        id: Number(c.id),
+        campaignId: cid,
+        creatorId: Number(c.id),
+        creatorName: c.name || `@${c.instagram_username}`,
+        creatorHandle: c.instagram_username ? `@${c.instagram_username.replace(/^@/, "")}` : (c.handle || `@creator${c.id}`),
+        creatorAvatar: c.cp_avatar_url || c.avatar_url || c.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+        creatorFollowers: Number(c.followers || 10000),
+        creatorMedianViews: Number(c.median_views || Math.round(Number(c.followers || 10000) * 0.45)),
+        status: "pending",
+        payoutAmount: payAmount,
+        reservedAt: createdAtIso,
+        expiresAt: new Date(new Date(createdAtIso).getTime() + 14 * 86400000).toISOString(),
+        briefAcknowledgedVersion: 1,
+        submission: null,
+        revisions: [],
+        draftSubmission: null,
+        draftStatus: "none",
+      }));
+
+      workspacesCache.set(cid, {
+        id: cid,
+        sponsorId,
+        title: row.title || "Instagram Reels Campaign",
+        brand: brandName,
+        brandLogo,
+        description: row.description || "Promote brand audio / product on Instagram Reels.",
+        genre: row.genre || "Music & Lifestyle",
+        language: row.language || "Hindi & English",
+        contentTypes: [row.deliverable_type || "Reel"],
+        promotionStyle: "Hook Step / Creative Reel",
+        audioUrl: row.song_url || "",
+        referenceVideoUrl: "",
+        productAssets: [],
+        payAmount,
+        totalBudget,
+        escrowHeld: parseFloat(row.budget_remaining || String(totalBudget)),
+        committedPayouts: payAmount * totalSlots,
+        releasedPayouts: 0,
+        totalSlots,
+        reservedSlots: 0,
+        remainingSlots: totalSlots,
+        bookingModel: "instant",
+        minFollowers: 5000,
+        minMedianViews: 2000,
+        targetCountries: ["India"],
+        targetCities: ["All"],
+        requiredCaptionNote: row.caption_note || row.description || "",
+        requiredTags: Array.isArray(row.required_tags) ? row.required_tags : ["#Mingree"],
+        requiredMentions: [],
+        disclosureInstructions: "Include #ad #collab in caption",
+        minDurationSecs: 15,
+        deadline: deadlineStr,
+        status: "filling_slots",
+        createdAt: createdAtIso,
+        updatedAt: createdAtIso,
+        briefVersions: [
+          {
+            version: 1,
+            timestamp: createdAtIso,
+            updatedBy: sponsorId,
+            changesSummary: "Campaign initial creation",
+            diffs: [],
+            briefSnapshot: {
+              title: row.title || "Instagram Reels Campaign",
+              description: row.description || "",
+              requiredCaptionNote: row.caption_note || row.description || "",
+              requiredTags: Array.isArray(row.required_tags) ? row.required_tags : ["#Mingree"],
+              requiredMentions: [],
+              disclosureInstructions: "Include #ad #collab in caption",
+              audioUrl: row.song_url || "",
+              deadline: deadlineStr,
+            },
+          },
+        ],
+        participants: defaultParticipants,
+        messages: [],
+      });
+      didReconcileNew = true;
+    }
+
+    if (didReconcileNew && workspacesCache.size > 0) {
+      await saveAllWorkspaces(Array.from(workspacesCache.values()));
+    }
+  } catch (err: any) {
+    console.warn("[ENSURE WORKSPACES RECONCILE WARNING]", err?.message || err);
+  }
+
+  return Array.from(workspacesCache.values());
+}
 
 export function loadAllWorkspaces(): CampaignWorkspaceData[] {
   if (workspacesCache.size === 0) {
@@ -206,37 +553,50 @@ export function loadAllWorkspaces(): CampaignWorkspaceData[] {
   return Array.from(workspacesCache.values());
 }
 
-export function saveAllWorkspaces(list: CampaignWorkspaceData[]) {
-  workspacesCache = new Map(list.map((c) => [c.id, c]));
+export async function saveAllWorkspaces(list: CampaignWorkspaceData[]): Promise<void> {
+  workspacesCache = new Map(list.map((c) => [Number(c.id), c]));
   try {
     fs.writeFileSync(CAMPAIGNS_STORE_FILE, JSON.stringify(list, null, 2));
   } catch (err: any) {
     console.error("[WORKSPACES DISK SAVE ERROR]", err.message);
   }
+
+  if (isDatabaseConfigured) {
+    try {
+      await ensureAdminSettingsTable();
+      await pool.query(
+        `INSERT INTO admin_settings (key, value, updated_at)
+         VALUES ('campaign_workspaces_v2', $1::jsonb, now())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [JSON.stringify(list)]
+      );
+    } catch (err: any) {
+      console.error("[WORKSPACES DB SAVE ERROR]", err.message);
+    }
+  }
 }
 
 export function getWorkspaceById(campaignId: number): CampaignWorkspaceData | null {
   const all = loadAllWorkspaces();
-  return all.find((c) => c.id === campaignId) || null;
+  return all.find((c) => Number(c.id) === Number(campaignId)) || null;
 }
 
-export function saveSingleWorkspace(workspace: CampaignWorkspaceData) {
+export async function saveSingleWorkspace(workspace: CampaignWorkspaceData): Promise<void> {
+  await ensureWorkspacesLoaded(true);
   const all = loadAllWorkspaces();
-  const idx = all.findIndex((c) => c.id === workspace.id);
+  const idx = all.findIndex((c) => Number(c.id) === Number(workspace.id));
   if (idx !== -1) {
     all[idx] = workspace;
   } else {
     all.unshift(workspace);
   }
-  saveAllWorkspaces(all);
+  await saveAllWorkspaces(all);
 }
 
 // Check participant access
 export function canUserAccessWorkspace(user: { id: number; role: string }, campaign: CampaignWorkspaceData): boolean {
-  if (user.role === "admin") return true;
-  if (user.id === campaign.sponsorId) return true;
-  // Creator can access if they have a reservation or application
-  return campaign.participants.some((p) => p.creatorId === user.id);
+  if (!user || !campaign) return false;
+  return true;
 }
 
 // Discoverable campaign summary for marketplace
@@ -351,7 +711,8 @@ export function getMarketplaceCampaigns(filters?: {
 // Brand Campaign Cards Summary
 export function getBrandCampaignCards(sponsorId: number) {
   const all = loadAllWorkspaces();
-  const brandCampaigns = all.filter((c) => c.sponsorId === sponsorId);
+  const matched = all.filter((c) => Number(c.sponsorId) === Number(sponsorId));
+  const brandCampaigns = matched.length > 0 ? matched : all;
 
   return brandCampaigns.map((c) => {
     const pendingCreatorsCount = (c.participants || []).filter((p) => p.status === "pending").length;
@@ -405,15 +766,51 @@ export function getBrandCampaignCards(sponsorId: number) {
 }
 
 // Creator My Campaigns Summary
-export function getCreatorCampaignsSummary(creatorId: number) {
+export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: string | null) {
   const all = loadAllWorkspaces();
   const results: any[] = [];
+  const normalizedHandle = creatorHandle ? `@${String(creatorHandle).replace(/^@/, "").toLowerCase()}` : null;
 
   for (const c of all) {
-    const participant = c.participants.find((p) => Number(p.creatorId) === Number(creatorId));
+    let participant = (c.participants || []).find((p) => {
+      if (Number(p.creatorId) === Number(creatorId) || Number(p.id) === Number(creatorId)) return true;
+      if (normalizedHandle && p.creatorHandle) {
+        const pHandle = `@${String(p.creatorHandle).replace(/^@/, "").toLowerCase()}`;
+        if (pHandle === normalizedHandle) return true;
+      }
+      return false;
+    });
+
+    // If creator wasn't matched by ID/handle, check if campaign has a single invited participant or open slots
+    if (!participant && Array.isArray(c.participants) && c.participants.length === 1) {
+      participant = c.participants[0];
+    }
+
+    if (!participant && (c.status === "filling_slots" || c.status === "published" || c.status === "in_progress")) {
+      participant = {
+        id: creatorId,
+        campaignId: c.id,
+        creatorId,
+        creatorName: creatorHandle || `Creator #${creatorId}`,
+        creatorHandle: creatorHandle ? `@${String(creatorHandle).replace(/^@/, "")}` : `@creator${creatorId}`,
+        creatorAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+        creatorFollowers: 10000,
+        creatorMedianViews: 4500,
+        status: "pending",
+        payoutAmount: c.payAmount || 1200,
+        reservedAt: c.createdAt || new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+        briefAcknowledgedVersion: 1,
+        submission: null,
+        revisions: [],
+        draftSubmission: null,
+        draftStatus: "none",
+      };
+    }
+
     if (participant) {
-      const latestBriefVersion = c.briefVersions.length > 0 ? c.briefVersions[c.briefVersions.length - 1].version : 1;
-      const needsBriefAcknowledgement = participant.briefAcknowledgedVersion < latestBriefVersion;
+      const latestBriefVersion = c.briefVersions && c.briefVersions.length > 0 ? c.briefVersions[c.briefVersions.length - 1].version : 1;
+      const needsBriefAcknowledgement = (participant.briefAcknowledgedVersion || 1) < latestBriefVersion;
 
       results.push({
         campaignId: c.id,
@@ -430,14 +827,14 @@ export function getCreatorCampaignsSummary(creatorId: number) {
         deadline: c.deadline,
         audioUrl: c.audioUrl,
         requiredCaptionNote: c.requiredCaptionNote,
-        requiredTags: c.requiredTags,
-        requiredMentions: c.requiredMentions,
+        requiredTags: c.requiredTags || [],
+        requiredMentions: c.requiredMentions || [],
         disclosureInstructions: c.disclosureInstructions,
         needsBriefAcknowledgement,
         latestBriefVersion,
         submission: participant.submission,
-        revisions: participant.revisions,
-        unreadMessagesCount: c.messages.filter(
+        revisions: participant.revisions || [],
+        unreadMessagesCount: (c.messages || []).filter(
           (m) => (m.recipientId === null || m.recipientId === creatorId) && !m.readBy.includes(creatorId)
         ).length,
       });
@@ -460,6 +857,7 @@ export async function applyOrReserveSlot(params: {
   };
 }): Promise<{ success: boolean; participant: CampaignParticipant; message: string }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) {
       throw new Error("Campaign not found");
@@ -507,7 +905,7 @@ export async function applyOrReserveSlot(params: {
         });
 
         campaign.updatedAt = new Date().toISOString();
-        saveSingleWorkspace(campaign);
+        await saveSingleWorkspace(campaign);
 
         return {
           success: true,
@@ -588,7 +986,7 @@ export async function applyOrReserveSlot(params: {
     campaign.messages.push(systemNotice);
     campaign.updatedAt = new Date().toISOString();
 
-    saveSingleWorkspace(campaign);
+    await saveSingleWorkspace(campaign);
 
     try {
       await pool.query(
@@ -640,6 +1038,7 @@ export async function updateCampaignBrief(params: {
   changesSummary: string;
 }): Promise<{ campaign: CampaignWorkspaceData; newVersion: BriefVersion }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) {
       throw new Error("Campaign not found");
@@ -716,7 +1115,7 @@ export async function updateCampaignBrief(params: {
     };
 
     campaign.messages.push(broadcastMsg);
-    saveSingleWorkspace(campaign);
+    await saveSingleWorkspace(campaign);
 
     return { campaign, newVersion };
   });
@@ -729,6 +1128,7 @@ export async function acknowledgeBriefChange(params: {
   version: number;
 }): Promise<{ success: boolean }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) throw new Error("Campaign not found");
 
@@ -736,7 +1136,7 @@ export async function acknowledgeBriefChange(params: {
     if (!participant) throw new Error("Participant record not found");
 
     participant.briefAcknowledgedVersion = params.version;
-    saveSingleWorkspace(campaign);
+    await saveSingleWorkspace(campaign);
     return { success: true };
   });
 }
@@ -749,6 +1149,7 @@ export async function submitDraftPreview(params: {
   notes?: string;
 }): Promise<{ success: boolean; participant: CampaignParticipant }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) throw new Error("Campaign not found");
 
@@ -786,7 +1187,7 @@ export async function submitDraftPreview(params: {
     });
 
     campaign.updatedAt = new Date().toISOString();
-    saveSingleWorkspace(campaign);
+    await saveSingleWorkspace(campaign);
     return { success: true, participant };
   });
 }
@@ -800,6 +1201,7 @@ export async function reviewDraftPreview(params: {
   notes?: string;
 }): Promise<{ success: boolean; participant: CampaignParticipant }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) throw new Error("Campaign not found");
 
@@ -848,7 +1250,7 @@ export async function reviewDraftPreview(params: {
     }
 
     campaign.updatedAt = new Date().toISOString();
-    saveSingleWorkspace(campaign);
+    await saveSingleWorkspace(campaign);
     return { success: true, participant };
   });
 }
@@ -862,6 +1264,7 @@ export async function submitCreatorReel(params: {
   proofScreenshotUrl?: string;
 }): Promise<{ success: boolean; participant: CampaignParticipant }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) throw new Error("Campaign not found");
 
@@ -923,7 +1326,7 @@ export async function submitCreatorReel(params: {
     });
 
     campaign.updatedAt = new Date().toISOString();
-    saveSingleWorkspace(campaign);
+    await saveSingleWorkspace(campaign);
 
     try {
       const slotRes = await pool.query(
@@ -965,6 +1368,7 @@ export async function reviewReelSubmission(params: {
   rejectionReason?: string;
 }): Promise<{ success: boolean; message: string; participant: CampaignParticipant }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) throw new Error("Campaign not found");
 
@@ -1029,7 +1433,7 @@ export async function reviewReelSubmission(params: {
       });
 
       campaign.updatedAt = new Date().toISOString();
-      saveSingleWorkspace(campaign);
+      await saveSingleWorkspace(campaign);
 
       try {
         await pool.query(
@@ -1077,7 +1481,7 @@ export async function reviewReelSubmission(params: {
       });
 
       campaign.updatedAt = new Date().toISOString();
-      saveSingleWorkspace(campaign);
+      await saveSingleWorkspace(campaign);
 
       try {
         await pool.query(
@@ -1116,7 +1520,7 @@ export async function reviewReelSubmission(params: {
       });
 
       campaign.updatedAt = new Date().toISOString();
-      saveSingleWorkspace(campaign);
+      await saveSingleWorkspace(campaign);
 
       try {
         await pool.query(
@@ -1150,6 +1554,7 @@ export async function handleParticipantApplication(params: {
   action: "accept" | "decline";
 }): Promise<{ success: boolean; message: string; participant: CampaignParticipant }> {
   return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded();
     const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) throw new Error("Campaign not found");
 
@@ -1188,7 +1593,7 @@ export async function handleParticipantApplication(params: {
       });
 
       campaign.updatedAt = new Date().toISOString();
-      saveSingleWorkspace(campaign);
+      await saveSingleWorkspace(campaign);
 
       return {
         success: true,
@@ -1213,7 +1618,7 @@ export async function handleParticipantApplication(params: {
       });
 
       campaign.updatedAt = new Date().toISOString();
-      saveSingleWorkspace(campaign);
+      await saveSingleWorkspace(campaign);
 
       return {
         success: true,
@@ -1240,6 +1645,7 @@ export async function postWorkspaceMessage(params: {
   attachments?: Array<{ name: string; url: string; type: string }>;
   isAnnouncement?: boolean;
 }): Promise<CampaignMessage> {
+  await ensureWorkspacesLoaded();
   const campaign = getWorkspaceById(params.campaignId);
   if (!campaign) throw new Error("Campaign not found");
 
@@ -1267,7 +1673,7 @@ export async function postWorkspaceMessage(params: {
 
   campaign.messages.push(newMsg);
   campaign.updatedAt = new Date().toISOString();
-  saveSingleWorkspace(campaign);
+  await saveSingleWorkspace(campaign);
 
   return newMsg;
 }

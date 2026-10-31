@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useLocation } from "wouter";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { SponsorSidebar } from "@/components/SponsorSidebar";
 import { ManualCampaignPage } from "@/features/manual-campaign/ManualCampaignPage";
@@ -8,6 +9,7 @@ import { createHttpApi } from "@/features/manual-campaign/httpApi";
 // "Choose creators" campaign page. Route: /sponsor/create-campaign/manual
 export default function CreateCampaignManual() {
   const [, navigate] = useLocation();
+  const queryClient = useQueryClient();
   const api = useMemo(() => createHttpApi(), []);
   return (
     <div className="flex min-h-screen bg-background">
@@ -17,9 +19,19 @@ export default function CreateCampaignManual() {
           api={api}
           onBack={() => navigate("/sponsor/create-campaign")}
           onAddMoney={() => navigate("/sponsor/wallet")}
-          onCreated={() => { toast.success("Campaign launched. Creators have been notified."); navigate("/sponsor/campaigns"); }}
+          onCreated={(campaignId) => {
+            queryClient.invalidateQueries({ queryKey: ["brandCampaignCards"] });
+            queryClient.invalidateQueries({ queryKey: ["campaignWorkspace"] });
+            toast.success("Campaign launched! Opening campaign workspace folder...");
+            if (campaignId) {
+              navigate(`/sponsor/campaigns/${campaignId}/workspace`);
+            } else {
+              navigate("/sponsor/campaigns");
+            }
+          }}
         />
       </main>
     </div>
   );
 }
+

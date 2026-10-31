@@ -205,7 +205,7 @@ export default function CreatorCampaignWorkspace() {
     );
   }
 
-  if (error || !workspace) {
+  if (!workspace) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="max-w-md w-full rounded-2xl bg-card border border-border/80 p-8 text-center shadow-lg space-y-4">

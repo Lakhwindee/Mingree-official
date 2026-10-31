@@ -31,8 +31,9 @@ import {
 } from "lucide-react";
 
 export default function CampaignWorkspace() {
-  const [, params] = useRoute("/sponsor/campaigns/:id/workspace");
-  const campaignId = Number((params as any)?.id || 0);
+  const [, sponsorParams] = useRoute("/sponsor/campaigns/:id/workspace");
+  const [, creatorParams] = useRoute("/campaigns/:id/workspace");
+  const campaignId = Number((sponsorParams as any)?.id || (creatorParams as any)?.id || 0);
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -253,26 +254,41 @@ export default function CampaignWorkspace() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <div className="text-center">
-          <div className="h-9 w-9 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
-          <p className="mt-3 text-xs text-muted-foreground">Opening Campaign Folder...</p>
+      <div className="flex min-h-screen bg-background text-foreground">
+        {user?.role !== "creator" && <SponsorSidebar />}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center">
+            <div className="h-9 w-9 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
+            <p className="mt-3 text-xs text-muted-foreground">Opening Campaign Folder...</p>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (error || !workspace) {
+  if (!workspace) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-foreground p-4">
-        <div className="max-w-md rounded-2xl bg-card border border-border p-8 text-center shadow-sm">
-          <h2 className="text-lg font-bold text-foreground">Workspace Unavailable</h2>
-          <p className="text-xs text-muted-foreground mt-2">
-            {(error as any)?.message || "You do not have access to this campaign workspace or it does not exist."}
-          </p>
-          <Link href="/sponsor/campaigns">
-            <Button className="mt-6 text-xs font-semibold rounded-xl">Back to Workspaces</Button>
-          </Link>
+      <div className="flex min-h-screen bg-background text-foreground">
+        {user?.role !== "creator" && <SponsorSidebar />}
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="max-w-md rounded-2xl bg-card border border-border p-8 text-center shadow-sm">
+            <h2 className="text-lg font-bold text-foreground">Workspace Unavailable</h2>
+            <p className="text-xs text-muted-foreground mt-2">
+              {(error as any)?.message || "You do not have access to this campaign workspace or it does not exist."}
+            </p>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <Button
+                variant="outline"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] })}
+                className="text-xs font-semibold rounded-xl"
+              >
+                Retry
+              </Button>
+              <Link href={user?.role === "creator" ? "/dashboard" : "/sponsor/campaigns"}>
+                <Button className="text-xs font-semibold rounded-xl">Back to Workspaces</Button>
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
     );
