@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -31,6 +32,7 @@ import {
   FileText,
   FolderOpen,
   Heart,
+  History,
   IndianRupee,
   MessageCircle,
   MessageSquare,
@@ -50,6 +52,7 @@ export default function CampaignWorkspace() {
 
   // Initially null so ONLY the creators list is displayed until the user clicks a creator row
   const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(null);
+  const [creatorTab, setCreatorTab] = useState<"active" | "history">("active");
   const [revisionNote, setRevisionNote] = useState<string>("");
   const [showRevisionInputFor, setShowRevisionInputFor] = useState<number | null>(null);
   const [isEditDescOpen, setIsEditDescOpen] = useState(false);
@@ -70,6 +73,15 @@ export default function CampaignWorkspace() {
     (p) => p.status !== "rejected" && p.status !== "withdrawn"
   );
 
+  const activeParticipants = allParticipants.filter(
+    (p) => p.status !== "approved" && p.status !== "completed"
+  );
+  const historyParticipants = allParticipants.filter(
+    (p) => p.status === "approved" || p.status === "completed"
+  );
+  const displayedParticipants =
+    creatorTab === "active" ? activeParticipants : historyParticipants;
+
   const reviewSubmissionMutation = useMutation({
     mutationFn: (data: {
       participantId: number;
@@ -77,11 +89,15 @@ export default function CampaignWorkspace() {
       reason?: string;
       notes?: string;
     }) => api.reviewReelSubmission(campaignId, data),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
       setRevisionNote("");
       setShowRevisionInputFor(null);
-      toast.success(data.message || "Reel review updated!");
+      if (variables.action === "approve") {
+        toast.success("Reel approved & payout released! Creator moved to Completed & History tab.");
+      } else {
+        toast.success(data.message || "Reel review updated!");
+      }
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to update reel review");
@@ -224,38 +240,96 @@ export default function CampaignWorkspace() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-              Pending: {pendingCreators.length}
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+              Active: {activeParticipants.length}
             </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
-              Reserved: {reservedCreators.length}
+              Completed: {historyParticipants.length}
             </span>
           </div>
         </div>
 
-        {/* Creators List — Click any creator row to expand all options below it */}
+        {/* Creators List — Tabs for Active vs Completed & History */}
         <div className="max-w-4xl mx-auto p-4 md:p-6">
           <Card className="bg-card border-border shadow-xs overflow-hidden rounded-2xl">
-            <CardHeader className="p-4 border-b border-border bg-muted/20 flex flex-row items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-primary" />
-                <CardTitle className="text-sm sm:text-base font-bold text-foreground">
-                  Selected Creators ({allParticipants.length})
-                </CardTitle>
+            <CardHeader className="p-4 border-b border-border bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant={creatorTab === "active" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setCreatorTab("active");
+                    setSelectedCreatorId(null);
+                  }}
+                  className="text-xs font-bold rounded-xl h-8 px-3.5 cursor-pointer"
+                >
+                  <Users className="h-3.5 w-3.5 mr-1.5" />
+                  Active Creators ({activeParticipants.length})
+                </Button>
+                <Button
+                  variant={creatorTab === "history" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setCreatorTab("history");
+                    setSelectedCreatorId(null);
+                  }}
+                  className={cn(
+                    "text-xs font-bold rounded-xl h-8 px-3.5 cursor-pointer",
+                    creatorTab === "history"
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                      : "text-emerald-700 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10"
+                  )}
+                >
+                  <History className="h-3.5 w-3.5 mr-1.5" />
+                  Completed & History ({historyParticipants.length})
+                </Button>
               </div>
               <span className="text-xs text-muted-foreground">
-                Click on any creator to open Rate Chat & Reel Details
+                {creatorTab === "active"
+                  ? "Pending & in-progress creators"
+                  : "Approved reels & payout receipts"}
               </span>
             </CardHeader>
 
             <CardContent className="p-0">
-              {allParticipants.length === 0 ? (
-                <div className="p-8 text-center text-xs text-muted-foreground">
-                  No creators in this campaign yet.
-                </div>
+              {displayedParticipants.length === 0 ? (
+                creatorTab === "active" ? (
+                  <div className="p-10 text-center space-y-3">
+                    <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
+                      <CheckCircle2 className="h-6 w-6" />
+                    </div>
+                    <h4 className="font-bold text-sm text-foreground">Active List Clean & Clear!</h4>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      {historyParticipants.length > 0
+                        ? `All creator submissions have been approved and moved to the Completed & History tab.`
+                        : "No active creators in this campaign right now."}
+                    </p>
+                    {historyParticipants.length > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCreatorTab("history")}
+                        className="text-xs font-bold rounded-xl cursor-pointer mt-1"
+                      >
+                        <History className="h-3.5 w-3.5 mr-1.5 text-emerald-600" />
+                        View Completed & History ({historyParticipants.length})
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-10 text-center space-y-2">
+                    <div className="h-12 w-12 rounded-2xl bg-muted text-muted-foreground flex items-center justify-center mx-auto">
+                      <History className="h-6 w-6" />
+                    </div>
+                    <h4 className="font-bold text-sm text-foreground">No Completed Submissions Yet</h4>
+                    <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                      Once you review and approve a creator's Reel submission, they will automatically be archived here along with their live Reel link and payout receipt.
+                    </p>
+                  </div>
+                )
               ) : (
                 <div className="divide-y divide-border">
-                  {allParticipants.map((p, index) => {
+                  {displayedParticipants.map((p, index) => {
                     const isExpanded = Number(selectedCreatorId) === Number(p.creatorId);
 
                     return (

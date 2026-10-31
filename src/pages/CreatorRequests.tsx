@@ -24,6 +24,7 @@ import {
   ExternalLink,
   Film,
   Hash,
+  History,
   IndianRupee,
   Layers,
   Music2,
@@ -34,7 +35,7 @@ import {
 export default function CreatorRequests() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState<"deals" | "rate-card">("deals");
+  const [mainTab, setMainTab] = useState<"deals" | "history" | "rate-card">("deals");
 
   // Popup 1: Simple Deal Info, File Download & Submit Reel Link ONLY
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
@@ -147,7 +148,23 @@ export default function CreatorRequests() {
     return false;
   };
 
-  const pendingBrandDeals = workspaces.filter((ws: any) => !isDealReserved(ws));
+  // Identify completed & approved deals for history tab
+  const isDealCompleted = (deal: any) => {
+    if (!deal) return false;
+    const s = String(deal.status || "").toLowerCase().trim();
+    if (s === "approved" || s === "completed") return true;
+    const hasCompletedReservation = reservations.some((r: any) => {
+      if (Number(r.campaignId) !== Number(deal.campaignId)) return false;
+      const rStatus = String(r.status || "").toLowerCase().trim();
+      return rStatus === "approved" || rStatus === "completed";
+    });
+    return hasCompletedReservation;
+  };
+
+  const historyDeals = workspaces.filter((ws: any) => isDealCompleted(ws));
+  const pendingBrandDeals = workspaces.filter(
+    (ws: any) => !isDealReserved(ws) && !isDealCompleted(ws)
+  );
 
   const selectedDeal =
     workspaces.find((w: any) => Number(w.campaignId) === Number(selectedCampaignId)) || null;
@@ -290,9 +307,9 @@ export default function CreatorRequests() {
         </header>
 
         <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-5">
-          {/* Simple 2-Button Switcher */}
-          <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-            <div className="flex items-center gap-2">
+          {/* Simple Tab Switcher */}
+          <div className="flex items-center justify-between gap-3 border-b border-border pb-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <Button
                 variant={mainTab === "deals" ? "default" : "outline"}
                 size="sm"
@@ -300,6 +317,20 @@ export default function CreatorRequests() {
                 className="text-xs rounded-xl font-semibold h-9 px-4 cursor-pointer"
               >
                 Brand Deals ({pendingBrandDeals.length})
+              </Button>
+              <Button
+                variant={mainTab === "history" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setMainTab("history")}
+                className={cn(
+                  "text-xs rounded-xl font-semibold h-9 px-4 cursor-pointer",
+                  mainTab === "history"
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "text-emerald-700 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10"
+                )}
+              >
+                <History className="h-3.5 w-3.5 mr-1.5" />
+                Completed & History ({historyDeals.length})
               </Button>
               <Button
                 variant={mainTab === "rate-card" ? "default" : "outline"}
@@ -332,11 +363,22 @@ export default function CreatorRequests() {
                     </div>
                     <h3 className="text-base font-semibold text-foreground">No Pending Brand Deals</h3>
                     <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
-                      All campaigns you have reserved or submitted are in your active workspaces.
+                      {historyDeals.length > 0
+                        ? `You have ${historyDeals.length} completed campaigns safely recorded in Completed & History.`
+                        : "All campaigns you have reserved or submitted are in your active workspaces."}
                     </p>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap justify-center">
+                      {historyDeals.length > 0 && (
+                        <Button
+                          onClick={() => setMainTab("history")}
+                          className="font-semibold text-xs rounded-xl h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                        >
+                          <History className="h-3.5 w-3.5 mr-1.5" />
+                          View Completed & History ({historyDeals.length})
+                        </Button>
+                      )}
                       <Link href="/my-campaigns">
-                        <Button className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer">
+                        <Button variant="outline" className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer">
                           Go to My Workspaces
                         </Button>
                       </Link>
@@ -355,10 +397,15 @@ export default function CreatorRequests() {
                   {pendingBrandDeals.map((ws: any) => {
                     const isInvited =
                       ws.status === "invited" || ws.status === "applied" || ws.status === "pending";
-                    const isCompleted = ws.status === "approved" || ws.status === "completed";
+                    const isCompleted = isDealCompleted(ws);
+                    const isContentSubmitted =
+                      ws.status === "content_submitted" ||
+                      ws.status === "submitted" ||
+                      Boolean(ws.submission?.postUrl);
                     const isRateFixed =
                       ws.negotiationStatus === "accepted" ||
                       isCompleted ||
+                      isContentSubmitted ||
                       ws.status === "deal_done" ||
                       Boolean(ws.dealDone);
 
@@ -494,7 +541,113 @@ export default function CreatorRequests() {
             </div>
           )}
 
-          {/* ================= TAB 2: MY RATE CARD ================= */}
+          {/* ================= TAB 2: COMPLETED DEALS & HISTORY ================= */}
+          {mainTab === "history" && (
+            <div className="space-y-4">
+              {historyDeals.length === 0 ? (
+                <Card className="border-dashed border bg-card/40">
+                  <CardContent className="flex flex-col items-center justify-center py-14 text-center px-4">
+                    <div className="h-12 w-12 rounded-2xl bg-muted text-muted-foreground flex items-center justify-center mb-3">
+                      <History className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-base font-semibold text-foreground">No Completed Deals Yet</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
+                      Once a brand or artist reviews and approves your submitted Instagram Reel, your payout and completed campaign records will be archived here safely.
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={() => setMainTab("deals")}
+                      className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer"
+                    >
+                      View Active Brand Deals
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {historyDeals.map((ws: any) => (
+                    <Card
+                      key={ws.campaignId}
+                      className="overflow-hidden border border-emerald-500/30 bg-card shadow-xs"
+                    >
+                      <div className="p-4 border-b border-border flex items-center justify-between bg-emerald-500/5">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {ws.brandLogo ? (
+                            <img
+                              src={ws.brandLogo}
+                              alt={ws.brand}
+                              className="h-10 w-10 rounded-xl object-cover border border-border shrink-0"
+                            />
+                          ) : (
+                            <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 font-bold flex items-center justify-center shrink-0">
+                              {(ws.brand || "B").charAt(0)}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block truncate">
+                              {ws.brand}
+                            </span>
+                            <h3 className="font-bold text-sm text-foreground truncate">{ws.title}</h3>
+                          </div>
+                        </div>
+
+                        <Badge className="bg-emerald-600 text-white shrink-0 text-[11px] flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Approved & Paid
+                        </Badge>
+                      </div>
+
+                      <CardContent className="p-4 space-y-3">
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-muted/40 border border-border/60">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                              Total Payout Released
+                            </span>
+                            <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                              {formatINR(ws.payAmount)}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                              Status
+                            </span>
+                            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5 block">
+                              Completed
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {ws.submission?.postUrl ? (
+                            <a
+                              href={ws.submission.postUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex-1 inline-flex items-center justify-center h-10 px-4 rounded-xl bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                              Open Published Reel
+                            </a>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              onClick={() => setSelectedCampaignId(ws.campaignId)}
+                              className="flex-1 font-bold text-xs h-10 rounded-xl cursor-pointer"
+                            >
+                              <Download className="h-3.5 w-3.5 mr-1.5" />
+                              View Brief & Files
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ================= TAB 3: MY RATE CARD ================= */}
           {mainTab === "rate-card" && (
             <Card className="border-border shadow-xs">
               <CardHeader className="p-5 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
