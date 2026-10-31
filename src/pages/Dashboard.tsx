@@ -71,7 +71,7 @@ export default function Dashboard() {
 
   const isReservationActive = (r?: ApiReservation | null): boolean => {
     if (!r) return false;
-    if (r.status === "expired" || r.status === "rejected") return false;
+    if (r.status === "expired" || r.status === "rejected" || r.status === "pending" || r.status === "applied") return false;
     if (r.status === "reserved" && r.expiresAt) {
       const isExpired = new Date(r.expiresAt).getTime() <= Date.now();
       if (isExpired) return false;
@@ -327,19 +327,32 @@ export default function Dashboard() {
                   <Card key={res.id} className="border border-border/80 shadow-xs hover:border-border transition-colors">
                     <CardContent className="p-4 flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <h4 className="text-xs sm:text-sm font-semibold text-foreground truncate">{res.campaignTitle}</h4>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs sm:text-sm font-semibold text-foreground truncate">
+                            {res.campaign?.title || res.campaignTitle || `Campaign #${res.campaignId}`}
+                          </h4>
+                          {res.status === "pending" && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-700 border border-amber-500/30 shrink-0">
+                              Pending — Reserve Ad
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[11px] text-muted-foreground block mt-0.5">
-                          {res.expiresAt ? `Due ${new Date(res.expiresAt).toLocaleDateString()}` : "In Progress"}
+                          {res.status === "pending"
+                            ? "Invited by Sponsor — Click to reserve your ad slot"
+                            : res.expiresAt
+                              ? `Due ${new Date(res.expiresAt).toLocaleDateString()}`
+                              : "In Progress"}
                         </span>
                       </div>
 
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant={res.status === "pending" ? "default" : "outline"}
                         onClick={() => navigate(`/campaigns/${res.campaignId}/workspace`)}
                         className="text-xs h-8 px-2.5 rounded-lg shrink-0"
                       >
-                        Workspace
+                        {res.status === "pending" ? "Reserve Ad" : "Workspace"}
                       </Button>
                     </CardContent>
                   </Card>

@@ -115,6 +115,20 @@ export default function MyCampaigns() {
     return activeReservations.filter((r: ApiReservation) => r.status === statusFilter);
   }, [activeReservations, statusFilter]);
 
+  const acceptInvitationMutation = useMutation({
+    mutationFn: (campaignId: number) => api.acceptCampaignInvitation(campaignId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      queryClient.invalidateQueries({ queryKey: ["allCampaigns"] });
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
+      toast.success(data.message || "Ad slot reserved! You now have 48 hours to submit your Reel.");
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to reserve ad slot");
+    },
+  });
+
   const submitMutation = useMutation({
     mutationFn: ({ reservationId, data }: { reservationId: number; data: typeof submissionData }) => {
       return api.submitWork(reservationId, data);
@@ -165,13 +179,20 @@ export default function MyCampaigns() {
 
   const getStatusBadge = (status: string) => {
     switch(status) {
+      case 'pending':
+        return (
+          <span className="inline-flex items-center text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-500/30">
+            Pending (Not Reserved)
+          </span>
+        );
       case 'reserved': 
         return (
-          <span className="inline-flex items-center text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+          <span className="inline-flex items-center text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
             Reserved
           </span>
         );
       case 'submitted': 
+      case 'content_submitted':
         return (
           <span className="inline-flex items-center text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md border border-blue-500/20">
             In Review
@@ -197,8 +218,9 @@ export default function MyCampaigns() {
   const counts = useMemo(() => {
     return {
       all: activeReservations.length,
+      pending: activeReservations.filter((r: ApiReservation) => r.status === 'pending').length,
       reserved: activeReservations.filter((r: ApiReservation) => r.status === 'reserved').length,
-      submitted: activeReservations.filter((r: ApiReservation) => r.status === 'submitted').length,
+      submitted: activeReservations.filter((r: ApiReservation) => r.status === 'submitted' || (r.status as string) === 'content_submitted').length,
       approved: activeReservations.filter((r: ApiReservation) => r.status === 'approved').length,
     };
   }, [activeReservations]);
@@ -220,7 +242,7 @@ export default function MyCampaigns() {
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Manage your claimed slots, active countdown timers, and Reel submissions.
+                Manage your invited brand deals, claimed slots, active countdown timers, and Reel submissions.
               </p>
             </div>
             {user && <NotificationDropdown userId={user.id} />}
@@ -239,6 +261,19 @@ export default function MyCampaigns() {
             >
               All ({counts.all})
             </button>
+            {counts.pending > 0 && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter("pending")}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 cursor-pointer ${
+                  statusFilter === "pending"
+                    ? "bg-amber-500 text-white shadow-xs"
+                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                }`}
+              >
+                Invited / Pending ({counts.pending})
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setStatusFilter("reserved")}
@@ -300,6 +335,7 @@ export default function MyCampaigns() {
               {filteredReservations.map((reservation: ApiReservation & { campaign: ApiCampaign }, index: number) => {
                 const campaign = reservation.campaign;
                 if (!campaign) return null;
+                const isPendingInvite = (reservation.status as string) === "pending";
 
                 return (
                   <motion.div
@@ -310,18 +346,26 @@ export default function MyCampaigns() {
                     className="h-full"
                   >
                     <Card 
-                      className="relative flex flex-col justify-between h-full min-h-[160px] sm:min-h-[175px] overflow-hidden rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-card p-3.5 sm:p-4 hover:shadow-xs transition-all"
+                      className={`relative flex flex-col justify-between h-full min-h-[165px] sm:min-h-[180px] overflow-hidden rounded-2xl border bg-card p-3.5 sm:p-4 hover:shadow-xs transition-all ${
+                        isPendingInvite
+                          ? "border-amber-500/50 ring-1 ring-amber-500/20"
+                          : "border-zinc-200 dark:border-zinc-800"
+                      }`}
                       data-testid={`card-reservation-${reservation.id}`}
                     >
                       {/* Top Edge Watermark Header */}
                       <div className="absolute top-1.5 left-3 right-3 flex items-center justify-between text-[10px] font-medium text-zinc-400 dark:text-zinc-600 pointer-events-none select-none overflow-hidden whitespace-nowrap">
-                        <span className="truncate">Watch or download asset</span>
+                        <span className="truncate">{isPendingInvite ? "Brand selected your channel" : "Watch or download asset"}</span>
                         <span>Sponsor ad</span>
                       </div>
 
-                      {/* Top Row: Red Live Countdown Badge on Left, "Sponsor ad" on Right */}
+                      {/* Top Row: Status / Countdown on Left, "Sponsor ad" on Right */}
                       <div className="flex items-center justify-between gap-2 mt-2.5 mb-2">
-                        {reservation.expiresAt ? (
+                        {isPendingInvite ? (
+                          <span className="text-xs font-semibold text-amber-700 dark:text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2.5 py-1 rounded-xl">
+                            Invited — Not Reserved
+                          </span>
+                        ) : reservation.expiresAt ? (
                           <RedCountdownBadge expiresAt={reservation.expiresAt} />
                         ) : (
                           <span className="text-xs font-mono font-bold text-red-600 bg-red-500/10 border border-red-500/20 px-2.5 py-1 rounded-xl">
@@ -329,15 +373,17 @@ export default function MyCampaigns() {
                           </span>
                         )}
                         
-                        <span className="text-xs font-normal text-zinc-800 dark:text-zinc-200">
-                          Sponsor ad
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          {formatINR(campaign.payAmount)}
                         </span>
                       </div>
 
-                      {/* Middle Body - Open space */}
-                      <div className="flex-1 my-auto"></div>
+                      {/* Middle Body */}
+                      <div className="flex-1 my-auto py-1">
+                        <p className="text-xs font-medium text-muted-foreground truncate">{campaign.title}</p>
+                      </div>
 
-                      {/* Bottom Footer Row: Brand Name on Left, Submit Button on Right */}
+                      {/* Bottom Footer Row: Brand Name on Left, Reserve or Submit Button on Right */}
                       <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-zinc-100 dark:border-zinc-800/80 mt-2">
                         <div className="min-w-0 flex-1">
                           <h3 className="font-semibold text-sm sm:text-base text-zinc-900 dark:text-zinc-100 truncate leading-snug">
@@ -345,17 +391,28 @@ export default function MyCampaigns() {
                           </h3>
                         </div>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedReservation(reservation);
-                            setIsSubmitModalOpen(true);
-                          }}
-                          className="h-9 px-4 text-xs font-semibold rounded-xl border-zinc-300 dark:border-zinc-700 bg-card hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shrink-0 cursor-pointer shadow-2xs"
-                        >
-                          Submit
-                        </Button>
+                        {isPendingInvite ? (
+                          <Button
+                            size="sm"
+                            disabled={acceptInvitationMutation.isPending}
+                            onClick={() => acceptInvitationMutation.mutate(campaign.id)}
+                            className="h-9 px-3.5 text-xs font-bold rounded-xl bg-amber-500 hover:bg-amber-600 text-white shrink-0 cursor-pointer shadow-xs"
+                          >
+                            {acceptInvitationMutation.isPending ? "Reserving..." : "Reserve Ad"}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedReservation(reservation);
+                              setIsSubmitModalOpen(true);
+                            }}
+                            className="h-9 px-4 text-xs font-semibold rounded-xl border-zinc-300 dark:border-zinc-700 bg-card hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-900 dark:text-zinc-100 shrink-0 cursor-pointer shadow-2xs"
+                          >
+                            Submit
+                          </Button>
+                        )}
                       </div>
                     </Card>
                   </motion.div>

@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, formatINR } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
@@ -25,6 +25,7 @@ const Save = __DummyIcon;
 export default function CreatorRequests() {
   const [, navigate] = useLocation();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"deals" | "rate-card">("deals");
   const [filterTab, setFilterTab] = useState<string>("all");
 
@@ -73,6 +74,20 @@ export default function CreatorRequests() {
     queryKey: ["creatorWorkspaces", user?.id],
     queryFn: () => (user ? api.getCreatorWorkspaces(user.id) : []),
     enabled: !!user,
+    refetchInterval: 4000,
+  });
+
+  const acceptInvitationMutation = useMutation({
+    mutationFn: (campaignId: number) => api.acceptCampaignInvitation(campaignId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      toast.success(data.message || "Ad slot reserved! You now have 48 hours to submit your Reel.");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to reserve ad slot");
+    },
   });
 
   const pendingRequests = workspaces.filter(
@@ -305,9 +320,19 @@ export default function CreatorRequests() {
                               </div>
                             </div>
 
-                            <div className="pt-1">
+                            <div className="pt-1 flex items-center gap-2">
+                              {isInvited && (
+                                <Button
+                                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-white shadow-xs font-bold text-xs h-9"
+                                  disabled={acceptInvitationMutation.isPending}
+                                  onClick={() => acceptInvitationMutation.mutate(ws.campaignId)}
+                                >
+                                  {acceptInvitationMutation.isPending ? "Reserving..." : "Accept & Reserve Ad"}
+                                </Button>
+                              )}
                               <Button 
-                                className="w-full shadow-xs font-semibold text-xs h-9"
+                                variant={isInvited ? "outline" : "default"}
+                                className="flex-1 shadow-xs font-semibold text-xs h-9"
                                 onClick={() => navigate(`/campaigns/${ws.campaignId}/workspace`)}
                               >
                                 Open Deal Workspace

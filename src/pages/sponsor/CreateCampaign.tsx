@@ -352,12 +352,15 @@ export default function CreateCampaign() {
     const typeLabel = CONTENT_TYPES.find(ct => ct.id === formData.contentType)?.label || "Reel";
 
     try {
+        const avgPay = getTotalCreators() > 0 ? Math.round(creatorPaymentTotal / getTotalCreators()) : (tierSelections[0]?.paymentPerCreator || 500);
         await api.createCampaign(sponsor.id, {
           title: formData.title,
           brand: formData.brand,
           brandLogo: formData.brandLogo,
           category: formData.category,
-          payAmount: "0", // Will be handled per tier
+          payAmount: String(avgPay),
+          budget: totalPayable,
+          totalBudget: totalPayable,
           type: typeLabel,
           contentTypes: [formData.contentType],
           promotionStyle: formData.promotionStyle || undefined,
@@ -369,19 +372,22 @@ export default function CreateCampaign() {
           disclosureInstructions: formData.disclosureInstructions,
           deadline: formData.deadline,
           targetCities: formData.targetCities,
-          targetCountries: [],
+          targetCountries: ["India"],
           mentions: formData.mentions.filter(m => m.trim() !== ''),
           minFollowers: Math.min(...tierSelections.map(t => t.minFollowers)),
           totalSpots: getTotalCreators(),
+          totalSlots: getTotalCreators(),
+          selectedCreators: selectedCreators.map((c: any) => c.id || c),
           tier: JSON.stringify(tierSelections.map(t => ({
             name: t.tierName,
             creatorsNeeded: t.creatorsNeeded,
             paymentPerCreator: t.paymentPerCreator,
             minFollowers: t.minFollowers
           })))
-        });
+        } as any);
       
       queryClient.invalidateQueries({ queryKey: ["sponsorCampaigns"] });
+      queryClient.invalidateQueries({ queryKey: ["sponsorCampaignCards"] });
       queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       toast.success(`Campaign created successfully!`);

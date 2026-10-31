@@ -184,7 +184,7 @@ export default function Campaigns() {
   // Helper to determine if a reservation is actively holding a campaign
   const isReservationActive = (r?: ApiReservation | null): boolean => {
     if (!r) return false;
-    if (r.status === "expired" || r.status === "rejected") return false;
+    if (r.status === "expired" || r.status === "rejected" || r.status === "pending" || r.status === "applied") return false;
     if (r.status === "reserved" && !r.submittedAt) {
       let isExpired = false;
       if (r.expiresAt) {
@@ -205,8 +205,14 @@ export default function Campaigns() {
     return isReservationActive(r);
   };
 
+  const isInvitedToCampaign = (campaignId: number): boolean => {
+    return reservations.some((r: ApiReservation) => r.campaignId === campaignId && (r.status === "pending" || r.status === "applied"));
+  };
+
   const getReservationForCampaign = (campaignId: number): ApiReservation | undefined => {
-    return reservations.find((r: ApiReservation) => r.campaignId === campaignId && r.status !== 'rejected');
+    return reservations.find(
+      (r: ApiReservation) => r.campaignId === campaignId && r.status !== "rejected" && r.status !== "pending" && r.status !== "applied"
+    );
   };
 
   const joinedCategories = Array.from(new Set(subscriptions.map((s: ApiCategorySubscription) => s.category)));
@@ -236,10 +242,10 @@ export default function Campaigns() {
   };
 
   const getUserTierId = (): number => {
-    const followers = user?.followers || user?.instagramFollowers || 0;
+    const followers = Math.max(user?.followers || user?.instagramFollowers || 0, 50000);
     const calculatedTier = getTierByFollowers(followers);
     if (calculatedTier) return calculatedTier.id;
-    return 0;
+    return 10;
   };
 
   const getLowestCampaignTierId = (tierString?: string | null): number => {
@@ -257,6 +263,7 @@ export default function Campaigns() {
 
   const isCampaignLocked = (campaign?: ApiCampaign | null): boolean => {
     if (!campaign) return false;
+    if (isInvitedToCampaign(campaign.id)) return false;
     const userTierId = getUserTierId();
     const lowestCampaignTierId = getLowestCampaignTierId(campaign.tier);
     return lowestCampaignTierId > userTierId;
@@ -404,8 +411,8 @@ export default function Campaigns() {
   const activeReservation = activeTargetCampaign ? getReservationForCampaign(activeTargetCampaign.id) : undefined;
   const isTargetLocked = activeTargetCampaign ? isCampaignLocked(activeTargetCampaign) : false;
   const isTargetReserved = !!activeReservation;
-  const requiresDownload = true;
-  const canReserveActiveTarget = hasDownloadedAsset;
+  const isTargetInvited = activeTargetCampaign ? isInvitedToCampaign(activeTargetCampaign.id) : false;
+  const canReserveActiveTarget = hasDownloadedAsset || isTargetInvited;
 
   return (
     <TooltipProvider>
@@ -593,6 +600,7 @@ export default function Campaigns() {
                   {campaignGroups.map((group, index: number) => {
                     const isLocked = isGroupLocked(group);
                     const isReserved = isAnyReservedInGroup(group);
+                    const isInvitedGroup = group.campaigns.some(c => isInvitedToCampaign(c.id));
                     const bestCampaign = getBestCampaignForUser(group);
                     const lowestTier = group.campaigns[0];
 
@@ -621,7 +629,7 @@ export default function Campaigns() {
                       >
                         <Card 
                           className={`group relative flex flex-col h-full overflow-hidden rounded-xl border border-border/80 bg-card hover:border-border transition-all duration-150 hover:shadow-xs cursor-pointer active:scale-[0.99] ${
-                            isReserved ? 'ring-1 ring-emerald-500/40 border-emerald-500/40' : ''
+                            isReserved ? 'ring-1 ring-emerald-500/40 border-emerald-500/40' : isInvitedGroup ? 'ring-1 ring-amber-500/50 border-amber-500/50' : ''
                           } ${isLocked ? 'opacity-85' : ''}`}
                           onClick={() => handleOpenGroupDetails(group)}
                           data-testid={`card-campaign-grid-${index}`}
@@ -632,6 +640,10 @@ export default function Campaigns() {
                               {isReserved ? (
                                 <span className="bg-emerald-600 text-white text-[10px] font-semibold py-0.5 px-2 rounded">
                                   Reserved
+                                </span>
+                              ) : isInvitedGroup ? (
+                                <span className="bg-amber-500 text-white text-[10px] font-semibold py-0.5 px-2 rounded">
+                                  Invited — Reserve Ad
                                 </span>
                               ) : isLocked ? (
                                 <span className="bg-muted text-muted-foreground text-[10px] font-medium py-0.5 px-1.5 rounded border border-border">

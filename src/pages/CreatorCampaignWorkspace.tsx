@@ -138,6 +138,19 @@ export default function CreatorCampaignWorkspace() {
     revisions: [],
   };
 
+  const acceptInvitationMutation = useMutation({
+    mutationFn: () => api.acceptCampaignInvitation(campaignId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
+      queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
+      toast.success(data.message || "Ad slot reserved! You now have 48 hours to submit your Reel.");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to reserve ad slot");
+    },
+  });
+
   const acknowledgeMutation = useMutation({
     mutationFn: (version: number) =>
       api.acknowledgeBriefUpdate(campaignId, version),
@@ -256,7 +269,11 @@ export default function CreatorCampaignWorkspace() {
                       : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
                   }`}
                 >
-                  {participantStatus === "content_submitted" ? "Under Review" : participantStatus.replace("_", " ")}
+                  {participantStatus === "pending"
+                    ? "Invited — Not Reserved Yet"
+                    : participantStatus === "content_submitted"
+                    ? "Under Review"
+                    : participantStatus.replace("_", " ")}
                 </span>
               </div>
               <h1 className="text-sm md:text-base font-bold text-foreground tracking-tight truncate max-w-xs md:max-w-md">
@@ -282,6 +299,28 @@ export default function CreatorCampaignWorkspace() {
       </header>
 
       <main className="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
+        {/* INVITATION ACCEPTANCE BANNER FOR PENDING CREATORS */}
+        {participantStatus === "pending" && (
+          <div className="p-4 md:p-5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-foreground">
+                You've Been Selected for This Campaign by {workspace.brand}!
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Click <strong>Accept & Reserve Ad Slot</strong> below to lock your{" "}
+                <strong className="text-emerald-600 font-bold">{formatINR(payoutAmount)}</strong> payout and start your 48-hour delivery window.
+              </p>
+            </div>
+            <Button
+              onClick={() => acceptInvitationMutation.mutate()}
+              disabled={acceptInvitationMutation.isPending}
+              className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shrink-0 rounded-xl h-10 px-5 shadow-xs cursor-pointer"
+            >
+              {acceptInvitationMutation.isPending ? "Reserving Ad..." : "Accept & Reserve Ad Slot"}
+            </Button>
+          </div>
+        )}
+
         {/* BRIEF CHANGE ACKNOWLEDGEMENT BANNER */}
         {needsBriefAcknowledgement && latestBriefInfo && (
           <div className="p-4 md:p-5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-3">

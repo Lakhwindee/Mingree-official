@@ -122,9 +122,17 @@ export default function SponsorCampaigns() {
                         <div className="space-y-1.5 pt-1">
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-muted-foreground font-medium">
-                              Slots: <strong className="text-foreground">{c.reservedSlots} / {c.totalSlots}</strong>
+                              Reserved: <strong className="text-foreground">{c.reservedSlots} / {c.totalSlots}</strong>
                             </span>
-                            <span className="text-amber-600 dark:text-amber-400 font-semibold">{c.remainingSlots} remaining</span>
+                            {(c as any).pendingCreatorsCount > 0 ? (
+                              <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                                {(c as any).pendingCreatorsCount} Pending Reservation
+                              </span>
+                            ) : (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                                {c.remainingSlots} open
+                              </span>
+                            )}
                           </div>
                           <div className="w-full bg-muted rounded-full h-2 overflow-hidden border border-border/60">
                             <div
@@ -151,7 +159,7 @@ export default function SponsorCampaigns() {
                         {/* Workflow Badges */}
                         <div className="grid grid-cols-3 gap-2 text-center text-xs">
                           <div className="p-2 rounded-lg bg-muted/50 border border-border/70">
-                            <span className="text-[10px] text-muted-foreground block">Creators</span>
+                            <span className="text-[10px] text-muted-foreground block">Selected</span>
                             <span className="font-bold text-foreground">{c.activeParticipantsCount}</span>
                           </div>
                           <div className={`p-2 rounded-lg border ${c.awaitingReview > 0 ? "bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-300" : "bg-muted/50 border-border/70 text-foreground"}`}>
@@ -164,7 +172,15 @@ export default function SponsorCampaigns() {
                           </div>
                         </div>
 
-                        {/* Pending Alerts */}
+                        {/* Pending Reservation / Application Alerts */}
+                        {(c as any).pendingCreatorsCount > 0 && (
+                          <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-700 dark:text-amber-300 flex items-center justify-between font-medium">
+                            <span>
+                              {(c as any).pendingCreatorsCount} Chosen Creator{(c as any).pendingCreatorsCount > 1 ? "s" : ""} — Pending Ad Reservation
+                            </span>
+                            <span className="text-[10px] font-bold underline">View List &rarr;</span>
+                          </div>
+                        )}
                         {c.pendingApplications > 0 && (
                           <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-700 dark:text-purple-300 flex items-center justify-between font-medium">
                             <span className="flex items-center gap-1.5">

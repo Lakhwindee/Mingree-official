@@ -239,7 +239,7 @@ export function canUserAccessWorkspace(user: { id: number; role: string }, campa
   return campaign.participants.some((p) => p.creatorId === user.id);
 }
 
-// Discoverable campaign summary for marketplace with strict server-side tier and city filtering
+// Discoverable campaign summary for marketplace
 export function getMarketplaceCampaigns(filters?: {
   niche?: string;
   country?: string;
@@ -249,20 +249,18 @@ export function getMarketplaceCampaigns(filters?: {
   creatorFollowers?: number;
   creatorCity?: string;
   creatorTier?: string;
+  creatorId?: number;
 }) {
   const all = loadAllWorkspaces();
-
-  // If creator has followers specified, check tier eligibility
-  if (filters?.creatorFollowers !== undefined) {
-    if (filters.creatorFollowers < 5000) {
-      // Ineligible creator (< 5000 followers) sees zero campaigns
-      return [];
-    }
-  }
 
   return all
     .filter((c) => c.status === "published" || c.status === "filling_slots" || c.status === "in_progress")
     .filter((c) => {
+      // If creator is explicitly invited/selected in this campaign, ALWAYS include it for them
+      if (filters?.creatorId && Array.isArray(c.participants) && c.participants.some((p) => Number(p.creatorId) === Number(filters.creatorId))) {
+        return true;
+      }
+
       if (filters?.niche && filters.niche !== "all" && c.genre.toLowerCase() !== filters.niche.toLowerCase()) {
         return false;
       }
@@ -273,17 +271,9 @@ export function getMarketplaceCampaigns(filters?: {
         return false;
       }
 
-      // Tier check: if creator tier provided, ensure it matches target tiers
-      if (filters?.creatorTier) {
-        const targetTiers: string[] = (c as any).targetTiers || (c as any).filters?.tiers || [];
-        if (targetTiers.length > 0 && !targetTiers.includes(filters.creatorTier)) {
-          return false;
-        }
-      }
-
-      // City check: if creator city provided AND campaign restricts target cities
-      if (filters?.creatorCity && c.targetCities && c.targetCities.length > 0 && !c.targetCities.includes("All")) {
-        const creatorCityClean = filters.creatorCity.trim().toLowerCase();
+      // City check: only filter if creator explicitly selected a city filter in query
+      if (filters?.city && filters.city !== "all" && filters.city !== "All" && c.targetCities && c.targetCities.length > 0 && !c.targetCities.includes("All")) {
+        const creatorCityClean = filters.city.trim().toLowerCase();
         const cityMatch = c.targetCities.some((tc) => tc.trim().toLowerCase() === creatorCityClean);
         if (!cityMatch) {
           return false;
@@ -292,31 +282,70 @@ export function getMarketplaceCampaigns(filters?: {
 
       return true;
     })
-    .map((c) => ({
-      id: c.id,
-      sponsorId: c.sponsorId,
-      title: c.title,
-      brand: c.brand,
-      brandLogo: c.brandLogo,
-      description: c.description,
-      genre: c.genre,
-      language: c.language,
-      payAmount: c.payAmount,
-      totalBudget: c.totalBudget,
-      totalSlots: c.totalSlots,
-      reservedSlots: c.reservedSlots,
-      remainingSlots: c.remainingSlots,
-      bookingModel: c.bookingModel,
-      minFollowers: c.minFollowers,
-      minMedianViews: c.minMedianViews,
-      deadline: c.deadline,
-      status: c.status,
-      audioUrl: c.audioUrl,
-      requiredTags: c.requiredTags,
-      disclosureInstructions: c.disclosureInstructions,
-      targetCities: c.targetCities || [],
-      targetTiers: (c as any).targetTiers || (c as any).filters?.tiers || [],
-    }));
+    .map((c) => {
+      const totalSlots = c.totalSlots || (c as any).totalSpots || (c.participants && c.participants.length > 0 ? c.participants.length : 1);
+      const confirmedReservedCount = (c.participants || []).filter(
+        (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+      ).length;
+      const remainingSlots = Math.max(0, totalSlots - confirmedReservedCount);
+      const spotsRemaining = remainingSlots > 0 ? remainingSlots : (c.remainingSlots && c.remainingSlots > 0 ? c.remainingSlots : 1);
+
+      let tierLabel = "Nano";
+      if ((c as any).tier && typeof (c as any).tier === "string") {
+        try {
+          const parsed = JSON.parse((c as any).tier);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            tierLabel = parsed.map((t: any) => t.name || t.tierName).filter(Boolean).join(", ") || "Nano";
+          } else {
+            tierLabel = (c as any).tier;
+          }
+        } catch {
+          tierLabel = (c as any).tier;
+        }
+      } else if (Array.isArray((c as any).targetTiers) && (c as any).targetTiers.length > 0) {
+        tierLabel = (c as any).targetTiers.join(", ");
+      }
+
+      return {
+        id: c.id,
+        sponsorId: c.sponsorId,
+        title: c.title,
+        brand: c.brand,
+        brandLogo: c.brandLogo,
+        description: c.description,
+        genre: c.genre,
+        category: (c as any).category || c.genre || "music_reels",
+        language: c.language,
+        payAmount: String(c.payAmount || 1200),
+        totalBudget: c.totalBudget,
+        totalSlots,
+        totalSpots: totalSlots,
+        reservedSlots: confirmedReservedCount,
+        remainingSlots: spotsRemaining,
+        spotsRemaining,
+        bookingModel: c.bookingModel || "instant",
+        minFollowers: c.minFollowers || 1000,
+        minMedianViews: c.minMedianViews || 1000,
+        deadline: c.deadline,
+        status: c.status,
+        type: (c.contentTypes && c.contentTypes[0]) || (c as any).type || "Reel",
+        contentTypes: c.contentTypes || ["Reel"],
+        promotionStyle: c.promotionStyle || "lyricals",
+        audioUrl: c.audioUrl,
+        songUrl: c.audioUrl,
+        assetUrl: (c.productAssets && c.productAssets[0]?.url) || (c as any).assetUrl || c.audioUrl || "",
+        assetFileName: (c.productAssets && c.productAssets[0]?.name) || (c as any).assetFileName || `${c.brand || "Campaign"}_Asset`,
+        requiredCaptionNote: c.requiredCaptionNote,
+        requiredTags: c.requiredTags || [],
+        requiredMentions: c.requiredMentions || [],
+        mentions: c.requiredMentions || [],
+        disclosureInstructions: c.disclosureInstructions,
+        targetCities: c.targetCities || [],
+        targetCountries: c.targetCountries || ["India"],
+        targetTiers: (c as any).targetTiers || (c as any).filters?.tiers || [tierLabel],
+        tier: tierLabel,
+      };
+    });
 }
 
 // Brand Campaign Cards Summary
@@ -325,15 +354,19 @@ export function getBrandCampaignCards(sponsorId: number) {
   const brandCampaigns = all.filter((c) => c.sponsorId === sponsorId);
 
   return brandCampaigns.map((c) => {
-    const pendingApplications = c.participants.filter((p) => p.status === "applied").length;
-    const awaitingReview = c.participants.filter((p) => p.status === "content_submitted").length;
-    const revisionsCount = c.participants.filter((p) => p.status === "revision_requested").length;
-    const approvedCount = c.participants.filter((p) => p.status === "approved" || p.status === "completed").length;
-    const activeParticipantsCount = c.participants.filter((p) => p.status !== "rejected" && p.status !== "withdrawn").length;
+    const pendingCreatorsCount = (c.participants || []).filter((p) => p.status === "pending").length;
+    const pendingApplications = (c.participants || []).filter((p) => p.status === "applied").length;
+    const awaitingReview = (c.participants || []).filter((p) => p.status === "content_submitted").length;
+    const revisionsCount = (c.participants || []).filter((p) => p.status === "revision_requested").length;
+    const approvedCount = (c.participants || []).filter((p) => p.status === "approved" || p.status === "completed").length;
+    const confirmedReservedCount = (c.participants || []).filter(
+      (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+    ).length;
+    const activeParticipantsCount = (c.participants || []).filter((p) => p.status !== "rejected" && p.status !== "withdrawn").length;
 
     const totalSlots = c.totalSlots || (c as any).totalSpots || (c.participants && c.participants.length > 0 ? c.participants.length : 1);
-    const reservedSlots = c.reservedSlots !== undefined && c.reservedSlots !== null ? c.reservedSlots : (c as any).spotsReserved || activeParticipantsCount;
-    const remainingSlots = c.remainingSlots !== undefined && c.remainingSlots !== null ? c.remainingSlots : Math.max(0, totalSlots - reservedSlots);
+    const reservedSlots = confirmedReservedCount;
+    const remainingSlots = Math.max(0, totalSlots - reservedSlots);
     const committedPayouts = c.committedPayouts !== undefined && c.committedPayouts !== null && c.committedPayouts > 0
       ? c.committedPayouts
       : (c.participants && c.participants.length > 0
@@ -358,6 +391,7 @@ export function getBrandCampaignCards(sponsorId: number) {
       totalSlots,
       reservedSlots,
       remainingSlots,
+      pendingCreatorsCount,
       activeParticipantsCount,
       pendingApplications,
       awaitingReview,
@@ -376,7 +410,7 @@ export function getCreatorCampaignsSummary(creatorId: number) {
   const results: any[] = [];
 
   for (const c of all) {
-    const participant = c.participants.find((p) => p.creatorId === creatorId);
+    const participant = c.participants.find((p) => Number(p.creatorId) === Number(creatorId));
     if (participant) {
       const latestBriefVersion = c.briefVersions.length > 0 ? c.briefVersions[c.briefVersions.length - 1].version : 1;
       const needsBriefAcknowledgement = participant.briefAcknowledgedVersion < latestBriefVersion;
@@ -388,6 +422,7 @@ export function getCreatorCampaignsSummary(creatorId: number) {
         brand: c.brand,
         brandLogo: c.brandLogo,
         genre: c.genre,
+        description: c.description,
         payAmount: participant.payoutAmount || c.payAmount,
         status: participant.status,
         reservedAt: participant.reservedAt,
@@ -434,7 +469,60 @@ export async function applyOrReserveSlot(params: {
       throw new Error(`Campaign is currently ${campaign.status} and cannot accept new bookings.`);
     }
 
-    if (campaign.remainingSlots <= 0) {
+    const standardWindow = new Date(Date.now() + 48 * 3600000).toISOString();
+    const latestVersion = campaign.briefVersions.length > 0 ? campaign.briefVersions[campaign.briefVersions.length - 1].version : 1;
+
+    // Check if creator is already in participants list (e.g., chosen by sponsor with status "pending")
+    const existing = campaign.participants.find(
+      (p) => Number(p.creatorId) === Number(params.creator.id) && p.status !== "rejected" && p.status !== "withdrawn"
+    );
+
+    if (existing) {
+      if (existing.status === "pending" || existing.status === "applied") {
+        existing.status = "reserved";
+        existing.reservedAt = new Date().toISOString();
+        existing.expiresAt = standardWindow;
+        existing.briefAcknowledgedVersion = latestVersion;
+
+        const confirmedReserved = campaign.participants.filter(
+          (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+        ).length;
+        campaign.reservedSlots = confirmedReserved;
+        campaign.remainingSlots = Math.max(0, (campaign.totalSlots || 1) - confirmedReserved);
+        if (campaign.remainingSlots === 0) {
+          campaign.status = "in_progress";
+        }
+
+        campaign.messages.push({
+          id: Date.now(),
+          campaignId: campaign.id,
+          senderId: params.creator.id,
+          senderName: existing.creatorName || params.creator.name,
+          senderRole: "creator",
+          senderAvatar: existing.creatorAvatar || params.creator.avatar || "",
+          recipientId: null,
+          content: `🎉 ${existing.creatorName || params.creator.name} (@${(existing.creatorHandle || params.creator.handle || "").replace(/^@/, "")}) accepted & reserved their campaign ad slot!`,
+          createdAt: new Date().toISOString(),
+          readBy: [params.creator.id],
+        });
+
+        campaign.updatedAt = new Date().toISOString();
+        saveSingleWorkspace(campaign);
+
+        return {
+          success: true,
+          participant: existing,
+          message: "Ad slot reserved! You have 48 hours to submit your Reel.",
+        };
+      }
+      throw new Error("You already have an active reservation for this campaign.");
+    }
+
+    const confirmedReservedCount = campaign.participants.filter(
+      (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+    ).length;
+    const totalSlots = campaign.totalSlots || 1;
+    if (confirmedReservedCount >= totalSlots && campaign.remainingSlots <= 0) {
       throw new Error("All slots for this campaign have already been filled.");
     }
 
@@ -442,17 +530,9 @@ export async function applyOrReserveSlot(params: {
     const creatorFollowers = Math.max(params.creator.followers || 1000, campaign.minFollowers);
     const creatorMedianViews = Math.max(params.creator.medianViews || 2000, campaign.minMedianViews || 0);
 
-    // Check if creator is already participating
-    const existing = campaign.participants.find((p) => p.creatorId === params.creator.id && p.status !== "rejected" && p.status !== "withdrawn");
-    if (existing) {
-      throw new Error("You already have an active reservation or application for this campaign.");
-    }
-
     const isInstant = campaign.bookingModel === "instant";
     const initialStatus = isInstant ? "reserved" : "applied";
     const newParticipantId = Date.now();
-    const standardWindow = new Date(Date.now() + 48 * 3600000).toISOString();
-    const latestVersion = campaign.briefVersions.length > 0 ? campaign.briefVersions[campaign.briefVersions.length - 1].version : 1;
 
     const newParticipant: CampaignParticipant = {
       id: newParticipantId,
@@ -475,16 +555,19 @@ export async function applyOrReserveSlot(params: {
       draftFeedbackNotes: "",
     };
 
+    campaign.participants.push(newParticipant);
+
     if (isInstant) {
-      campaign.remainingSlots = Math.max(0, campaign.remainingSlots - 1);
-      campaign.reservedSlots += 1;
+      const newConfirmedCount = campaign.participants.filter(
+        (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+      ).length;
+      campaign.reservedSlots = newConfirmedCount;
+      campaign.remainingSlots = Math.max(0, totalSlots - newConfirmedCount);
       campaign.committedPayouts += campaign.payAmount;
       if (campaign.remainingSlots === 0) {
         campaign.status = "in_progress";
       }
     }
-
-    campaign.participants.push(newParticipant);
 
     // Add shared chat entry announcing participant
     const systemNotice: CampaignMessage = {

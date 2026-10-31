@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { useRoute, Link, useLocation } from "wouter";
+import { useRoute, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, formatINR, type WorkspaceDetails, type WorkspaceParticipant, type WorkspaceMessage } from "@/lib/api";
+import { api, formatINR, type WorkspaceParticipant } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { SponsorSidebar } from "@/components/SponsorSidebar";
 
@@ -14,27 +14,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { motion, AnimatePresence } from "framer-motion";
-
-// Dummy icon fallbacks for removed icons
-const __DummyIcon = (_props?: any) => null;
-const Instagram = __DummyIcon;
-const Play = __DummyIcon;
-const MessageSquare = __DummyIcon;
-const BadgeAlert = __DummyIcon;
-const Megaphone = __DummyIcon;
-const RotateCcw = __DummyIcon;
-const Save = __DummyIcon;
-const Send = __DummyIcon;
-const Info = __DummyIcon;
-const File = __DummyIcon;
-
-
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  Megaphone,
+  MessageSquare,
+  Music2,
+  RotateCcw,
+  Send,
+  Users,
+  Video,
+} from "lucide-react";
 
 export default function CampaignWorkspace() {
   const [, params] = useRoute("/sponsor/campaigns/:id/workspace");
   const campaignId = Number((params as any)?.id || 0);
-  const [, setLocation] = useLocation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
@@ -92,7 +90,7 @@ export default function CampaignWorkspace() {
   const reviewDraftMutation = useMutation({
     mutationFn: (data: { participantId: number; action: "approve" | "request_revision"; notes?: string }) =>
       api.reviewDraftPreview(campaignId, data),
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
       toast.success("Draft preview review processed successfully!");
       setDraftReviewState({ isOpen: false, participant: null, action: "approve", notes: "" });
@@ -255,10 +253,10 @@ export default function CampaignWorkspace() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+      <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
         <div className="text-center">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-pink-500 border-t-transparent mx-auto" />
-          <p className="mt-4 text-sm text-zinc-400">Opening Campaign Workspace...</p>
+          <div className="h-9 w-9 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
+          <p className="mt-3 text-xs text-muted-foreground">Opening Campaign Folder...</p>
         </div>
       </div>
     );
@@ -266,15 +264,14 @@ export default function CampaignWorkspace() {
 
   if (error || !workspace) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white p-4">
-        <div className="max-w-md rounded-2xl bg-zinc-900 border border-zinc-800 p-8 text-center">
-          
-          <h2 className="text-xl font-bold">Workspace Unavailable</h2>
-          <p className="text-sm text-zinc-400 mt-2">
+      <div className="flex min-h-screen items-center justify-center bg-background text-foreground p-4">
+        <div className="max-w-md rounded-2xl bg-card border border-border p-8 text-center shadow-sm">
+          <h2 className="text-lg font-bold text-foreground">Workspace Unavailable</h2>
+          <p className="text-xs text-muted-foreground mt-2">
             {(error as any)?.message || "You do not have access to this campaign workspace or it does not exist."}
           </p>
           <Link href="/sponsor/campaigns">
-            <Button className="mt-6 bg-pink-600 hover:bg-pink-700">Back to Campaigns</Button>
+            <Button className="mt-6 text-xs font-semibold rounded-xl">Back to Workspaces</Button>
           </Link>
         </div>
       </div>
@@ -294,9 +291,12 @@ export default function CampaignWorkspace() {
   });
 
   // Calculate metrics
+  const allParticipants = workspace.participants.filter((p) => p.status !== "rejected" && p.status !== "withdrawn");
   const pendingCreators = workspace.participants.filter((p) => p.status === "pending");
   const pendingApplications = workspace.participants.filter((p) => p.status === "applied");
-  const reservedCreators = workspace.participants.filter((p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn");
+  const reservedCreators = workspace.participants.filter(
+    (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+  );
   const currentUserParticipant = workspace.participants.find((p) => Number(p.creatorId) === Number(user?.id));
   const submittedReels = workspace.participants.filter((p) => p.submission !== null);
   const pendingReviews = workspace.participants.filter((p) => p.status === "content_submitted");
@@ -308,247 +308,426 @@ export default function CampaignWorkspace() {
 
   const refundableBalance = Math.max(0, workspace.totalBudget - workspace.releasedPayouts - workspace.committedPayouts);
 
+  const renderCreatorStatusBadge = (status: string) => {
+    if (status === "pending") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+          <Clock className="h-3 w-3" />
+          Pending (Ad Not Reserved Yet)
+        </span>
+      );
+    }
+    if (status === "applied") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-purple-500/10 text-purple-700 dark:text-purple-400 border border-purple-500/30">
+          Applied — Needs Approval
+        </span>
+      );
+    }
+    if (status === "approved" || status === "completed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+          <CheckCircle2 className="h-3 w-3" />
+          Approved & Paid
+        </span>
+      );
+    }
+    if (status === "content_submitted") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-500/30">
+          <Video className="h-3 w-3" />
+          Reel Submitted — In Review
+        </span>
+      );
+    }
+    if (status === "revision_requested") {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-700 dark:text-rose-400 border border-rose-500/30">
+          <RotateCcw className="h-3 w-3" />
+          Revision Requested
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+        <CheckCircle2 className="h-3 w-3" />
+        Reserved — Active
+      </span>
+    );
+  };
+
   return (
-    <div className="flex min-h-screen w-full bg-zinc-950 text-zinc-100">
+    <div className="flex min-h-screen w-full bg-background text-foreground">
       <SponsorSidebar />
 
-      <main className="flex-1 w-full min-w-0 overflow-y-auto pb-24 md:pb-8">
+      <main className="flex-1 w-full min-w-0 overflow-y-auto pb-24 md:pb-10">
         {/* Workspace Top Navigation Bar */}
-        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md px-4 py-3 md:px-8">
-          <div className="flex items-center gap-3">
+        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/95 backdrop-blur-md px-4 py-3.5 md:px-8">
+          <div className="flex items-center gap-3 min-w-0">
             <Link href="/sponsor/campaigns">
-              <Button variant="ghost" size="icon" className="h-9 w-9 text-zinc-400 hover:text-white hover:bg-zinc-800">
-                
+              <Button variant="outline" size="icon" className="h-9 w-9 rounded-xl shrink-0">
+                <ArrowLeft className="h-4 w-4" />
               </Button>
             </Link>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-xs uppercase tracking-wider font-semibold text-pink-400">Campaign Workspace</span>
+                <span className="inline-flex items-center gap-1 text-xs uppercase tracking-wider font-semibold text-primary">
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Campaign Folder
+                </span>
                 <Badge
+                  variant="outline"
                   className={`text-[10px] uppercase font-bold ${
                     workspace.status === "filling_slots"
-                      ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                      ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30"
                       : workspace.status === "under_review"
-                      ? "bg-purple-500/10 text-purple-400 border border-purple-500/30"
+                      ? "bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/30"
                       : workspace.status === "completed"
-                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                      : "bg-blue-500/10 text-blue-400 border border-blue-500/30"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30"
+                      : "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/30"
                   }`}
                 >
                   {workspace.status.replace("_", " ")}
                 </Badge>
               </div>
-              <h1 className="text-lg md:text-xl font-bold text-white truncate max-w-md md:max-w-xl">{workspace.title}</h1>
+              <h1 className="text-lg md:text-xl font-bold text-foreground truncate max-w-md md:max-w-xl">
+                {workspace.title}
+              </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 shrink-0">
             <Button
               onClick={() => setIsBriefEditOpen(true)}
               variant="outline"
               size="sm"
-              className="border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800 hover:text-white"
+              className="rounded-xl text-xs font-semibold"
             >
-              
+              <FileText className="h-3.5 w-3.5 mr-1.5" />
               Update Brief
             </Button>
           </div>
         </div>
 
-        {/* Workspace Content Tabs */}
+        {/* Workspace Content */}
         <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
           {/* Quick Metrics Header Bar */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-            <Card className="bg-zinc-900/70 border-zinc-800/80 p-3.5">
-              <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Slots Filled</span>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Card className="bg-card border-border p-3.5 shadow-2xs">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Ad Slots Reserved</span>
               <div className="flex items-baseline justify-between mt-1">
-                <span className="text-xl font-bold text-white">
-                  {workspace.reservedSlots} / {workspace.totalSlots}
+                <span className="text-xl font-bold text-foreground tabular-nums">
+                  {reservedCreators.length} / {workspace.totalSlots}
                 </span>
-                <span className="text-xs text-amber-400 font-semibold">{workspace.remainingSlots} left</span>
+                {pendingCreators.length > 0 ? (
+                  <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                    {pendingCreators.length} Pending
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground font-medium">
+                    {workspace.remainingSlots} open
+                  </span>
+                )}
               </div>
             </Card>
 
-            <Card className="bg-zinc-900/70 border-zinc-800/80 p-3.5">
-              <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Committed Escrow</span>
-              <div className="mt-1">
-                <span className="text-xl font-bold text-white">{formatINR(workspace.committedPayouts)}</span>
-                <p className="text-[10px] text-zinc-400 mt-0.5">Total budget: {formatINR(workspace.totalBudget)}</p>
-              </div>
-            </Card>
-
-            <Card className="bg-zinc-900/70 border-zinc-800/80 p-3.5">
-              <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Pending Review</span>
+            <Card className="bg-card border-border p-3.5 shadow-2xs">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Selected Creators</span>
               <div className="flex items-baseline justify-between mt-1">
-                <span className={`text-xl font-bold ${pendingReviews.length > 0 ? "text-amber-400" : "text-white"}`}>
+                <span className="text-xl font-bold text-foreground tabular-nums">
+                  {allParticipants.length}
+                </span>
+                <span className="text-[11px] text-muted-foreground font-medium">
+                  {pendingCreators.length} Not Reserved
+                </span>
+              </div>
+            </Card>
+
+            <Card className="bg-card border-border p-3.5 shadow-2xs">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Committed Escrow</span>
+              <div className="mt-1">
+                <span className="text-xl font-bold text-foreground tabular-nums">{formatINR(workspace.committedPayouts)}</span>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Total budget: {formatINR(workspace.totalBudget)}</p>
+              </div>
+            </Card>
+
+            <Card className="bg-card border-border p-3.5 shadow-2xs">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Pending Review</span>
+              <div className="flex items-baseline justify-between mt-1">
+                <span className={`text-xl font-bold tabular-nums ${pendingReviews.length > 0 ? "text-amber-600" : "text-foreground"}`}>
                   {pendingReviews.length}
                 </span>
-                {pendingReviews.length > 0 && <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />}
+                {pendingReviews.length > 0 && <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" />}
               </div>
             </Card>
 
-            <Card className="bg-zinc-900/70 border-zinc-800/80 p-3.5">
-              <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Approved Reels</span>
+            <Card className="bg-card border-border p-3.5 shadow-2xs">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Approved Reels</span>
               <div className="mt-1">
-                <span className="text-xl font-bold text-emerald-400">{approvedSubmissions.length}</span>
-                <p className="text-[10px] text-zinc-400 mt-0.5">Paid: {formatINR(workspace.releasedPayouts)}</p>
+                <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{approvedSubmissions.length}</span>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Paid: {formatINR(workspace.releasedPayouts)}</p>
               </div>
             </Card>
 
-            <Card className="bg-zinc-900/70 border-zinc-800/80 p-3.5">
-              <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Verified Views</span>
+            <Card className="bg-card border-border p-3.5 shadow-2xs">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Verified Views</span>
               <div className="mt-1">
-                <span className="text-xl font-bold text-indigo-400">
+                <span className="text-xl font-bold text-primary tabular-nums">
                   {totalVerifiedViews > 0 ? totalVerifiedViews.toLocaleString() : "0"}
                 </span>
-                <p className="text-[10px] text-zinc-400 mt-0.5">Likes: {totalVerifiedLikes.toLocaleString()}</p>
-              </div>
-            </Card>
-
-            <Card className="bg-zinc-900/70 border-zinc-800/80 p-3.5">
-              <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">Applications</span>
-              <div className="flex items-baseline justify-between mt-1">
-                <span className={`text-xl font-bold ${pendingApplications.length > 0 ? "text-pink-400" : "text-white"}`}>
-                  {pendingApplications.length}
-                </span>
-                <span className="text-xs text-zinc-400 font-medium">Model: {workspace.bookingModel}</span>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Likes: {totalVerifiedLikes.toLocaleString()}</p>
               </div>
             </Card>
           </div>
 
+          {/* Invitation Acceptance Banner if Logged-in User is Creator */}
+          {currentUserParticipant?.status === "pending" && (
+            <Card className="bg-amber-500/10 border-amber-500/30 p-4 shadow-xs">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">You've Been Selected for This Campaign!</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {workspace.brand} selected you for this campaign with a payout of{" "}
+                    <strong className="text-emerald-600 font-bold">{formatINR(currentUserParticipant.payoutAmount)}</strong>.
+                    Accept & reserve your slot now to start creating.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => acceptInvitationMutation.mutate()}
+                  disabled={acceptInvitationMutation.isPending}
+                  className="font-bold text-xs whitespace-nowrap px-6 py-2 rounded-xl shrink-0"
+                >
+                  {acceptInvitationMutation.isPending ? "Reserving Slot..." : "Accept & Reserve Ad Slot"}
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {/* ================= CAMPAIGN CREATORS & RESERVATION STATUS FOLDER LIST (ALWAYS VISIBLE AT TOP) ================= */}
+          <Card className="bg-card border-border shadow-xs overflow-hidden">
+            <CardHeader className="p-4 sm:p-5 border-b border-border bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-primary" />
+                  <CardTitle className="text-base font-bold text-foreground">
+                    Campaign Creators & Ad Reservation Status ({allParticipants.length})
+                  </CardTitle>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                  All creators selected or participating in <strong className="text-foreground">{workspace.title}</strong> and whether they have reserved their ad slot yet.
+                </CardDescription>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                  Pending: {pendingCreators.length}
+                </span>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+                  Reserved: {reservedCreators.length}
+                </span>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0">
+              {allParticipants.length === 0 ? (
+                <div className="p-8 text-center text-xs text-muted-foreground space-y-1">
+                  <p className="font-semibold text-foreground text-sm">No Creators in This Campaign Folder Yet</p>
+                  <p>As soon as creators reserve slots or are selected for this campaign, they will appear in this list.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {allParticipants.map((p, index) => (
+                    <div
+                      key={p.id || p.creatorId}
+                      className="p-4 sm:px-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-muted/20 transition-colors"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="h-7 w-7 rounded-lg bg-muted text-muted-foreground text-xs font-bold flex items-center justify-center shrink-0">
+                          #{index + 1}
+                        </div>
+                        <img
+                          src={p.creatorAvatar}
+                          alt={p.creatorName}
+                          className="h-11 w-11 rounded-full object-cover border border-border shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-foreground text-sm truncate">{p.creatorName}</h4>
+                            <span className="text-xs text-primary font-mono font-medium">{p.creatorHandle}</span>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1 flex-wrap">
+                            <span>
+                              Followers: <strong className="text-foreground">{p.creatorFollowers.toLocaleString()}</strong>
+                            </span>
+                            <span>•</span>
+                            <span>
+                              Payout: <strong className="text-emerald-600 dark:text-emerald-400">{formatINR(p.payoutAmount)}</strong>
+                            </span>
+                            {p.status !== "pending" && p.reservedAt && (
+                              <>
+                                <span>•</span>
+                                <span>Reserved: {new Date(p.reservedAt).toLocaleDateString()}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between md:justify-end gap-3 shrink-0 border-t md:border-t-0 pt-2.5 md:pt-0 border-border/60">
+                        {renderCreatorStatusBadge(p.status)}
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setChatThread(String(p.creatorId));
+                              setActiveTab("chat");
+                            }}
+                            className="h-8 px-3 text-xs font-semibold rounded-lg"
+                          >
+                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                            Chat
+                          </Button>
+
+                          {p.status === "content_submitted" && (
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                setReviewModalState({
+                                  isOpen: true,
+                                  participant: p,
+                                  action: "approve",
+                                  reason: "",
+                                  notes: "",
+                                });
+                              }}
+                              className="h-8 px-3 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                            >
+                              Review Reel
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Workspace Navigation Tabs */}
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="w-full justify-start overflow-x-auto bg-zinc-900/90 border border-zinc-800 p-1 rounded-xl h-auto flex flex-nowrap scrollbar-none">
-              <TabsTrigger value="overview" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-white text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0">
-                
+            <TabsList className="w-full justify-start overflow-x-auto bg-muted/70 border border-border p-1 rounded-xl h-auto flex flex-nowrap scrollbar-none">
+              <TabsTrigger value="overview" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 1. Overview & Brief
               </TabsTrigger>
-              <TabsTrigger value="creators" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-white text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0">
-                
-                2. Creators & Applicants ({workspace.participants.length})
-                {pendingApplications.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-pink-500 text-white font-bold">
-                    {pendingApplications.length}
+              <TabsTrigger value="creators" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
+                2. Creators List ({allParticipants.length})
+                {pendingCreators.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500 text-white font-bold">
+                    {pendingCreators.length} Pending
                   </span>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="chat" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-white text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0">
-                <MessageSquare className="h-3.5 w-3.5 text-amber-400" />
+              <TabsTrigger value="chat" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 3. Shared Campaign Chat
               </TabsTrigger>
-              <TabsTrigger value="submissions" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-white text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0">
-                
+              <TabsTrigger value="submissions" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 4. Reels & Reviews
                 {pendingReviews.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500 text-black font-bold">
+                  <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500 text-white font-bold">
                     {pendingReviews.length}
                   </span>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="performance" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-white text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0">
-                
+              <TabsTrigger value="performance" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 5. Performance Analytics
               </TabsTrigger>
-              <TabsTrigger value="financials" className="data-[state=active]:bg-zinc-800 data-[state=active]:text-white text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0">
-                
+              <TabsTrigger value="financials" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 6. Escrow & Ledger
               </TabsTrigger>
             </TabsList>
 
-            {/* Invitation Acceptance Banner for Logged-in Creator */}
-            {currentUserParticipant?.status === "pending" && (
-              <Card className="bg-amber-950/40 border-amber-500/50 p-4 mt-6 mb-2 shadow-lg shadow-amber-950/30">
-                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-lg shrink-0">
-                      🎉
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-amber-200">You've Been Selected for This Campaign!</h3>
-                      <p className="text-xs text-zinc-300 mt-0.5">
-                        {workspace.brand} selected you for this campaign with a payout of <strong className="text-emerald-400 font-bold">{formatINR(currentUserParticipant.payoutAmount)}</strong>. Accept & reserve your slot now to start creating.
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    onClick={() => acceptInvitationMutation.mutate()}
-                    disabled={acceptInvitationMutation.isPending}
-                    className="bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs whitespace-nowrap px-6 py-2 shadow-md shrink-0"
-                  >
-                    {acceptInvitationMutation.isPending ? "Reserving Slot..." : "Accept & Reserve Slot"}
-                  </Button>
-                </div>
-              </Card>
-            )}
-
-            {/* TAB 1: OVERVIEW & SETTINGS */}
-            <TabsContent value="overview" className="space-y-6 mt-6">
+            {/* TAB 1: OVERVIEW & BRIEF */}
+            <TabsContent value="overview" className="space-y-6 mt-5">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
                   {/* Campaign Brief Card */}
-                  <Card className="bg-zinc-900 border-zinc-800">
+                  <Card className="bg-card border-border shadow-2xs">
                     <CardHeader className="flex flex-row items-center justify-between pb-3">
                       <div>
-                        <CardTitle className="text-lg text-white">Campaign Creative Brief</CardTitle>
-                        <CardDescription className="text-zinc-400">
+                        <CardTitle className="text-base font-bold text-foreground">Campaign Creative Brief</CardTitle>
+                        <CardDescription className="text-xs text-muted-foreground">
                           Current instructions visible to all participating creators (Version {workspace.briefVersions.length})
                         </CardDescription>
                       </div>
                       <Button
                         size="sm"
+                        variant="outline"
                         onClick={() => setIsBriefEditOpen(true)}
-                        className="bg-zinc-800 hover:bg-zinc-700 text-white text-xs"
+                        className="text-xs font-semibold rounded-lg"
                       >
-                        
                         Edit Brief
                       </Button>
                     </CardHeader>
                     <CardContent className="space-y-4 text-sm">
-                      <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
-                        <Label className="text-xs uppercase text-zinc-400 font-semibold tracking-wider">Description & Creative Angle</Label>
-                        <p className="mt-2 text-zinc-200 leading-relaxed whitespace-pre-wrap">{workspace.description}</p>
+                      <div className="p-4 rounded-xl bg-muted/30 border border-border">
+                        <Label className="text-[11px] uppercase text-muted-foreground font-semibold tracking-wider">
+                          Description & Creative Angle
+                        </Label>
+                        <p className="mt-1.5 text-foreground text-xs sm:text-sm leading-relaxed whitespace-pre-wrap">
+                          {workspace.description}
+                        </p>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2">
-                          <Label className="text-xs uppercase text-zinc-400 font-semibold tracking-wider">Required Audio Track</Label>
+                        <div className="p-4 rounded-xl bg-muted/30 border border-border space-y-2">
+                          <Label className="text-[11px] uppercase text-muted-foreground font-semibold tracking-wider">
+                            Required Audio Track
+                          </Label>
                           {workspace.audioUrl ? (
                             <div className="flex items-center gap-2 mt-1">
                               <a
                                 href={workspace.audioUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-xs text-pink-400 hover:text-pink-300 flex items-center gap-1.5 bg-pink-500/10 px-3 py-1.5 rounded-lg border border-pink-500/20 truncate"
+                                className="text-xs text-primary hover:underline flex items-center gap-1.5 bg-primary/10 px-3 py-1.5 rounded-lg border border-primary/20 truncate font-medium"
                               >
-                                <Play className="h-3.5 w-3.5 fill-pink-400" />
-                                {workspace.audioUrl}
+                                <Music2 className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{workspace.audioUrl}</span>
                               </a>
                             </div>
                           ) : (
-                            <p className="text-xs text-zinc-500 mt-1">No audio file specified</p>
+                            <p className="text-xs text-muted-foreground mt-1">No audio file specified</p>
                           )}
                         </div>
 
-                        <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2">
-                          <Label className="text-xs uppercase text-zinc-400 font-semibold tracking-wider">Mandatory Disclosure</Label>
-                          <div className="bg-amber-500/10 text-amber-300 border border-amber-500/20 px-3 py-1.5 rounded-lg text-xs font-mono">
+                        <div className="p-4 rounded-xl bg-muted/30 border border-border space-y-2">
+                          <Label className="text-[11px] uppercase text-muted-foreground font-semibold tracking-wider">
+                            Mandatory Disclosure
+                          </Label>
+                          <div className="bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-500/20 px-3 py-1.5 rounded-lg text-xs font-mono">
                             {workspace.disclosureInstructions}
                           </div>
                         </div>
                       </div>
 
-                      <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2">
-                        <Label className="text-xs uppercase text-zinc-400 font-semibold tracking-wider">Required Caption & Mentions</Label>
-                        <div className="bg-zinc-900 p-3 rounded-lg border border-zinc-800 text-xs text-zinc-300 font-mono">
+                      <div className="p-4 rounded-xl bg-muted/30 border border-border space-y-2">
+                        <Label className="text-[11px] uppercase text-muted-foreground font-semibold tracking-wider">
+                          Required Caption & Mentions
+                        </Label>
+                        <div className="bg-background p-3 rounded-lg border border-border text-xs text-foreground font-mono">
                           {workspace.requiredCaptionNote}
                         </div>
                         <div className="flex flex-wrap gap-1.5 pt-2">
                           {workspace.requiredTags.map((tag, i) => (
-                            <Badge key={i} variant="outline" className="text-xs border-zinc-700 bg-zinc-800/50 text-indigo-300 font-mono">
+                            <Badge key={i} variant="secondary" className="text-xs font-mono">
                               {tag}
                             </Badge>
                           ))}
                           {workspace.requiredMentions.map((m, i) => (
-                            <Badge key={i} variant="outline" className="text-xs border-pink-900/50 bg-pink-950/30 text-pink-300 font-mono">
+                            <Badge key={i} variant="outline" className="text-xs text-primary border-primary/30 font-mono">
                               {m}
                             </Badge>
                           ))}
@@ -557,8 +736,10 @@ export default function CampaignWorkspace() {
 
                       {/* Single Brand Promotional File */}
                       {workspace.productAssets && workspace.productAssets.length > 0 && workspace.productAssets[0] && (
-                        <div className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 space-y-2">
-                          <Label className="text-xs uppercase text-zinc-400 font-semibold tracking-wider">Brand Promotional File</Label>
+                        <div className="p-4 rounded-xl bg-muted/30 border border-border space-y-2">
+                          <Label className="text-[11px] uppercase text-muted-foreground font-semibold tracking-wider">
+                            Brand Promotional File
+                          </Label>
                           {(() => {
                             const asset = workspace.productAssets[0];
                             return (
@@ -566,10 +747,10 @@ export default function CampaignWorkspace() {
                                 href={asset.url}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:text-white hover:border-zinc-700 mt-1"
+                                className="flex items-center justify-between p-2.5 rounded-lg bg-background border border-border text-xs text-foreground hover:border-primary/40 mt-1"
                               >
                                 <span className="truncate mr-2 font-medium">{asset.name || "Brand Promotional File"}</span>
-                                
+                                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                               </a>
                             );
                           })()}
@@ -579,37 +760,25 @@ export default function CampaignWorkspace() {
                   </Card>
 
                   {/* Brief Version History */}
-                  <Card className="bg-zinc-900 border-zinc-800">
+                  <Card className="bg-card border-border shadow-2xs">
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-sm font-bold text-white flex items-center gap-2">
-                        
+                      <CardTitle className="text-sm font-bold text-foreground">
                         Brief Revision & Change History
                       </CardTitle>
-                      <CardDescription className="text-xs text-zinc-400">
+                      <CardDescription className="text-xs text-muted-foreground">
                         Audit trail of all material changes made to this campaign brief
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {workspace.briefVersions.map((v) => (
-                        <div key={v.version} className="p-3.5 rounded-xl bg-zinc-950/80 border border-zinc-800/80 text-xs space-y-2">
+                        <div key={v.version} className="p-3.5 rounded-xl bg-muted/30 border border-border text-xs space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="font-bold text-white flex items-center gap-1.5">
-                              <Badge className="bg-pink-600 text-[10px] px-1.5 py-0">v{v.version}</Badge>
+                            <span className="font-bold text-foreground flex items-center gap-1.5">
+                              <Badge className="text-[10px] px-1.5 py-0">v{v.version}</Badge>
                               {v.changesSummary}
                             </span>
-                            <span className="text-[11px] text-zinc-500">{new Date(v.timestamp).toLocaleString()}</span>
+                            <span className="text-[11px] text-muted-foreground">{new Date(v.timestamp).toLocaleString()}</span>
                           </div>
-                          {v.diffs && v.diffs.length > 0 && (
-                            <div className="space-y-1.5 pt-1 border-t border-zinc-800/50">
-                              {v.diffs.map((d, idx) => (
-                                <div key={idx} className="text-[11px] text-zinc-400 flex items-start gap-1">
-                                  <span className="text-pink-400 font-semibold">• {d.label}:</span>
-                                  <span className="line-through text-zinc-500 truncate max-w-xs">{JSON.stringify(d.oldValue)}</span>
-                                  <span className="text-emerald-400 font-medium truncate max-w-xs">→ {JSON.stringify(d.newValue)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       ))}
                     </CardContent>
@@ -618,51 +787,55 @@ export default function CampaignWorkspace() {
 
                 {/* Campaign Info Sidebar */}
                 <div className="space-y-6">
-                  <Card className="bg-zinc-900 border-zinc-800 p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Campaign Parameters</h3>
+                  <Card className="bg-card border-border p-5 space-y-4 shadow-2xs">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Campaign Parameters</h3>
 
                     <div className="space-y-3 text-xs">
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Booking Model</span>
-                        <span className="font-bold text-white uppercase">{workspace.bookingModel}</span>
+                      <div className="flex justify-between py-1.5 border-b border-border">
+                        <span className="text-muted-foreground">Booking Model</span>
+                        <span className="font-bold text-foreground uppercase">{workspace.bookingModel}</span>
                       </div>
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Payout per Creator</span>
-                        <span className="font-bold text-emerald-400 text-sm">{formatINR(workspace.payAmount)}</span>
+                      <div className="flex justify-between py-1.5 border-b border-border">
+                        <span className="text-muted-foreground">Payout per Creator</span>
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">{formatINR(workspace.payAmount)}</span>
                       </div>
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Total Budget</span>
-                        <span className="font-bold text-white">{formatINR(workspace.totalBudget)}</span>
+                      <div className="flex justify-between py-1.5 border-b border-border">
+                        <span className="text-muted-foreground">Total Budget</span>
+                        <span className="font-bold text-foreground">{formatINR(workspace.totalBudget)}</span>
                       </div>
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Min. Followers</span>
-                        <span className="font-medium text-white">{workspace.minFollowers.toLocaleString()}</span>
+                      <div className="flex justify-between py-1.5 border-b border-border">
+                        <span className="text-muted-foreground">Min. Followers</span>
+                        <span className="font-medium text-foreground">{workspace.minFollowers.toLocaleString()}</span>
                       </div>
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Target Cities</span>
-                        <span className="font-medium text-white text-right">
+                      <div className="flex justify-between py-1.5 border-b border-border">
+                        <span className="text-muted-foreground">Target Cities</span>
+                        <span className="font-medium text-foreground text-right">
                           {workspace.targetCities.length > 0 ? workspace.targetCities.join(", ") : "All India"}
                         </span>
                       </div>
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Submission Window</span>
-                        <span className="font-medium text-amber-400">48 Hours</span>
+                      <div className="flex justify-between py-1.5 border-b border-border">
+                        <span className="text-muted-foreground">Submission Window</span>
+                        <span className="font-medium text-amber-600 dark:text-amber-400">48 Hours</span>
                       </div>
-                      <div className="flex justify-between py-1.5 border-b border-zinc-800">
-                        <span className="text-zinc-400">Campaign Deadline</span>
-                        <span className="font-medium text-white">{workspace.deadline}</span>
+                      <div className="flex justify-between py-1.5">
+                        <span className="text-muted-foreground">Campaign Deadline</span>
+                        <span className="font-medium text-foreground">{workspace.deadline}</span>
                       </div>
                     </div>
                   </Card>
 
                   {/* Brand Profile Preview */}
-                  <Card className="bg-zinc-900 border-zinc-800 p-5 space-y-3">
-                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Brand Representation</h3>
+                  <Card className="bg-card border-border p-5 space-y-3 shadow-2xs">
+                    <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Brand Representation</h3>
                     <div className="flex items-center gap-3 pt-1">
-                      <img src={workspace.brandLogo} alt={workspace.brand} className="h-12 w-12 rounded-xl object-cover border border-zinc-700" />
+                      <img
+                        src={workspace.brandLogo}
+                        alt={workspace.brand}
+                        className="h-12 w-12 rounded-xl object-cover border border-border"
+                      />
                       <div>
-                        <h4 className="font-bold text-white text-sm">{workspace.brand}</h4>
-                        <p className="text-xs text-zinc-400">{workspace.genre} • {workspace.language}</p>
+                        <h4 className="font-bold text-foreground text-sm">{workspace.brand}</h4>
+                        <p className="text-xs text-muted-foreground">{workspace.genre} • {workspace.language}</p>
                       </div>
                     </div>
                   </Card>
@@ -670,45 +843,43 @@ export default function CampaignWorkspace() {
               </div>
             </TabsContent>
 
-            {/* TAB 2: CREATORS & APPLICANTS */}
-            <TabsContent value="creators" className="space-y-6 mt-6">
-              {/* Selected Creators (Pending Acceptance) */}
+            {/* TAB 2: CREATORS & APPLICANTS DETAILED BREAKDOWN */}
+            <TabsContent value="creators" className="space-y-6 mt-5">
+              {/* Selected Creators (Pending Reservation) */}
               {pendingCreators.length > 0 && (
-                <Card className="bg-zinc-900 border-amber-900/40">
-                  <CardHeader className="pb-3 border-b border-amber-900/30 bg-amber-950/20">
-                    <CardTitle className="text-base text-white flex items-center justify-between">
+                <Card className="bg-card border-amber-500/40 shadow-2xs">
+                  <CardHeader className="pb-3 border-b border-amber-500/20 bg-amber-500/5">
+                    <CardTitle className="text-base text-foreground flex items-center justify-between">
                       <span className="flex items-center gap-2">
-                        <BadgeAlert className="h-4 w-4 text-amber-400" />
-                        Selected Creators (Pending Reservation) ({pendingCreators.length})
+                        <Clock className="h-4 w-4 text-amber-600" />
+                        Chosen Creators — Pending Ad Reservation ({pendingCreators.length})
                       </span>
-                      <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40">Pending Acceptance</Badge>
+                      <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30">
+                        Not Reserved Yet
+                      </Badge>
                     </CardTitle>
-                    <CardDescription className="text-xs text-zinc-400">
-                      Creators you selected when launching this campaign. They will show as Reserved once they accept the invitation.
+                    <CardDescription className="text-xs text-muted-foreground">
+                      Creators you selected when launching this campaign. Their status automatically changes to Reserved once they accept & reserve the ad slot.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="p-4 space-y-3">
                     {pendingCreators.map((p) => (
                       <div
                         key={p.id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-zinc-950 border border-zinc-800 gap-4"
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-muted/20 border border-border gap-4"
                       >
                         <div className="flex items-center gap-3">
-                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-zinc-700" />
+                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-border" />
                           <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-white text-sm">{p.creatorName}</h4>
-                              <span className="text-xs text-amber-400 font-mono">{p.creatorHandle}</span>
-                              <Badge className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
-                                Pending Acceptance (Not Reserved Yet)
-                              </Badge>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-bold text-foreground text-sm">{p.creatorName}</h4>
+                              <span className="text-xs text-primary font-mono">{p.creatorHandle}</span>
+                              {renderCreatorStatusBadge(p.status)}
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1">
-                              <span>Followers: <strong className="text-zinc-200">{p.creatorFollowers.toLocaleString()}</strong></span>
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                              <span>Followers: <strong className="text-foreground">{p.creatorFollowers.toLocaleString()}</strong></span>
                               <span>•</span>
-                              <span>Offered Payout: <strong className="text-emerald-400">{formatINR(p.payoutAmount)}</strong></span>
-                              <span>•</span>
-                              <span className="text-amber-400 font-medium">Invited by Brand</span>
+                              <span>Offered Payout: <strong className="text-emerald-600 dark:text-emerald-400">{formatINR(p.payoutAmount)}</strong></span>
                             </div>
                           </div>
                         </div>
@@ -721,9 +892,9 @@ export default function CampaignWorkspace() {
                               setChatThread(String(p.creatorId));
                               setActiveTab("chat");
                             }}
-                            className="border-zinc-700 hover:bg-zinc-800 text-xs text-zinc-300"
+                            className="text-xs rounded-lg"
                           >
-                            <MessageSquare className="mr-1.5 h-3.5 w-3.5 text-pink-400" /> Message Creator
+                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" /> Message Creator
                           </Button>
                         </div>
                       </div>
@@ -731,18 +902,16 @@ export default function CampaignWorkspace() {
                   </CardContent>
                 </Card>
               )}
+
               {/* Pending Applications Section */}
               {pendingApplications.length > 0 && (
-                <Card className="bg-zinc-900 border-pink-900/40">
-                  <CardHeader className="pb-3 border-b border-pink-900/30 bg-pink-950/20">
-                    <CardTitle className="text-base text-white flex items-center justify-between">
-                      <span className="flex items-center gap-2">
-                        <BadgeAlert className="h-4 w-4 text-pink-400" />
-                        Pending Creator Applications ({pendingApplications.length})
-                      </span>
-                      <Badge className="bg-pink-600">Action Required</Badge>
+                <Card className="bg-card border-primary/30 shadow-2xs">
+                  <CardHeader className="pb-3 border-b border-border bg-primary/5">
+                    <CardTitle className="text-base text-foreground flex items-center justify-between">
+                      <span>Pending Creator Applications ({pendingApplications.length})</span>
+                      <Badge>Action Required</Badge>
                     </CardTitle>
-                    <CardDescription className="text-xs text-zinc-400">
+                    <CardDescription className="text-xs text-muted-foreground">
                       These creators have applied for a slot. Review their Instagram credentials and approve or decline.
                     </CardDescription>
                   </CardHeader>
@@ -750,19 +919,19 @@ export default function CampaignWorkspace() {
                     {pendingApplications.map((p) => (
                       <div
                         key={p.id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-zinc-950 border border-zinc-800 gap-4"
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-muted/20 border border-border gap-4"
                       >
                         <div className="flex items-center gap-3">
-                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-zinc-700" />
+                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-border" />
                           <div>
                             <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-white text-sm">{p.creatorName}</h4>
-                              <span className="text-xs text-pink-400 font-mono">{p.creatorHandle}</span>
+                              <h4 className="font-bold text-foreground text-sm">{p.creatorName}</h4>
+                              <span className="text-xs text-primary font-mono">{p.creatorHandle}</span>
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1">
-                              <span>Followers: <strong className="text-zinc-200">{p.creatorFollowers.toLocaleString()}</strong></span>
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                              <span>Followers: <strong className="text-foreground">{p.creatorFollowers.toLocaleString()}</strong></span>
                               <span>•</span>
-                              <span>Avg Reel Views: <strong className="text-zinc-200">{p.creatorMedianViews.toLocaleString()}</strong></span>
+                              <span>Avg Reel Views: <strong className="text-foreground">{p.creatorMedianViews.toLocaleString()}</strong></span>
                             </div>
                           </div>
                         </div>
@@ -773,17 +942,17 @@ export default function CampaignWorkspace() {
                             variant="outline"
                             onClick={() => applicationActionMutation.mutate({ participantId: p.id, action: "decline" })}
                             disabled={applicationActionMutation.isPending}
-                            className="border-zinc-700 hover:bg-zinc-800 text-xs text-zinc-300"
+                            className="text-xs"
                           >
-                             Decline
+                            Decline
                           </Button>
                           <Button
                             size="sm"
                             onClick={() => applicationActionMutation.mutate({ participantId: p.id, action: "accept" })}
                             disabled={applicationActionMutation.isPending}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white"
                           >
-                             Accept Application
+                            Accept Application
                           </Button>
                         </div>
                       </div>
@@ -793,55 +962,36 @@ export default function CampaignWorkspace() {
               )}
 
               {/* Reserved and Active Participants List */}
-              <Card className="bg-zinc-900 border-zinc-800">
+              <Card className="bg-card border-border shadow-2xs">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base text-white">Participating Creators ({reservedCreators.length})</CardTitle>
-                  <CardDescription className="text-xs text-zinc-400">
-                    Creators with confirmed slots in this campaign, their submission progress, and direct communication access.
+                  <CardTitle className="text-base text-foreground">Confirmed & Reserved Creators ({reservedCreators.length})</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Creators who have actively reserved their ad slot in this campaign.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 space-y-3">
                   {reservedCreators.length === 0 ? (
-                    <div className="text-center py-10 text-zinc-500 text-xs">
-                      No creators have reserved slots yet. Share the campaign marketplace link to attract influencers.
+                    <div className="text-center py-10 text-muted-foreground text-xs">
+                      No creators have reserved their ad slot yet. Chosen creators above are currently in Pending status.
                     </div>
                   ) : (
                     reservedCreators.map((p) => (
                       <div
                         key={p.id}
-                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-zinc-950 border border-zinc-800 gap-4"
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-muted/20 border border-border gap-4"
                       >
                         <div className="flex items-center gap-3">
-                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-zinc-700" />
+                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-border" />
                           <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-white text-sm">{p.creatorName}</h4>
-                              <span className="text-xs text-zinc-400 font-mono">{p.creatorHandle}</span>
-                              <Badge
-                                className={`text-[10px] font-bold uppercase ${
-                                  p.status === "approved"
-                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                                    : p.status === "content_submitted"
-                                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-                                    : p.status === "revision_requested"
-                                    ? "bg-rose-500/10 text-rose-400 border border-rose-500/30"
-                                    : "bg-blue-500/10 text-blue-400 border border-blue-500/30"
-                                }`}
-                              >
-                                {p.status.replace("_", " ")}
-                              </Badge>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-bold text-foreground text-sm">{p.creatorName}</h4>
+                              <span className="text-xs text-primary font-mono">{p.creatorHandle}</span>
+                              {renderCreatorStatusBadge(p.status)}
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1">
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                               <span>Reserved: {new Date(p.reservedAt).toLocaleDateString()}</span>
                               <span>•</span>
-                              <span>Payout: <strong className="text-emerald-400">{formatINR(p.payoutAmount)}</strong></span>
-                              <span>•</span>
-                              <span>
-                                Brief Ack:{" "}
-                                <strong className={p.briefAcknowledgedVersion === workspace.briefVersions.length ? "text-emerald-400" : "text-amber-400"}>
-                                  v{p.briefAcknowledgedVersion} / v{workspace.briefVersions.length}
-                                </strong>
-                              </span>
+                              <span>Payout: <strong className="text-emerald-600 dark:text-emerald-400">{formatINR(p.payoutAmount)}</strong></span>
                             </div>
                           </div>
                         </div>
@@ -854,9 +1004,9 @@ export default function CampaignWorkspace() {
                               setChatThread(String(p.creatorId));
                               setActiveTab("chat");
                             }}
-                            className="border-zinc-700 hover:bg-zinc-800 text-xs text-zinc-300"
+                            className="text-xs"
                           >
-                            <MessageSquare className="mr-1.5 h-3.5 w-3.5 text-pink-400" /> Message
+                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" /> Message
                           </Button>
                           {p.status === "content_submitted" && (
                             <Button
@@ -870,7 +1020,7 @@ export default function CampaignWorkspace() {
                                   notes: "",
                                 });
                               }}
-                              className="bg-amber-600 hover:bg-amber-500 text-xs font-bold text-black"
+                              className="bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white"
                             >
                               Review Reel
                             </Button>
@@ -883,28 +1033,28 @@ export default function CampaignWorkspace() {
               </Card>
             </TabsContent>
 
-            {/* TAB 3: SHARED CAMPAIGN CHAT (CRITICAL FEATURE) */}
-            <TabsContent value="chat" className="space-y-4 mt-6">
-              <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
-                <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-zinc-800">
+            {/* TAB 3: SHARED CAMPAIGN CHAT */}
+            <TabsContent value="chat" className="space-y-4 mt-5">
+              <Card className="bg-card border-border overflow-hidden shadow-2xs">
+                <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-border">
                   {/* Channels / Direct Threads Sidebar */}
-                  <div className="p-4 space-y-4 bg-zinc-950/60">
+                  <div className="p-4 space-y-4 bg-muted/20">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Communication Channels</span>
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Communication Channels</span>
                       <div className="mt-2 space-y-1">
                         <button
                           onClick={() => setChatThread("group")}
                           className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-semibold transition-all ${
                             chatThread === "group"
-                              ? "bg-pink-600 text-white shadow-lg shadow-pink-600/20"
-                              : "text-zinc-300 hover:bg-zinc-900"
+                              ? "bg-primary text-primary-foreground shadow-xs"
+                              : "text-foreground hover:bg-muted"
                           }`}
                         >
                           <span className="flex items-center gap-2">
                             <Megaphone className="h-4 w-4" />
                             Campaign Group Chat
                           </span>
-                          <Badge className="bg-black/30 text-[10px] text-zinc-300">
+                          <Badge variant="secondary" className="text-[10px]">
                             {workspace.messages.filter((m) => m.recipientId === null).length}
                           </Badge>
                         </button>
@@ -912,9 +1062,9 @@ export default function CampaignWorkspace() {
                     </div>
 
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Direct Creator Threads</span>
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Direct Creator Threads</span>
                       <div className="mt-2 space-y-1 max-h-72 overflow-y-auto">
-                        {reservedCreators.map((p) => {
+                        {allParticipants.map((p) => {
                           const threadMsgCount = workspace.messages.filter(
                             (m) =>
                               (m.senderId === p.creatorId && m.recipientId === workspace.sponsorId) ||
@@ -927,8 +1077,8 @@ export default function CampaignWorkspace() {
                               onClick={() => setChatThread(String(p.creatorId))}
                               className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-all ${
                                 chatThread === String(p.creatorId)
-                                  ? "bg-zinc-800 text-white font-bold"
-                                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                                  ? "bg-primary/10 text-primary font-bold"
+                                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
                               }`}
                             >
                               <div className="flex items-center gap-2 truncate">
@@ -936,7 +1086,7 @@ export default function CampaignWorkspace() {
                                 <span className="truncate">{p.creatorName}</span>
                               </div>
                               {threadMsgCount > 0 && (
-                                <span className="text-[10px] text-zinc-500 font-mono">{threadMsgCount}</span>
+                                <span className="text-[10px] text-muted-foreground font-mono">{threadMsgCount}</span>
                               )}
                             </button>
                           );
@@ -946,38 +1096,30 @@ export default function CampaignWorkspace() {
                   </div>
 
                   {/* Chat Messages Area */}
-                  <div className="md:col-span-3 flex flex-col h-[560px] bg-zinc-950/30">
-                    {/* Channel Header */}
-                    <div className="p-3.5 border-b border-zinc-800 bg-zinc-900/50 flex items-center justify-between">
+                  <div className="md:col-span-3 flex flex-col h-[520px] bg-background">
+                    <div className="p-3.5 border-b border-border bg-muted/20 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         {chatThread === "group" ? (
-                          <>
-                            <Megaphone className="h-4 w-4 text-pink-400" />
-                            <div>
-                              <h4 className="text-xs font-bold text-white">Campaign-Wide Group Broadcast</h4>
-                              <p className="text-[10px] text-zinc-400">
-                                Messages sent here are received by ALL {reservedCreators.length} participating creators in real-time.
-                              </p>
-                            </div>
-                          </>
+                          <div>
+                            <h4 className="text-xs font-bold text-foreground">Campaign-Wide Group Broadcast</h4>
+                            <p className="text-[10px] text-muted-foreground">
+                              Messages sent here are received by all {allParticipants.length} campaign creators.
+                            </p>
+                          </div>
                         ) : (
-                          <>
-                            
-                            <div>
-                              <h4 className="text-xs font-bold text-white">
-                                Private 1:1 Thread with {workspace.participants.find((p) => p.creatorId === Number(chatThread))?.creatorName || "Creator"}
-                              </h4>
-                              <p className="text-[10px] text-zinc-400">Direct private instructions and revision exchange.</p>
-                            </div>
-                          </>
+                          <div>
+                            <h4 className="text-xs font-bold text-foreground">
+                              Direct 1:1 Thread with {workspace.participants.find((p) => p.creatorId === Number(chatThread))?.creatorName || "Creator"}
+                            </h4>
+                            <p className="text-[10px] text-muted-foreground">Private instructions and revision exchange.</p>
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Messages Scroll View */}
                     <div className="flex-1 p-4 overflow-y-auto space-y-3.5">
                       {filteredMessages.length === 0 ? (
-                        <div className="text-center py-20 text-zinc-500 text-xs">
+                        <div className="text-center py-20 text-muted-foreground text-xs">
                           No messages in this channel yet. Say hello or post an official announcement!
                         </div>
                       ) : (
@@ -988,7 +1130,7 @@ export default function CampaignWorkspace() {
                           if (isSys) {
                             return (
                               <div key={msg.id} className="text-center my-2">
-                                <span className="px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-400 inline-block">
+                                <span className="px-3 py-1 rounded-full bg-muted border border-border text-[11px] text-muted-foreground inline-block">
                                   {msg.content}
                                 </span>
                               </div>
@@ -1003,31 +1145,23 @@ export default function CampaignWorkspace() {
                               <img
                                 src={msg.senderAvatar}
                                 alt={msg.senderName}
-                                className="h-8 w-8 rounded-full object-cover shrink-0 border border-zinc-700"
+                                className="h-8 w-8 rounded-full object-cover shrink-0 border border-border"
                               />
                               <div className={`space-y-1 ${isMe ? "text-right" : "text-left"}`}>
-                                <div className="flex items-center gap-2 text-[10px] text-zinc-400">
-                                  <span className="font-semibold text-zinc-300">{msg.senderName}</span>
-                                  {msg.senderRole === "sponsor" && (
-                                    <Badge className="bg-pink-600/30 text-pink-300 text-[9px] px-1 py-0 border-0">Brand</Badge>
-                                  )}
+                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                                  <span className="font-semibold text-foreground">{msg.senderName}</span>
                                   <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                                 </div>
 
                                 <div
                                   className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap ${
                                     msg.isAnnouncement
-                                      ? "bg-gradient-to-r from-pink-950/80 to-purple-950/80 border border-pink-500/40 text-pink-100 shadow-md"
+                                      ? "bg-primary/10 border border-primary/30 text-foreground"
                                       : isMe
-                                      ? "bg-pink-600 text-white rounded-tr-none"
-                                      : "bg-zinc-800 text-zinc-200 rounded-tl-none border border-zinc-700/60"
+                                      ? "bg-primary text-primary-foreground rounded-tr-none"
+                                      : "bg-muted text-foreground rounded-tl-none border border-border"
                                   }`}
                                 >
-                                  {msg.isAnnouncement && (
-                                    <div className="flex items-center gap-1.5 font-bold text-[11px] text-pink-300 pb-1 mb-1 border-b border-pink-500/20">
-                                      <Megaphone className="h-3 w-3" /> OFFICIAL ANNOUNCEMENT
-                                    </div>
-                                  )}
                                   {msg.content}
                                 </div>
                               </div>
@@ -1038,18 +1172,17 @@ export default function CampaignWorkspace() {
                       <div ref={messagesEndRef} />
                     </div>
 
-                    {/* Chat Input Bar */}
-                    <form onSubmit={handleSendMessage} className="p-3 border-t border-zinc-800 bg-zinc-900/80 space-y-2">
+                    <form onSubmit={handleSendMessage} className="p-3 border-t border-border bg-card space-y-2">
                       {chatThread === "group" && (
                         <div className="flex items-center gap-2 px-1">
-                          <label className="flex items-center gap-1.5 text-xs text-pink-400 cursor-pointer font-medium">
+                          <label className="flex items-center gap-1.5 text-xs text-primary cursor-pointer font-medium">
                             <input
                               type="checkbox"
                               checked={isAnnouncement}
                               onChange={(e) => setIsAnnouncement(e.target.checked)}
-                              className="rounded border-zinc-700 bg-zinc-800 text-pink-600 focus:ring-0"
+                              className="rounded border-border"
                             />
-                            Mark as Official Announcement (Highlights message for all creators)
+                            Mark as Official Announcement
                           </label>
                         </div>
                       )}
@@ -1063,14 +1196,15 @@ export default function CampaignWorkspace() {
                               ? "Broadcast an announcement or instruction to all creators..."
                               : "Send private instruction or feedback..."
                           }
-                          className="bg-zinc-950 border-zinc-700 text-xs text-white h-10 rounded-xl"
+                          className="text-xs h-10 rounded-xl"
                         />
                         <Button
                           type="submit"
                           disabled={!chatMessage.trim() || sendMessageMutation.isPending}
-                          className="h-10 px-4 bg-pink-600 hover:bg-pink-500 text-white rounded-xl"
+                          className="h-10 px-4 rounded-xl text-xs font-semibold"
                         >
-                          
+                          <Send className="h-3.5 w-3.5 mr-1.5" />
+                          Send
                         </Button>
                       </div>
                     </form>
@@ -1080,20 +1214,18 @@ export default function CampaignWorkspace() {
             </TabsContent>
 
             {/* TAB 4: REEL SUBMISSIONS & APPROVALS */}
-            <TabsContent value="submissions" className="space-y-6 mt-6">
+            <TabsContent value="submissions" className="space-y-6 mt-5">
               {/* Draft Video Previews Review Queue */}
-              <Card className="bg-zinc-900 border-zinc-800">
-                <CardHeader className="pb-3 flex flex-row items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base text-white">Draft Video Previews Review Queue (Pre-Post)</CardTitle>
-                    <CardDescription className="text-xs text-zinc-400">
-                      Approve or request revisions on draft videos uploaded by creators before they publish live on Instagram.
-                    </CardDescription>
-                  </div>
+              <Card className="bg-card border-border shadow-2xs">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base text-foreground">Draft Video Previews Review Queue (Pre-Post)</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Approve or request revisions on draft videos uploaded by creators before they publish live on Instagram.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 space-y-4">
                   {workspace.participants.filter((p) => p.draftSubmission !== null).length === 0 ? (
-                    <div className="text-center py-10 text-zinc-500 text-xs">
+                    <div className="text-center py-8 text-muted-foreground text-xs">
                       <p>No draft video previews submitted yet.</p>
                     </div>
                   ) : (
@@ -1102,43 +1234,43 @@ export default function CampaignWorkspace() {
                       .map((p) => {
                         const draft = p.draftSubmission!;
                         return (
-                          <div
-                            key={p.id}
-                            className="p-5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-3"
-                          >
+                          <div key={p.id} className="p-4 rounded-xl bg-muted/20 border border-border space-y-3">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
-                                <img src={p.creatorAvatar} alt="" className="h-9 w-9 rounded-full object-cover border border-zinc-700" />
+                                <img src={p.creatorAvatar} alt="" className="h-9 w-9 rounded-full object-cover border border-border" />
                                 <div>
-                                  <h4 className="font-bold text-white text-sm">{p.creatorName} <span className="text-xs text-pink-400 font-mono">({p.creatorHandle})</span></h4>
-                                  <p className="text-[11px] text-zinc-400">Submitted Draft: {new Date(draft.submittedAt).toLocaleString()}</p>
+                                  <h4 className="font-bold text-foreground text-sm">
+                                    {p.creatorName} <span className="text-xs text-primary font-mono">({p.creatorHandle})</span>
+                                  </h4>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    Submitted Draft: {new Date(draft.submittedAt).toLocaleString()}
+                                  </p>
                                 </div>
                               </div>
-                              <Badge className={`text-xs font-bold uppercase ${
-                                p.draftStatus === "approved" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" :
-                                p.draftStatus === "revision_requested" ? "bg-rose-500/10 text-rose-400 border border-rose-500/30" :
-                                "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-                              }`}>
-                                {p.draftStatus.replace("_", " ")}
+                              <Badge variant="outline" className="text-xs font-bold uppercase">
+                                {(p.draftStatus || "submitted").replace("_", " ")}
                               </Badge>
                             </div>
 
-                            <div className="p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <a href={draft.videoUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1.5 truncate">
-                                  
-                                  {draft.videoUrl}
-                                </a>
-                              </div>
+                            <div className="p-3 rounded-lg bg-background border border-border space-y-2">
+                              <a
+                                href={draft.videoUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-primary hover:underline font-mono flex items-center gap-1.5 truncate"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                {draft.videoUrl}
+                              </a>
                               {draft.notes && (
-                                <p className="text-xs text-zinc-300 bg-zinc-950 p-2.5 rounded-lg border border-zinc-800">
-                                  <strong className="text-pink-400">Creator Note:</strong> "{draft.notes}"
+                                <p className="text-xs text-muted-foreground">
+                                  <strong className="text-foreground">Creator Note:</strong> "{draft.notes}"
                                 </p>
                               )}
                             </div>
 
                             {p.draftStatus === "submitted" && (
-                              <div className="flex items-center justify-end gap-3 pt-2">
+                              <div className="flex items-center justify-end gap-2 pt-1">
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1150,7 +1282,7 @@ export default function CampaignWorkspace() {
                                       notes: "",
                                     });
                                   }}
-                                  className="border-amber-900/50 text-amber-300 hover:bg-amber-950/30 text-xs"
+                                  className="text-xs"
                                 >
                                   Request Changes
                                 </Button>
@@ -1163,7 +1295,7 @@ export default function CampaignWorkspace() {
                                     });
                                   }}
                                   disabled={reviewDraftMutation.isPending}
-                                  className="bg-emerald-600 hover:bg-emerald-500 font-bold text-white text-xs"
+                                  className="bg-emerald-600 hover:bg-emerald-700 font-bold text-white text-xs"
                                 >
                                   Approve Draft Preview
                                 </Button>
@@ -1176,113 +1308,73 @@ export default function CampaignWorkspace() {
                 </CardContent>
               </Card>
 
-              <Card className="bg-zinc-900 border-zinc-800">
-                <CardHeader className="pb-3 flex flex-row items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base text-white">Submitted Instagram Reels Review Queue</CardTitle>
-                    <CardDescription className="text-xs text-zinc-400">
-                      Verify published Reels, check audio & hashtag compliance, approve escrow releases or request revisions.
-                    </CardDescription>
-                  </div>
+              {/* Submitted Instagram Reels Review Queue */}
+              <Card className="bg-card border-border shadow-2xs">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base text-foreground">Submitted Instagram Reels Review Queue</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Verify published Reels, check audio & hashtag compliance, approve escrow releases or request revisions.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="p-4 space-y-4">
                   {submittedReels.length === 0 ? (
-                    <div className="text-center py-16 text-zinc-500 text-xs space-y-2">
-                      
-                      <p>No creators have submitted Reel links yet.</p>
-                      <p className="text-[11px] text-zinc-600">
-                        Reserved creators have 48 hours to produce and publish their Reels.
-                      </p>
+                    <div className="text-center py-12 text-muted-foreground text-xs space-y-1">
+                      <p className="font-medium text-foreground">No creators have submitted Reel links yet.</p>
+                      <p>Reserved creators have 48 hours to produce and publish their Reels.</p>
                     </div>
                   ) : (
                     submittedReels.map((p) => {
                       const sub = p.submission!;
                       return (
-                        <div
-                          key={p.id}
-                          className="p-5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-4 transition-all hover:border-zinc-700"
-                        >
+                        <div key={p.id} className="p-4 rounded-xl bg-muted/20 border border-border space-y-4">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div className="flex items-center gap-3">
-                              <img src={p.creatorAvatar} alt="" className="h-10 w-10 rounded-full object-cover border border-zinc-700" />
+                              <img src={p.creatorAvatar} alt="" className="h-10 w-10 rounded-full object-cover border border-border" />
                               <div>
                                 <div className="flex items-center gap-2">
-                                  <h4 className="font-bold text-white text-sm">{p.creatorName}</h4>
-                                  <span className="text-xs text-pink-400 font-mono">{p.creatorHandle}</span>
+                                  <h4 className="font-bold text-foreground text-sm">{p.creatorName}</h4>
+                                  <span className="text-xs text-primary font-mono">{p.creatorHandle}</span>
                                 </div>
-                                <p className="text-[11px] text-zinc-400">
+                                <p className="text-[11px] text-muted-foreground">
                                   Submitted: {new Date(sub.submittedAt).toLocaleString()}
                                 </p>
                               </div>
                             </div>
-
-                            <Badge
-                              className={`text-xs font-bold uppercase self-start sm:self-center ${
-                                p.status === "approved"
-                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                                  : p.status === "revision_requested"
-                                  ? "bg-rose-500/10 text-rose-400 border border-rose-500/30"
-                                  : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-                              }`}
-                            >
-                              {p.status.replace("_", " ")}
-                            </Badge>
+                            {renderCreatorStatusBadge(p.status)}
                           </div>
 
-                          {/* Reel URL & Verified Metrics Snapshot */}
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-xl bg-zinc-900/60 border border-zinc-800">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 rounded-xl bg-background border border-border">
                             <div className="md:col-span-2 space-y-1">
-                              <span className="text-[10px] uppercase font-bold text-zinc-400">Instagram Reel Link</span>
-                              <div>
-                                <a
-                                  href={sub.postUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-xs text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1.5 truncate"
-                                >
-                                  
-                                  {sub.postUrl}
-                                </a>
-                              </div>
-                              <div className="flex items-center gap-2 pt-1 text-[11px] text-emerald-400 font-medium">
-                                
-                                Official Audio Verified • #ad Disclosure Present
-                              </div>
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground">Instagram Reel Link</span>
+                              <a
+                                href={sub.postUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-primary hover:underline font-mono flex items-center gap-1.5 truncate"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                                {sub.postUrl}
+                              </a>
                             </div>
 
-                            <div className="flex items-center justify-around border-t md:border-t-0 md:border-l border-zinc-800 pt-2 md:pt-0">
+                            <div className="flex items-center justify-around border-t md:border-t-0 md:border-l border-border pt-2 md:pt-0">
                               <div className="text-center">
-                                <span className="text-[10px] text-zinc-500 uppercase">Views</span>
-                                <p className="text-sm font-bold text-white">{sub.viewsCount.toLocaleString()}</p>
+                                <span className="text-[10px] text-muted-foreground uppercase">Views</span>
+                                <p className="text-sm font-bold text-foreground">{sub.viewsCount.toLocaleString()}</p>
                               </div>
                               <div className="text-center">
-                                <span className="text-[10px] text-zinc-500 uppercase">Likes</span>
-                                <p className="text-sm font-bold text-white">{sub.likesCount.toLocaleString()}</p>
+                                <span className="text-[10px] text-muted-foreground uppercase">Likes</span>
+                                <p className="text-sm font-bold text-foreground">{sub.likesCount.toLocaleString()}</p>
                               </div>
                               <div className="text-center">
-                                <span className="text-[10px] text-zinc-500 uppercase">Comments</span>
-                                <p className="text-sm font-bold text-white">{sub.commentsCount.toLocaleString()}</p>
+                                <span className="text-[10px] text-muted-foreground uppercase">Comments</span>
+                                <p className="text-sm font-bold text-foreground">{sub.commentsCount.toLocaleString()}</p>
                               </div>
                             </div>
                           </div>
 
-                          {/* Revision History for this Creator */}
-                          {p.revisions && p.revisions.length > 0 && (
-                            <div className="p-3 rounded-xl bg-rose-950/20 border border-rose-900/30 space-y-1.5 text-xs">
-                              <span className="font-bold text-rose-300 flex items-center gap-1">
-                                <RotateCcw className="h-3.5 w-3.5" /> Previous Revision Requests ({p.revisions.length}):
-                              </span>
-                              {p.revisions.map((r) => (
-                                <p key={r.id} className="text-[11px] text-zinc-300">
-                                  • <strong className="text-rose-400">{r.reason}:</strong> {r.notes} ({new Date(r.requestedAt).toLocaleDateString()})
-                                </p>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Review Action Buttons */}
                           {p.status === "content_submitted" && (
-                            <div className="flex items-center justify-end gap-3 pt-2 border-t border-zinc-800/80">
+                            <div className="flex items-center justify-end gap-2.5 pt-2">
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -1295,7 +1387,7 @@ export default function CampaignWorkspace() {
                                     notes: "",
                                   });
                                 }}
-                                className="border-rose-900/40 text-rose-400 hover:bg-rose-950/30 text-xs"
+                                className="text-destructive border-destructive/30 text-xs"
                               >
                                 Reject
                               </Button>
@@ -1311,9 +1403,9 @@ export default function CampaignWorkspace() {
                                     notes: "Please re-upload with the official audio snippet and mandatory #ad tag.",
                                   });
                                 }}
-                                className="border-amber-900/50 text-amber-300 hover:bg-amber-950/30 text-xs"
+                                className="text-xs"
                               >
-                                <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Request Revision
+                                Request Revision
                               </Button>
                               <Button
                                 size="sm"
@@ -1326,9 +1418,9 @@ export default function CampaignWorkspace() {
                                     notes: "",
                                   });
                                 }}
-                                className="bg-emerald-600 hover:bg-emerald-500 font-bold text-white text-xs"
+                                className="bg-emerald-600 hover:bg-emerald-700 font-bold text-white text-xs"
                               >
-                                 Approve Reel & Release {formatINR(p.payoutAmount)}
+                                Approve Reel & Release {formatINR(p.payoutAmount)}
                               </Button>
                             </div>
                           )}
@@ -1341,37 +1433,37 @@ export default function CampaignWorkspace() {
             </TabsContent>
 
             {/* TAB 5: PERFORMANCE ANALYTICS */}
-            <TabsContent value="performance" className="space-y-6 mt-6">
+            <TabsContent value="performance" className="space-y-6 mt-5">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <Card className="bg-zinc-900 border-zinc-800 p-5">
-                  <span className="text-xs uppercase font-bold text-zinc-400">Total Campaign Views</span>
+                <Card className="bg-card border-border p-5 shadow-2xs">
+                  <span className="text-xs uppercase font-bold text-muted-foreground">Total Campaign Views</span>
                   <div className="mt-2 flex items-baseline justify-between">
-                    <span className="text-3xl font-extrabold text-white">{totalVerifiedViews.toLocaleString()}</span>
-                    <span className="text-xs text-indigo-400 font-semibold">{submittedReels.length} Reels live</span>
+                    <span className="text-3xl font-extrabold text-foreground">{totalVerifiedViews.toLocaleString()}</span>
+                    <span className="text-xs text-primary font-semibold">{submittedReels.length} Reels live</span>
                   </div>
-                  <p className="text-xs text-zinc-500 mt-2">Aggregated across all verified Instagram Reels</p>
+                  <p className="text-xs text-muted-foreground mt-2">Aggregated across all verified Instagram Reels</p>
                 </Card>
 
-                <Card className="bg-zinc-900 border-zinc-800 p-5">
-                  <span className="text-xs uppercase font-bold text-zinc-400">Average Views Per Reel</span>
+                <Card className="bg-card border-border p-5 shadow-2xs">
+                  <span className="text-xs uppercase font-bold text-muted-foreground">Average Views Per Reel</span>
                   <div className="mt-2">
-                    <span className="text-3xl font-extrabold text-emerald-400">
+                    <span className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400">
                       {submittedReels.length > 0
                         ? Math.round(totalVerifiedViews / submittedReels.length).toLocaleString()
                         : "0"}
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-500 mt-2">Organic creator reach multiplier</p>
+                  <p className="text-xs text-muted-foreground mt-2">Organic creator reach multiplier</p>
                 </Card>
 
-                <Card className="bg-zinc-900 border-zinc-800 p-5">
-                  <span className="text-xs uppercase font-bold text-zinc-400">Estimated Total Interactions</span>
+                <Card className="bg-card border-border p-5 shadow-2xs">
+                  <span className="text-xs uppercase font-bold text-muted-foreground">Estimated Total Interactions</span>
                   <div className="mt-2">
-                    <span className="text-3xl font-extrabold text-pink-400">
+                    <span className="text-3xl font-extrabold text-primary">
                       {(totalVerifiedLikes + totalVerifiedComments).toLocaleString()}
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-500 mt-2">
+                  <p className="text-xs text-muted-foreground mt-2">
                     {totalVerifiedLikes.toLocaleString()} Likes • {totalVerifiedComments.toLocaleString()} Comments
                   </p>
                 </Card>
@@ -1379,33 +1471,33 @@ export default function CampaignWorkspace() {
             </TabsContent>
 
             {/* TAB 6: ESCROW & FINANCIAL LEDGER */}
-            <TabsContent value="financials" className="space-y-6 mt-6">
+            <TabsContent value="financials" className="space-y-6 mt-5">
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                <Card className="bg-zinc-900 border-zinc-800 p-4">
-                  <span className="text-[11px] uppercase font-bold text-zinc-400">Total Allocated Budget</span>
-                  <p className="text-2xl font-bold text-white mt-1">{formatINR(workspace.totalBudget)}</p>
-                  <p className="text-[10px] text-zinc-500 mt-1">Locked at campaign creation</p>
+                <Card className="bg-card border-border p-4 shadow-2xs">
+                  <span className="text-[11px] uppercase font-bold text-muted-foreground">Total Allocated Budget</span>
+                  <p className="text-2xl font-bold text-foreground mt-1">{formatINR(workspace.totalBudget)}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">Locked at campaign creation</p>
                 </Card>
-                <Card className="bg-zinc-900 border-zinc-800 p-4">
-                  <span className="text-[11px] uppercase font-bold text-zinc-400">Committed Payouts</span>
-                  <p className="text-2xl font-bold text-amber-400 mt-1">{formatINR(workspace.committedPayouts)}</p>
-                  <p className="text-[10px] text-zinc-500 mt-1">{reservedCreators.length} slots reserved</p>
+                <Card className="bg-card border-border p-4 shadow-2xs">
+                  <span className="text-[11px] uppercase font-bold text-muted-foreground">Committed Payouts</span>
+                  <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">{formatINR(workspace.committedPayouts)}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{reservedCreators.length} slots reserved</p>
                 </Card>
-                <Card className="bg-zinc-900 border-zinc-800 p-4">
-                  <span className="text-[11px] uppercase font-bold text-zinc-400">Released Payouts</span>
-                  <p className="text-2xl font-bold text-emerald-400 mt-1">{formatINR(workspace.releasedPayouts)}</p>
-                  <p className="text-[10px] text-zinc-500 mt-1">{approvedSubmissions.length} Reels approved</p>
+                <Card className="bg-card border-border p-4 shadow-2xs">
+                  <span className="text-[11px] uppercase font-bold text-muted-foreground">Released Payouts</span>
+                  <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{formatINR(workspace.releasedPayouts)}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{approvedSubmissions.length} Reels approved</p>
                 </Card>
-                <Card className="bg-zinc-900 border-zinc-800 p-4">
-                  <span className="text-[11px] uppercase font-bold text-zinc-400">Refundable Balance</span>
-                  <p className="text-2xl font-bold text-zinc-300 mt-1">{formatINR(refundableBalance)}</p>
-                  <p className="text-[10px] text-zinc-500 mt-1">Unfilled slots balance</p>
+                <Card className="bg-card border-border p-4 shadow-2xs">
+                  <span className="text-[11px] uppercase font-bold text-muted-foreground">Refundable Balance</span>
+                  <p className="text-2xl font-bold text-foreground mt-1">{formatINR(refundableBalance)}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">Unfilled slots balance</p>
                 </Card>
               </div>
 
-              <Card className="bg-zinc-900 border-zinc-800 p-5">
-                <h3 className="text-sm font-bold text-white mb-2">Escrow Financial Integrity</h3>
-                <p className="text-xs text-zinc-400 leading-relaxed">
+              <Card className="bg-card border-border p-5 shadow-2xs">
+                <h3 className="text-sm font-bold text-foreground mb-2">Escrow Financial Integrity</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
                   All funds are held in secure escrow. Payouts are committed atomically upon creator reservation and released
                   directly into creator wallets upon your Reel approval. Any remaining balance from unfilled slots is 100%
                   refundable if the campaign is paused or closed.
@@ -1418,79 +1510,65 @@ export default function CampaignWorkspace() {
 
       {/* BRIEF EDIT & VERSIONING MODAL */}
       <Dialog open={isBriefEditOpen} onOpenChange={setIsBriefEditOpen}>
-        <DialogContent className="max-w-2xl bg-zinc-900 border-zinc-800 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-lg font-bold text-white">Update Campaign Brief & Notify Creators</DialogTitle>
-            <DialogDescription className="text-xs text-zinc-400">
+            <DialogTitle className="text-base font-bold">Update Campaign Brief & Notify Creators</DialogTitle>
+            <DialogDescription className="text-xs">
               Any changes made here will be versioned, recorded in the audit history, and broadcast to all participating creators.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-xs">
             <div className="space-y-1.5">
-              <Label className="text-zinc-300">Campaign Title</Label>
+              <Label>Campaign Title</Label>
               <Input
                 value={briefFormData.title}
                 onChange={(e) => setBriefFormData({ ...briefFormData, title: e.target.value })}
-                className="bg-zinc-950 border-zinc-700 text-white"
               />
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-zinc-300">Campaign Brief & Description</Label>
+              <Label>Campaign Brief & Description</Label>
               <Textarea
                 rows={3}
                 value={briefFormData.description}
                 onChange={(e) => setBriefFormData({ ...briefFormData, description: e.target.value })}
-                className="bg-zinc-950 border-zinc-700 text-white"
               />
             </div>
 
-
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-zinc-300">Audio Track Link</Label>
+                <Label>Audio Track Link</Label>
                 <Input
                   value={briefFormData.audioUrl}
                   onChange={(e) => setBriefFormData({ ...briefFormData, audioUrl: e.target.value })}
-                  className="bg-zinc-950 border-zinc-700 text-white"
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-zinc-300">Campaign Deadline</Label>
+                <Label>Campaign Deadline</Label>
                 <Input
                   type="date"
                   value={briefFormData.deadline}
                   onChange={(e) => setBriefFormData({ ...briefFormData, deadline: e.target.value })}
-                  className="bg-zinc-950 border-zinc-700 text-white"
                 />
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-pink-950/30 border border-pink-900/40 space-y-1.5">
-              <Label className="text-pink-300 font-bold">What Changed? (Reason for update)</Label>
+            <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 space-y-1.5">
+              <Label className="font-bold">What Changed? (Reason for update)</Label>
               <Input
                 placeholder="e.g. Added #MingreePromotions and updated audio snippet link"
                 value={briefFormData.changesSummary}
                 onChange={(e) => setBriefFormData({ ...briefFormData, changesSummary: e.target.value })}
-                className="bg-zinc-950 border-pink-800 text-white"
               />
-              <p className="text-[11px] text-zinc-400">
-                This explanation will be prominently announced in the campaign chat and creators will be requested to acknowledge it.
-              </p>
             </div>
           </div>
 
           <DialogFooter className="gap-2">
-            <Button variant="ghost" onClick={() => setIsBriefEditOpen(false)} className="text-zinc-400 hover:text-white">
+            <Button variant="outline" onClick={() => setIsBriefEditOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={handleSaveBrief}
-              disabled={updateBriefMutation.isPending}
-              className="bg-pink-600 hover:bg-pink-500 font-bold text-white"
-            >
+            <Button onClick={handleSaveBrief} disabled={updateBriefMutation.isPending}>
               Save Brief & Broadcast v{workspace.briefVersions.length + 1}
             </Button>
           </DialogFooter>
@@ -1502,71 +1580,63 @@ export default function CampaignWorkspace() {
         open={reviewModalState.isOpen}
         onOpenChange={(open) => !open && setReviewModalState({ ...reviewModalState, isOpen: false })}
       >
-        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800 text-white">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-white">
+            <DialogTitle className="text-base font-bold">
               {reviewModalState.action === "approve"
                 ? "Approve Reel & Release Payout"
                 : reviewModalState.action === "request_revision"
                 ? "Request Revision from Creator"
                 : "Reject Submission"}
             </DialogTitle>
-            <DialogDescription className="text-xs text-zinc-400">
+            <DialogDescription className="text-xs">
               Creator: {reviewModalState.participant?.creatorName} ({reviewModalState.participant?.creatorHandle})
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-xs">
             {reviewModalState.action === "approve" ? (
-              <div className="p-4 rounded-xl bg-emerald-950/30 border border-emerald-900/40 space-y-2 text-emerald-200">
+              <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2 text-foreground">
                 <p>
                   Approving this submission will release{" "}
                   <strong>{formatINR(reviewModalState.participant?.payoutAmount || workspace.payAmount)}</strong> directly
                   from your campaign escrow into the creator's wallet balance.
                 </p>
-                <p className="text-[11px] text-zinc-400">This action is irreversible and writes to the immutable financial ledger.</p>
               </div>
             ) : reviewModalState.action === "request_revision" ? (
               <>
                 <div className="space-y-1.5">
-                  <Label className="text-zinc-300">Revision Reason</Label>
+                  <Label>Revision Reason</Label>
                   <Input
                     value={reviewModalState.reason}
                     onChange={(e) => setReviewModalState({ ...reviewModalState, reason: e.target.value })}
                     placeholder="e.g. Missing required hashtag or wrong audio snippet"
-                    className="bg-zinc-950 border-zinc-700 text-white"
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-zinc-300">Specific Feedback & Instructions</Label>
+                  <Label>Specific Feedback & Instructions</Label>
                   <Textarea
                     rows={3}
                     value={reviewModalState.notes}
                     onChange={(e) => setReviewModalState({ ...reviewModalState, notes: e.target.value })}
                     placeholder="Describe exactly what needs to be changed in the re-submitted Reel..."
-                    className="bg-zinc-950 border-zinc-700 text-white"
                   />
                 </div>
               </>
             ) : (
               <div className="space-y-1.5">
-                <Label className="text-zinc-300">Rejection Reason</Label>
+                <Label>Rejection Reason</Label>
                 <Input
                   value={reviewModalState.reason}
                   onChange={(e) => setReviewModalState({ ...reviewModalState, reason: e.target.value })}
                   placeholder="e.g. Video violates guidelines or content completely off-brief"
-                  className="bg-zinc-950 border-zinc-700 text-white"
                 />
               </div>
             )}
           </div>
 
           <DialogFooter className="gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setReviewModalState({ ...reviewModalState, isOpen: false })}
-              className="text-zinc-400 hover:text-white"
-            >
+            <Button variant="outline" onClick={() => setReviewModalState({ ...reviewModalState, isOpen: false })}>
               Cancel
             </Button>
             <Button
@@ -1583,10 +1653,10 @@ export default function CampaignWorkspace() {
               disabled={reviewSubmissionMutation.isPending}
               className={
                 reviewModalState.action === "approve"
-                  ? "bg-emerald-600 hover:bg-emerald-500 font-bold text-white"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                   : reviewModalState.action === "request_revision"
-                  ? "bg-amber-600 hover:bg-amber-500 font-bold text-black"
-                  : "bg-rose-600 hover:bg-rose-500 font-bold text-white"
+                  ? "bg-amber-600 hover:bg-amber-700 text-white"
+                  : "bg-destructive text-destructive-foreground"
               }
             >
               {reviewModalState.action === "approve"
@@ -1604,38 +1674,28 @@ export default function CampaignWorkspace() {
         open={draftReviewState.isOpen}
         onOpenChange={(open) => !open && setDraftReviewState({ ...draftReviewState, isOpen: false })}
       >
-        <DialogContent className="max-w-md bg-zinc-900 border-zinc-800 text-white">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-white">
-              Request Changes / Reject Draft Preview
-            </DialogTitle>
-            <DialogDescription className="text-xs text-zinc-400">
+            <DialogTitle className="text-base font-bold">Request Changes / Reject Draft Preview</DialogTitle>
+            <DialogDescription className="text-xs">
               Creator: {draftReviewState.participant?.creatorName} ({draftReviewState.participant?.creatorHandle})
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-xs">
             <div className="space-y-1.5">
-              <Label className="text-zinc-300 font-bold">Feedback Notes & Required Changes *</Label>
+              <Label className="font-bold">Feedback Notes & Required Changes *</Label>
               <Textarea
                 rows={4}
                 value={draftReviewState.notes}
                 onChange={(e) => setDraftReviewState({ ...draftReviewState, notes: e.target.value })}
-                placeholder="Explain what changes are needed (e.g. Please improve lighting and ensure audio matches requirement)..."
-                className="bg-zinc-950 border-zinc-700 text-white"
+                placeholder="Explain what changes are needed..."
               />
-              <p className="text-[11px] text-zinc-500">
-                This note will be visible to the creator and will unlock their revision box.
-              </p>
             </div>
           </div>
 
           <DialogFooter className="gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setDraftReviewState({ ...draftReviewState, isOpen: false })}
-              className="text-zinc-400 hover:text-white"
-            >
+            <Button variant="outline" onClick={() => setDraftReviewState({ ...draftReviewState, isOpen: false })}>
               Cancel
             </Button>
             <Button
@@ -1651,7 +1711,6 @@ export default function CampaignWorkspace() {
                 });
               }}
               disabled={reviewDraftMutation.isPending || !draftReviewState.notes.trim()}
-              className="bg-amber-600 hover:bg-amber-500 font-bold text-black text-xs"
             >
               Send Revision Request
             </Button>

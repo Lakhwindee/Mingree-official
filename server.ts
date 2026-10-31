@@ -2223,22 +2223,18 @@ app.get(["/api/campaigns", "/api/campaigns/marketplace"], async (req: express.Re
     if (req.query.creatorFollowers) creatorFollowers = Number(req.query.creatorFollowers);
   }
 
-  // Requirement 1: Creator with < 5,000 followers receives empty list
-  if (user && user.role === "creator" && creatorFollowers < 5000) {
-    return res.json([]);
-  }
-
   const { niche, country, city, minPayout } = req.query;
-  const activeCity = typeof city === "string" && city ? city : creatorCity;
+  const activeCity = typeof city === "string" && city ? city : undefined;
 
   const list = getMarketplaceCampaigns({
     niche: typeof niche === "string" ? niche : undefined,
     country: typeof country === "string" ? country : undefined,
-    city: activeCity || undefined,
+    city: activeCity,
     minPayout: minPayout ? parseFloat(String(minPayout)) : undefined,
     creatorFollowers: creatorFollowers > 0 ? creatorFollowers : undefined,
-    creatorCity: activeCity || undefined,
+    creatorCity: creatorCity || undefined,
     creatorTier: creatorTier !== "Unlinked" && creatorTier !== "Not eligible yet (needs 5,000 followers)" ? creatorTier : undefined,
+    creatorId: user?.id || (req.query.userId ? Number(req.query.userId) : undefined),
   });
 
   res.json(list);
@@ -2385,11 +2381,13 @@ app.get("/api/campaigns/:id/workspace", requireAuth, async (req: AuthRequest, re
     };
   }));
 
-  // Ensure workspace stats exist and match
+  // Ensure workspace stats exist and match confirmed reservations (excluding pending invitations)
   const totalSlots = workspace.totalSlots || (workspace as any).totalSpots || hydratedParticipants.length || 1;
-  const activeParticipantsCount = hydratedParticipants.filter((p) => p.status !== "rejected" && p.status !== "withdrawn").length;
-  const reservedSlots = workspace.reservedSlots !== undefined && workspace.reservedSlots !== null ? workspace.reservedSlots : activeParticipantsCount;
-  const remainingSlots = workspace.remainingSlots !== undefined && workspace.remainingSlots !== null ? workspace.remainingSlots : Math.max(0, totalSlots - reservedSlots);
+  const confirmedReservedCount = hydratedParticipants.filter(
+    (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+  ).length;
+  const reservedSlots = confirmedReservedCount;
+  const remainingSlots = Math.max(0, totalSlots - reservedSlots);
   const committedPayouts = hydratedParticipants.reduce((sum, p) => sum + (p.payoutAmount || 1200), 0);
   const deadlineStr = workspace.deadline || (workspace as any).postByDate || new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
 
@@ -2515,8 +2513,11 @@ app.post("/api/campaigns/:id/accept-invitation", requireAuth, requireRole("creat
   participant.reservedAt = new Date().toISOString();
   participant.expiresAt = new Date(Date.now() + 48 * 3600000).toISOString();
 
-  workspace.reservedSlots = (workspace.reservedSlots || 0) + 1;
-  workspace.remainingSlots = Math.max(0, (workspace.totalSlots || 1) - workspace.reservedSlots);
+  const confirmedCount = workspace.participants.filter(
+    (p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn"
+  ).length;
+  workspace.reservedSlots = confirmedCount;
+  workspace.remainingSlots = Math.max(0, (workspace.totalSlots || 1) - confirmedCount);
 
   workspace.messages.push({
     id: Date.now(),
@@ -2993,7 +2994,25 @@ app.get("/api/sponsors/:id/campaigns", requireAuth, (req: AuthRequest, res) => {
 app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const sponsorId = req.user!.id;
   const data = req.body;
-  const totalBudget = parseFloat(data.budget || data.totalBudget || (Number(data.payAmount || 0) * Number(data.totalSlots || 1)));
+
+  let parsedTiers: Array<{ name: string; creatorsNeeded: number; paymentPerCreator: number; minFollowers?: number }> = [];
+  if (data.tier && typeof data.tier === "string") {
+    try {
+      const parsed = JSON.parse(data.tier);
+      if (Array.isArray(parsed)) {
+        parsedTiers = parsed;
+      }
+    } catch {}
+  }
+
+  const tierTotalSlots = parsedTiers.reduce((sum, t) => sum + Number(t.creatorsNeeded || 1), 0);
+  const tierSubtotal = parsedTiers.reduce((sum, t) => sum + Number(t.paymentPerCreator || 500) * Number(t.creatorsNeeded || 1), 0);
+  const tierAvgPay = tierTotalSlots > 0 ? Math.round(tierSubtotal / tierTotalSlots) : 0;
+
+  const totalSlots = Number(data.totalSlots || data.totalSpots || tierTotalSlots || 1);
+  const payPerSlot = Number(data.fixedPrice || (Number(data.payAmount) > 0 ? data.payAmount : 0) || tierAvgPay || 500);
+  const computedSubtotal = tierSubtotal > 0 ? tierSubtotal : payPerSlot * totalSlots;
+  const totalBudget = parseFloat(data.budget || data.totalBudget || String(Math.round(computedSubtotal * 1.075)) || String(computedSubtotal));
 
   if (isNaN(totalBudget) || totalBudget <= 0) {
     return res.status(400).json({ error: "Campaign budget must be greater than zero" });
@@ -3019,8 +3038,69 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
     ? rawCaption
     : `#ad | Paid Partnership. ${rawCaption}`.trim();
 
-  const payPerSlot = Number(data.fixedPrice || data.payAmount || Math.floor(totalBudget / Math.max(1, Number(data.totalSlots || 10))));
-  const totalSlots = Number(data.totalSlots || Math.max(1, Math.floor(totalBudget / Math.max(1, payPerSlot))));
+  // Hydrate any selected creators passed during Fixed Price creation
+  const selectedCreatorIds: number[] = Array.isArray(data.selectedCreators)
+    ? data.selectedCreators.map((c: any) => Number(typeof c === "object" ? c.id : c)).filter((id: number) => !isNaN(id) && id > 0)
+    : [];
+
+  const initialParticipants = await Promise.all(selectedCreatorIds.map(async (cid) => {
+    let creatorName = "";
+    let creatorHandle = "";
+    let creatorAvatar = "";
+    let creatorFollowers = 0;
+    let creatorMedianViews = 0;
+
+    const memoryUser = registeredUsers.find((u) => u.id === cid);
+    if (memoryUser) {
+      creatorName = memoryUser.name;
+      creatorHandle = memoryUser.instagramUsername || memoryUser.handle || `@user${cid}`;
+      creatorAvatar = memoryUser.avatar || "";
+      creatorFollowers = memoryUser.instagramFollowers || memoryUser.followers || 10000;
+      creatorMedianViews = memoryUser.medianViews || 4000;
+    }
+
+    if (isDatabaseConfigured) {
+      try {
+        const dbRes = await pool.query(
+          `SELECT u.name, u.handle, u.avatar, cp.username, cp.followers, cp.median_views, cp.avatar_url
+           FROM users u
+           LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+           WHERE u.id = $1`,
+          [cid]
+        );
+        if (dbRes.rows.length > 0) {
+          const row = dbRes.rows[0];
+          creatorName = row.name || creatorName || `Creator #${cid}`;
+          creatorHandle = row.username ? `@${row.username}` : (row.handle || creatorHandle || `@creator${cid}`);
+          creatorAvatar = row.avatar_url || row.avatar || creatorAvatar;
+          creatorFollowers = Number(row.followers || creatorFollowers || 10000);
+          creatorMedianViews = Number(row.median_views || creatorMedianViews || 4000);
+        }
+      } catch {}
+    }
+
+    return {
+      id: cid,
+      campaignId: newId,
+      creatorId: cid,
+      creatorName: creatorName || `Creator #${cid}`,
+      creatorHandle: creatorHandle || `@creator${cid}`,
+      creatorAvatar: creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+      creatorFollowers: creatorFollowers || 10000,
+      creatorMedianViews: creatorMedianViews || 4000,
+      status: "pending" as const,
+      payoutAmount: payPerSlot,
+      reservedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+      briefAcknowledgedVersion: 1,
+      submission: null,
+      revisions: [],
+      draftSubmission: null,
+      draftStatus: "none" as const,
+    };
+  }));
+
+  const tierLabel = parsedTiers.length > 0 ? parsedTiers.map((t) => t.name).join(", ") : (data.tier || "Nano");
 
   const newWorkspace: CampaignWorkspaceData = {
     id: newId,
@@ -3039,7 +3119,7 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
     payAmount: payPerSlot,
     totalBudget,
     escrowHeld: totalBudget,
-    committedPayouts: 0,
+    committedPayouts: computedSubtotal,
     releasedPayouts: 0,
     totalSlots,
     reservedSlots: 0,
@@ -3047,7 +3127,7 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
     bookingModel: data.bookingModel === "approval_required" ? "approval_required" : "instant",
     minFollowers: Number(data.minFollowers || 500),
     minMedianViews: Number(data.minMedianViews || 1000),
-    targetCountries: Array.isArray(data.targetCountries) ? data.targetCountries : ["India"],
+    targetCountries: Array.isArray(data.targetCountries) && data.targetCountries.length > 0 ? data.targetCountries : ["India"],
     targetCities: Array.isArray(data.targetCities) ? data.targetCities : [],
     requiredCaptionNote,
     requiredTags: Array.isArray(data.requiredTags) && data.requiredTags.length > 0 ? data.requiredTags : ["#Mingree", "#Reels"],
@@ -3077,7 +3157,7 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
         },
       },
     ],
-    participants: [],
+    participants: initialParticipants,
     messages: [
       {
         id: Date.now(),
@@ -3094,6 +3174,10 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
       },
     ],
   };
+
+  (newWorkspace as any).tier = tierLabel;
+  (newWorkspace as any).targetTiers = parsedTiers.map((t) => t.name);
+  (newWorkspace as any).category = data.category || "music_reels";
 
   saveSingleWorkspace(newWorkspace);
 
@@ -6639,8 +6723,8 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
       committedPayouts: billData.subtotal,
       releasedPayouts: 0,
       totalSlots: creatorIds.length,
-      reservedSlots: creatorIds.length,
-      remainingSlots: 0,
+      reservedSlots: 0,
+      remainingSlots: creatorIds.length,
       bookingModel: "instant" as const,
       minFollowers: 5000,
       minMedianViews: 2000,
