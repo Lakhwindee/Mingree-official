@@ -889,7 +889,10 @@ export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: st
         language: c.language || "Hindi & English",
         contentTypes: c.contentTypes || ["Reel"],
         promotionStyle: c.promotionStyle || "Lyrics / Page promotion",
-        description: c.description,
+        description:
+          c.description ||
+          c.requiredCaptionNote ||
+          "Promote brand audio / product on Instagram Reels across top creator channels.",
         payAmount: participant.payoutAmount || c.payAmount,
         basePayAmount: participant.baseRate || c.payAmount || 1200,
         negotiationStatus: participant.negotiationStatus || "initial",
@@ -907,10 +910,23 @@ export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: st
         productAssets: c.productAssets || [],
         assetUrl: (c.productAssets && c.productAssets[0]?.url) || (c as any).assetUrl || c.audioUrl || "",
         assetFileName: (c.productAssets && c.productAssets[0]?.name) || (c as any).assetFileName || `${(c.brand || "Campaign").replace(/\s+/g, "_")}_Asset`,
-        requiredCaptionNote: c.requiredCaptionNote,
-        requiredTags: c.requiredTags || [],
-        requiredMentions: c.requiredMentions || [],
-        disclosureInstructions: c.disclosureInstructions || "Include #ad #collab in caption",
+        requiredCaptionNote:
+          c.requiredCaptionNote ||
+          c.description ||
+          "Check out this official release! Use official audio.",
+        requiredTags:
+          Array.isArray(c.requiredTags) && c.requiredTags.length > 0
+            ? c.requiredTags
+            : ["#MingreePromotions"],
+        requiredMentions:
+          Array.isArray(c.requiredMentions) && c.requiredMentions.length > 0
+            ? c.requiredMentions
+            : Array.isArray((c as any).accountsToMention) && (c as any).accountsToMention.length > 0
+            ? (c as any).accountsToMention
+            : Array.isArray((c as any).mentions) && (c as any).mentions.length > 0
+            ? (c as any).mentions
+            : [`@${(c.brand || "brand").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase()}`],
+        disclosureInstructions: c.disclosureInstructions || "#ad | Paid Partnership",
         minDurationSecs: c.minDurationSecs || 15,
         needsBriefAcknowledgement,
         latestBriefVersion,
