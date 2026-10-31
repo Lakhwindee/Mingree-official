@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, formatINR, type WorkspaceParticipant } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { SponsorSidebar } from "@/components/SponsorSidebar";
+import { RateNegotiationChat } from "@/components/RateNegotiationChat";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,8 +40,9 @@ export default function CampaignWorkspace() {
   // Active section tab
   const [activeTab, setActiveTab] = useState<string>("overview");
 
-  // Price Negotiator selected creator ID (as string)
+  // Price Negotiator selected creator ID (as string) & direct Rate Chat popup
   const [chatThread, setChatThread] = useState<string>("group");
+  const [rateChatCreatorId, setRateChatCreatorId] = useState<number | null>(null);
   const [offerAmountInput, setOfferAmountInput] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -605,12 +607,12 @@ export default function CampaignWorkspace() {
                             variant="outline"
                             onClick={() => {
                               setChatThread(String(p.creatorId));
-                              setActiveTab("chat");
+                              setRateChatCreatorId(Number(p.creatorId));
                             }}
-                            className="h-8 px-3 text-xs font-semibold rounded-lg"
+                            className="h-8 px-3 text-xs font-bold rounded-lg border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
                           >
-                            <IndianRupee className="mr-1 h-3.5 w-3.5 text-primary" />
-                            Negotiate Price
+                            <IndianRupee className="mr-1 h-3.5 w-3.5" />
+                            Rate Chat (₹)
                           </Button>
 
                           {p.status === "content_submitted" && (
@@ -654,7 +656,7 @@ export default function CampaignWorkspace() {
                 )}
               </TabsTrigger>
               <TabsTrigger value="chat" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
-                3. Price Negotiator (₹)
+                3. Rate Chat (₹)
               </TabsTrigger>
               <TabsTrigger value="submissions" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 4. Reels & Reviews
@@ -913,11 +915,11 @@ export default function CampaignWorkspace() {
                             variant="outline"
                             onClick={() => {
                               setChatThread(String(p.creatorId));
-                              setActiveTab("chat");
+                              setRateChatCreatorId(Number(p.creatorId));
                             }}
-                            className="text-xs rounded-lg"
+                            className="text-xs font-bold rounded-lg border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
                           >
-                            <IndianRupee className="mr-1 h-3.5 w-3.5 text-primary" /> Negotiate Price
+                            <IndianRupee className="mr-1 h-3.5 w-3.5" /> Rate Chat (₹)
                           </Button>
                         </div>
                       </div>
@@ -1025,11 +1027,11 @@ export default function CampaignWorkspace() {
                             variant="outline"
                             onClick={() => {
                               setChatThread(String(p.creatorId));
-                              setActiveTab("chat");
+                              setRateChatCreatorId(Number(p.creatorId));
                             }}
-                            className="text-xs"
+                            className="text-xs font-bold rounded-lg border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
                           >
-                            <IndianRupee className="mr-1 h-3.5 w-3.5 text-primary" /> Negotiate Price
+                            <IndianRupee className="mr-1 h-3.5 w-3.5" /> Rate Chat (₹)
                           </Button>
                           {p.status === "content_submitted" && (
                             <Button
@@ -1120,8 +1122,8 @@ export default function CampaignWorkspace() {
                     </div>
                   </div>
 
-                  {/* Right Panel: Structured Price Negotiator Controls & Offer History */}
-                  <div className="md:col-span-3 flex flex-col bg-background p-5 space-y-5">
+                  {/* Right Panel: Clean 2-Way Rate-Only Chat Bar */}
+                  <div className="md:col-span-3 flex flex-col bg-background p-4 sm:p-5">
                     {(() => {
                       const activeCreator =
                         allParticipants.find((p) => Number(p.creatorId) === Number(chatThread)) ||
@@ -1131,226 +1133,28 @@ export default function CampaignWorkspace() {
                       if (!activeCreator) {
                         return (
                           <div className="py-20 text-center text-xs text-muted-foreground">
-                            Select a creator from the left panel to propose or negotiate deal pricing.
+                            Select a creator from the left panel to negotiate rates in ₹.
                           </div>
                         );
                       }
 
-                      const creatorOfferHistory = workspace.messages.filter(
-                        (m) =>
-                          ((m.senderId === activeCreator.creatorId && m.recipientId === workspace.sponsorId) ||
-                            (m.senderId === workspace.sponsorId && m.recipientId === activeCreator.creatorId)) &&
-                          (m.negotiationOffer || m.content.includes("₹"))
-                      );
-
                       return (
-                        <>
-                          {/* Selected Creator Negotiation Header */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border">
-                            <div className="flex items-center gap-3">
-                              <img
-                                src={activeCreator.creatorAvatar}
-                                alt={activeCreator.creatorName}
-                                className="h-12 w-12 rounded-full object-cover border border-border"
-                              />
-                              <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h4 className="text-sm font-bold text-foreground">{activeCreator.creatorName}</h4>
-                                  <span className="text-xs font-mono text-primary">{activeCreator.creatorHandle}</span>
-                                  {renderCreatorStatusBadge(activeCreator.status)}
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  Followers: <strong>{activeCreator.creatorFollowers.toLocaleString()}</strong> • Median Views:{" "}
-                                  <strong>{activeCreator.creatorMedianViews.toLocaleString()}</strong>
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-3">
-                              <div className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-right">
-                                <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
-                                  Current Brand Offer
-                                </span>
-                                <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                                  {formatINR(activeCreator.payoutAmount)}
-                                </span>
-                              </div>
-                              {activeCreator.negotiationStatus === "creator_countered" && (
-                                <div className="px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-right">
-                                  <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block">
-                                    Creator Counter-Offer
-                                  </span>
-                                  <span className="text-base font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">
-                                    {formatINR(activeCreator.lastOfferedPrice)}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* If Creator Sent a Counter-Offer: Accept or Decline Banner */}
-                          {activeCreator.negotiationStatus === "creator_countered" && (
-                            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                              <div>
-                                <h5 className="text-xs font-bold text-foreground">
-                                  {activeCreator.creatorName} proposed a Counter-Offer of{" "}
-                                  <span className="text-amber-600 dark:text-amber-400">
-                                    {formatINR(activeCreator.lastOfferedPrice)}
-                                  </span>
-                                </h5>
-                                <p className="text-[11px] text-muted-foreground mt-0.5">
-                                  You can accept the creator's counter-offer, decline it, or send a new price offer below.
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={negotiatePriceMutation.isPending}
-                                  onClick={() =>
-                                    negotiatePriceMutation.mutate({
-                                      creatorId: activeCreator.creatorId,
-                                      action: "decline",
-                                      amount: activeCreator.payoutAmount,
-                                    })
-                                  }
-                                  className="text-xs font-semibold rounded-xl"
-                                >
-                                  Decline
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  disabled={negotiatePriceMutation.isPending}
-                                  onClick={() =>
-                                    negotiatePriceMutation.mutate({
-                                      creatorId: activeCreator.creatorId,
-                                      action: "accept",
-                                      amount: activeCreator.lastOfferedPrice || activeCreator.payoutAmount,
-                                    })
-                                  }
-                                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl"
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                                  Accept {formatINR(activeCreator.lastOfferedPrice)}
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Brand Price Offer Box (Strictly Price Input — No Free-Text Typing) */}
-                          <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-3.5">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                                  <IndianRupee className="h-3.5 w-3.5 text-primary" />
-                                  Propose Brand Price Offer (₹)
-                                </Label>
-                                <p className="text-[11px] text-muted-foreground mt-0.5">
-                                  Select a preset rate or enter your custom price offer in INR for {activeCreator.creatorName}.
-                                </p>
-                              </div>
-                              <Badge variant="outline" className="text-[10px]">
-                                Price-Only Negotiator
-                              </Badge>
-                            </div>
-
-                            {/* Quick Preset Price Buttons */}
-                            <div className="flex flex-wrap gap-2">
-                              {[1000, 1200, 1500, 2000, 2500, 3500, 5000, 10000].map((preset) => (
-                                <button
-                                  key={preset}
-                                  type="button"
-                                  onClick={() => setOfferAmountInput(String(preset))}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                                    Number(offerAmountInput) === preset
-                                      ? "bg-primary text-primary-foreground border-primary shadow-2xs"
-                                      : "bg-background hover:bg-muted border-border text-foreground"
-                                  }`}
-                                >
-                                  ₹{preset.toLocaleString("en-IN")}
-                                </button>
-                              ))}
-                            </div>
-
-                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
-                              <div className="relative flex-1">
-                                <span className="absolute left-3.5 top-2.5 text-sm font-bold text-muted-foreground">
-                                  ₹
-                                </span>
-                                <Input
-                                  type="number"
-                                  min={100}
-                                  step={50}
-                                  value={offerAmountInput}
-                                  onChange={(e) => setOfferAmountInput(e.target.value.replace(/[^0-9]/g, ""))}
-                                  placeholder="Enter your price offer in ₹ (e.g. 1500)"
-                                  className="pl-8 h-10 rounded-xl text-xs font-bold bg-background"
-                                />
-                              </div>
-                              <Button
-                                type="button"
-                                disabled={
-                                  !offerAmountInput ||
-                                  Number(offerAmountInput) <= 0 ||
-                                  negotiatePriceMutation.isPending
-                                }
-                                onClick={() =>
-                                  negotiatePriceMutation.mutate({
-                                    creatorId: activeCreator.creatorId,
-                                    action: "offer",
-                                    amount: Number(offerAmountInput),
-                                  })
-                                }
-                                className="h-10 px-6 rounded-xl text-xs font-bold shrink-0"
-                              >
-                                <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                                {negotiatePriceMutation.isPending ? "Sending Offer..." : "Send Price Offer"}
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* Structured Negotiation Offer History */}
-                          <div className="space-y-2.5">
-                            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                              Negotiation Timeline with {activeCreator.creatorName}
-                            </span>
-
-                            {creatorOfferHistory.length === 0 ? (
-                              <div className="p-6 rounded-xl bg-muted/15 border border-border text-center text-xs text-muted-foreground">
-                                Initial campaign offer for {activeCreator.creatorName} is{" "}
-                                <strong className="text-foreground">{formatINR(activeCreator.payoutAmount)}</strong>.
-                                Any new price offers or counter-offers will appear here.
-                              </div>
-                            ) : (
-                              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                                {creatorOfferHistory.map((msg) => (
-                                  <div
-                                    key={msg.id}
-                                    className="p-3 rounded-xl bg-muted/20 border border-border flex items-center justify-between gap-3 text-xs"
-                                  >
-                                    <div className="flex items-center gap-2.5">
-                                      <Badge
-                                        variant={msg.senderRole === "sponsor" ? "default" : "secondary"}
-                                        className="text-[10px] uppercase"
-                                      >
-                                        {msg.senderRole === "sponsor" ? "Your Brand Offer" : "Creator Response"}
-                                      </Badge>
-                                      <span className="font-semibold text-foreground">{msg.content}</span>
-                                    </div>
-                                    <span className="text-[10px] text-muted-foreground shrink-0">
-                                      {new Date(msg.createdAt).toLocaleString([], {
-                                        month: "short",
-                                        day: "2-digit",
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                      })}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </>
+                        <RateNegotiationChat
+                          campaignId={workspace.id}
+                          viewerRole="sponsor"
+                          brandName={workspace.brand || "Brand"}
+                          brandLogo={workspace.brandLogo}
+                          creatorId={activeCreator.creatorId}
+                          creatorName={activeCreator.creatorName}
+                          creatorHandle={activeCreator.creatorHandle}
+                          creatorAvatar={activeCreator.creatorAvatar}
+                          currentPayoutAmount={Number(activeCreator.payoutAmount || workspace.payAmount || 1200)}
+                          basePayAmount={Number(workspace.payAmount || activeCreator.payoutAmount || 1200)}
+                          lastOfferedPrice={Number(activeCreator.lastOfferedPrice || activeCreator.payoutAmount || 1200)}
+                          lastOfferBy={activeCreator.lastOfferBy}
+                          negotiationStatus={activeCreator.negotiationStatus}
+                          messages={workspace.messages || []}
+                        />
                       );
                     })()}
                     <div ref={messagesEndRef} />
@@ -1861,6 +1665,47 @@ export default function CampaignWorkspace() {
               Send Revision Request
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIRECT 2-WAY RATE NEGOTIATION CHAT BAR MODAL FOR SPONSOR */}
+      <Dialog
+        open={rateChatCreatorId !== null}
+        onOpenChange={(open) => {
+          if (!open) setRateChatCreatorId(null);
+        }}
+      >
+        <DialogContent className="max-w-md p-0 overflow-hidden border-0 bg-transparent shadow-none">
+          {(() => {
+            const targetParticipant = allParticipants.find(
+              (p) => Number(p.creatorId) === Number(rateChatCreatorId)
+            );
+            if (!targetParticipant) return null;
+            return (
+              <div>
+                <DialogHeader className="sr-only">
+                  <DialogTitle>Rate Negotiation Chat with {targetParticipant.creatorName}</DialogTitle>
+                  <DialogDescription>Two-way rate negotiation chat bar in INR</DialogDescription>
+                </DialogHeader>
+                <RateNegotiationChat
+                  campaignId={workspace.id}
+                  viewerRole="sponsor"
+                  brandName={workspace.brand || "Brand"}
+                  brandLogo={workspace.brandLogo}
+                  creatorId={targetParticipant.creatorId}
+                  creatorName={targetParticipant.creatorName}
+                  creatorHandle={targetParticipant.creatorHandle}
+                  creatorAvatar={targetParticipant.creatorAvatar}
+                  currentPayoutAmount={Number(targetParticipant.payoutAmount || workspace.payAmount || 1200)}
+                  basePayAmount={Number(workspace.payAmount || targetParticipant.payoutAmount || 1200)}
+                  lastOfferedPrice={Number(targetParticipant.lastOfferedPrice || targetParticipant.payoutAmount || 1200)}
+                  lastOfferBy={targetParticipant.lastOfferBy}
+                  negotiationStatus={targetParticipant.negotiationStatus}
+                  messages={workspace.messages || []}
+                />
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

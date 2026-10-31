@@ -1794,16 +1794,19 @@ export async function negotiateCampaignPrice(params: {
       participant.payoutAmount = agreedAmount;
       participant.lastOfferedPrice = agreedAmount;
       participant.negotiationStatus = "accepted";
+      if (campaign.participants.length <= 1) {
+        campaign.payAmount = agreedAmount;
+      }
       msgContent = isSponsorSide
-        ? `✅ Brand Accepted Creator Price: ₹${agreedAmount.toLocaleString("en-IN")}`
-        : `✅ Creator Accepted Brand Offer: ₹${agreedAmount.toLocaleString("en-IN")}`;
+        ? `✅ Brand Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}`
+        : `✅ Creator Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}`;
     } else if (params.action === "decline") {
       participant.negotiationStatus = isSponsorSide ? "brand_offered" : "declined";
       const standingAmount = participant.payoutAmount || campaign.payAmount || 1200;
       participant.lastOfferedPrice = standingAmount;
       msgContent = isSponsorSide
-        ? `❌ Counter-Offer Declined — Brand Standing Offer: ₹${standingAmount.toLocaleString("en-IN")}`
-        : `❌ Offer Declined by Creator`;
+        ? `❌ Rate Declined — Brand Offer: ₹${standingAmount.toLocaleString("en-IN")}`
+        : `❌ Rate Declined by Creator`;
     } else {
       // offer or counter_offer
       participant.lastOfferedPrice = cleanAmount;
@@ -1811,10 +1814,13 @@ export async function negotiateCampaignPrice(params: {
       if (isSponsorSide) {
         participant.payoutAmount = cleanAmount;
         participant.negotiationStatus = "brand_offered";
-        msgContent = `💰 Brand Price Offer: ₹${cleanAmount.toLocaleString("en-IN")}`;
+        if (campaign.participants.length <= 1) {
+          campaign.payAmount = cleanAmount;
+        }
+        msgContent = `💰 Brand Rate Offer: ₹${cleanAmount.toLocaleString("en-IN")}`;
       } else {
         participant.negotiationStatus = "creator_countered";
-        msgContent = `💬 Creator Counter-Offer: ₹${cleanAmount.toLocaleString("en-IN")}`;
+        msgContent = `💬 Creator Rate Offer: ₹${cleanAmount.toLocaleString("en-IN")}`;
       }
     }
 

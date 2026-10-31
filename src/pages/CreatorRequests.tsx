@@ -3,15 +3,13 @@ import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RateNegotiationChat } from "@/components/RateNegotiationChat";
 import { api, formatINR } from "@/lib/api";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
-import { motion } from "framer-motion";
-import { useLocation } from "wouter";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -21,27 +19,22 @@ import {
   Copy,
   Download,
   ExternalLink,
-  FileText,
   IndianRupee,
   Music2,
-  Sparkles,
   Video,
 } from "lucide-react";
 
 export default function CreatorRequests() {
-  const [, navigate] = useLocation();
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const [mainTab, setMainTab] = useState<"deals" | "negotiations" | "rate-card">("deals");
-  const [filterTab, setFilterTab] = useState<string>("all");
+  const [mainTab, setMainTab] = useState<"deals" | "rate-card">("deals");
 
-  // Separate Popup Modal 1: Deal Details, File Download & Reel Submission ONLY
+  // Popup 1: Simple Deal Info, File Download & Submit Reel Link ONLY
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   const [liveReelUrl, setLiveReelUrl] = useState<string>("");
 
-  // Separate Popup Modal 2: Dedicated Price Negotiator ONLY (Not mixed with file download)
+  // Popup 2: Separate 2-Way Rate Negotiation Chat Bar ONLY
   const [negotiatingCampaignId, setNegotiatingCampaignId] = useState<number | null>(null);
-  const [counterOfferInput, setCounterOfferInput] = useState<string>("");
 
   // Rate Card State
   const [reelPrice, setReelPrice] = useState("2500");
@@ -50,19 +43,21 @@ export default function CreatorRequests() {
   const [bioLinkPrice, setBioLinkPrice] = useState("1200");
   const [isSavingRates, setIsSavingRates] = useState(false);
 
-  // Load existing rate cards
   useEffect(() => {
     if (user?.id) {
-      api.getRateCards(user.id).then((cards) => {
-        if (Array.isArray(cards)) {
-          cards.forEach((c) => {
-            if (c.deliverableType === "Instagram Reel") setReelPrice(String(c.price));
-            if (c.deliverableType === "Instagram Story") setStoryPrice(String(c.price));
-            if (c.deliverableType === "Collab Package") setCollabPrice(String(c.price));
-            if (c.deliverableType === "Bio Link & Story") setBioLinkPrice(String(c.price));
-          });
-        }
-      }).catch(() => {});
+      api
+        .getRateCards(user.id)
+        .then((cards) => {
+          if (Array.isArray(cards)) {
+            cards.forEach((c) => {
+              if (c.deliverableType === "Instagram Reel") setReelPrice(String(c.price));
+              if (c.deliverableType === "Instagram Story") setStoryPrice(String(c.price));
+              if (c.deliverableType === "Collab Package") setCollabPrice(String(c.price));
+              if (c.deliverableType === "Bio Link & Story") setBioLinkPrice(String(c.price));
+            });
+          }
+        })
+        .catch(() => {});
     }
   }, [user?.id]);
 
@@ -76,7 +71,7 @@ export default function CreatorRequests() {
         { deliverableType: "Collab Package", price: parseFloat(collabPrice) || 5000 },
         { deliverableType: "Bio Link & Story", price: parseFloat(bioLinkPrice) || 1200 },
       ]);
-      toast.success("Rate card saved successfully! Brands will use these rates for direct deals.");
+      toast.success("Rate card saved!");
     } catch (err: any) {
       toast.error(err.message || "Failed to save rate card");
     } finally {
@@ -88,12 +83,14 @@ export default function CreatorRequests() {
     queryKey: ["creatorWorkspaces", user?.id],
     queryFn: () => (user ? api.getCreatorWorkspaces(user.id) : []),
     enabled: !!user,
-    refetchInterval: 4000,
+    refetchInterval: 3000,
     retry: 2,
   });
 
-  const selectedDeal = workspaces.find((w: any) => Number(w.campaignId) === Number(selectedCampaignId)) || null;
-  const negotiatingDeal = workspaces.find((w: any) => Number(w.campaignId) === Number(negotiatingCampaignId)) || null;
+  const selectedDeal =
+    workspaces.find((w: any) => Number(w.campaignId) === Number(selectedCampaignId)) || null;
+  const negotiatingDeal =
+    workspaces.find((w: any) => Number(w.campaignId) === Number(negotiatingCampaignId)) || null;
 
   const acceptInvitationMutation = useMutation({
     mutationFn: (campaignId: number) => api.acceptCampaignInvitation(campaignId),
@@ -102,35 +99,11 @@ export default function CreatorRequests() {
       queryClient.invalidateQueries({ queryKey: ["reservations"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
-      toast.success(data.message || "Ad slot reserved! Campaign details and files are ready.");
+      toast.success(data.message || "Ad slot reserved! You can now download files and submit your Reel.");
       setSelectedCampaignId(campaignId);
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to reserve ad slot");
-    },
-  });
-
-  const negotiatePriceMutation = useMutation({
-    mutationFn: (params: { campaignId: number; action: "offer" | "counter_offer" | "accept" | "decline"; amount: number }) =>
-      api.negotiateCampaignPrice(params.campaignId, {
-        creatorId: user?.id,
-        action: params.action,
-        amount: params.amount,
-      }),
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
-      queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", variables.campaignId] });
-      setCounterOfferInput("");
-      if (variables.action === "accept") {
-        toast.success(`Price offer of ${formatINR(variables.amount)} accepted!`);
-      } else if (variables.action === "counter_offer") {
-        toast.success(`Counter-offer of ${formatINR(variables.amount)} sent to brand!`);
-      } else {
-        toast.success("Price negotiation updated!");
-      }
-    },
-    onError: (err: any) => {
-      toast.error(err.message || "Failed to send price proposal");
     },
   });
 
@@ -141,7 +114,7 @@ export default function CreatorRequests() {
       queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
       queryClient.invalidateQueries({ queryKey: ["reservations"] });
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", variables.campaignId] });
-      toast.success("Published Instagram Reel link submitted for brand review & payout!");
+      toast.success("Instagram Reel link submitted for payout!");
       setLiveReelUrl("");
     },
     onError: (err: any) => {
@@ -152,7 +125,6 @@ export default function CreatorRequests() {
   const handleDownloadBriefAndAssets = (deal: any) => {
     if (!deal) return;
 
-    // 1. Download a complete Campaign Brief & Asset Pack (.txt) immediately
     const briefContent = [
       `========================================================`,
       `MINGREE CAMPAIGN BRIEF & OFFICIAL DEAL PACK`,
@@ -160,23 +132,20 @@ export default function CreatorRequests() {
       `Campaign Title       : ${deal.title || "Brand Promo Campaign"}`,
       `Brand / Sponsor      : ${deal.brand || "Sponsor"}`,
       `Category / Genre     : ${deal.genre || "Music & Lifestyle"}`,
-      `Language             : ${deal.language || "Hindi & English"}`,
-      `Deliverable Type     : ${Array.isArray(deal.contentTypes) ? deal.contentTypes.join(", ") : "Instagram Reel"}`,
-      `Promotion Style      : ${deal.promotionStyle || "Lyrics / Page promotion"}`,
       `Deal Compensation    : ${formatINR(deal.payAmount)}`,
       `Submission Deadline  : ${deal.deadline || "48 Hours from Reservation"}`,
       `--------------------------------------------------------`,
       `CREATIVE BRIEF & INSTRUCTIONS:`,
-      `${deal.description || "Promote brand audio / product on Instagram Reels across your creator channel."}`,
+      `${deal.description || "Promote brand audio / product on Instagram Reels."}`,
       `--------------------------------------------------------`,
       `MANDATORY CAPTION NOTE:`,
       `${deal.requiredCaptionNote || deal.description || ""}`,
       `--------------------------------------------------------`,
       `REQUIRED HASHTAGS    : ${(deal.requiredTags || ["#MingreePromotions"]).join(" ")}`,
-      `REQUIRED MENTIONS    : ${(deal.requiredMentions || []).join(" ") || "None specified"}`,
+      `REQUIRED MENTIONS    : ${(deal.requiredMentions || []).join(" ") || "None"}`,
       `DISCLOSURE RULE      : ${deal.disclosureInstructions || "Include #ad #collab in caption"}`,
       `--------------------------------------------------------`,
-      `OFFICIAL AUDIO / ASSET LINKS:`,
+      `AUDIO / ASSET LINKS:`,
       `Audio Track URL      : ${deal.audioUrl || "Included in brief"}`,
       `Media Asset URL      : ${deal.assetUrl || deal.audioUrl || "N/A"}`,
       `========================================================`,
@@ -193,7 +162,7 @@ export default function CreatorRequests() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    toast.success("Campaign Brief & Asset Pack downloaded!");
+    toast.success("Campaign Brief (.txt) downloaded!");
   };
 
   const handleDownloadAssetFile = (assetUrl: string, fileName?: string, deal?: any) => {
@@ -212,340 +181,198 @@ export default function CreatorRequests() {
     toast.success(`Downloading ${fileName || "campaign file"}...`);
   };
 
-  const pendingRequests = workspaces.filter(
-    (ws: any) => ws.status === "invited" || ws.status === "applied" || ws.status === "pending"
-  );
-  const activeDeals = workspaces.filter(
-    (ws: any) => ws.status === "reserved" || ws.status === "in_progress" || ws.status === "submitted" || ws.status === "content_submitted" || ws.status === "revision_requested"
-  );
-  const completedDeals = workspaces.filter(
-    (ws: any) => ws.status === "approved" || ws.status === "completed"
-  );
-
-  const filteredWorkspaces = workspaces.filter((ws: any) => {
-    if (filterTab === "pending") return ws.status === "invited" || ws.status === "applied" || ws.status === "pending";
-    if (filterTab === "active") return ws.status === "reserved" || ws.status === "in_progress" || ws.status === "submitted" || ws.status === "content_submitted" || ws.status === "revision_requested";
-    if (filterTab === "completed") return ws.status === "approved" || ws.status === "completed";
-    return true;
-  });
-
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <Sidebar />
-      <main className="flex-1 pt-14 md:pt-0 pb-8 overflow-x-hidden">
-        {/* Top Header */}
-        <header className="sticky top-0 z-30 hidden md:flex h-16 items-center justify-between border-b bg-background/95 px-4 md:px-6 backdrop-blur-md">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold tracking-tight truncate">Direct Brand Deals</h1>
-              <Badge variant="outline" className="text-[10px] font-semibold shrink-0">
-                Direct Model
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground truncate">
-              Manage custom sponsorship requests, brand collaboration invites, and your direct rate card
+      <main className="flex-1 pt-14 md:pt-0 pb-10 overflow-x-hidden">
+        {/* Clean Header */}
+        <header className="sticky top-0 z-30 hidden md:flex h-16 items-center justify-between border-b bg-background/95 px-6 backdrop-blur-md">
+          <div>
+            <h1 className="text-lg font-bold tracking-tight">Direct Brand Deals</h1>
+            <p className="text-xs text-muted-foreground">
+              Download campaign files, submit Reel links, or negotiate rates in ₹
             </p>
           </div>
-          <div className="flex items-center gap-4 shrink-0">
+          <div className="flex items-center gap-3">
             {user && <NotificationDropdown userId={user.id} />}
           </div>
         </header>
 
-        <div className="mx-auto max-w-6xl p-4 md:p-6 space-y-6">
-          {/* Main Sub-Navigation: Deals vs Price Negotiations vs Rate Card */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
-            <div className="flex items-center gap-2 flex-wrap">
+        <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-5">
+          {/* Simple 2-Button Switcher */}
+          <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
+            <div className="flex items-center gap-2">
               <Button
                 variant={mainTab === "deals" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setMainTab("deals")}
-                className={cn(
-                  "text-xs rounded-xl font-semibold h-9 px-4 transition-all",
-                  mainTab === "deals" ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-muted"
-                )}
-                data-testid="tab-brand-deals"
+                className="text-xs rounded-xl font-semibold h-9 px-4 cursor-pointer"
               >
-                Deals & File Download{" "}
-                {pendingRequests.length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.2 bg-primary-foreground/20 rounded-full text-[10px]">
-                    {pendingRequests.length}
-                  </span>
-                )}
-              </Button>
-              <Button
-                variant={mainTab === "negotiations" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setMainTab("negotiations")}
-                className={cn(
-                  "text-xs rounded-xl font-semibold h-9 px-4 transition-all",
-                  mainTab === "negotiations" ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-muted"
-                )}
-                data-testid="tab-price-negotiations"
-              >
-                <IndianRupee className="h-3.5 w-3.5 mr-1" />
-                Price Negotiations
+                Brand Deals ({workspaces.length})
               </Button>
               <Button
                 variant={mainTab === "rate-card" ? "default" : "outline"}
                 size="sm"
                 onClick={() => setMainTab("rate-card")}
-                className={cn(
-                  "text-xs rounded-xl font-semibold h-9 px-4 transition-all",
-                  mainTab === "rate-card" ? "bg-primary text-primary-foreground shadow-xs" : "hover:bg-muted"
-                )}
-                data-testid="tab-my-rate-card"
+                className="text-xs rounded-xl font-semibold h-9 px-4 cursor-pointer"
               >
                 My Rate Card
               </Button>
             </div>
-
-            <p className="text-xs text-muted-foreground hidden sm:block">
-              {mainTab === "deals"
-                ? "Reserve ads, view campaign info, download files, and submit Reel links"
-                : mainTab === "negotiations"
-                ? "Dedicated price negotiation desk — accept or counter-offer in ₹"
-                : "Your standard direct booking rates for brands"}
-            </p>
           </div>
 
-          {/* ================= TAB 1: DEALS & REQUESTS ================= */}
+          {/* ================= TAB 1: SIMPLE BRAND DEALS LIST ================= */}
           {mainTab === "deals" && (
-            <div className="space-y-6 animate-in fade-in duration-200">
-              {/* Quick Metrics Bar */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                <Card className="border border-border/80 shadow-xs">
-                  <CardContent className="p-3.5 sm:p-4">
-                    <span className="text-xs font-medium text-muted-foreground">All Direct Deals</span>
-                    <p className="text-xl sm:text-2xl font-bold text-foreground mt-1.5">{workspaces.length}</p>
-                    <span className="text-[11px] text-muted-foreground">Lifetime direct invites</span>
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-border/80 shadow-xs">
-                  <CardContent className="p-3.5 sm:p-4">
-                    <span className="text-xs font-medium text-muted-foreground">Pending Requests</span>
-                    <p className="text-xl sm:text-2xl font-bold text-foreground mt-1.5">{pendingRequests.length}</p>
-                    <span className="text-[11px] text-muted-foreground">Awaiting your response</span>
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-border/80 shadow-xs">
-                  <CardContent className="p-3.5 sm:p-4">
-                    <span className="text-xs font-medium text-muted-foreground">In Progress</span>
-                    <p className="text-xl sm:text-2xl font-bold text-foreground mt-1.5">{activeDeals.length}</p>
-                    <span className="text-[11px] text-muted-foreground">Active content delivery</span>
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-border/80 shadow-xs">
-                  <CardContent className="p-3.5 sm:p-4">
-                    <span className="text-xs font-medium text-muted-foreground">Completed Deals</span>
-                    <p className="text-xl sm:text-2xl font-bold text-foreground mt-1.5">{completedDeals.length}</p>
-                    <span className="text-[11px] text-muted-foreground">Delivered and finalized</span>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Status Filter Tabs */}
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <Tabs value={filterTab} onValueChange={setFilterTab} className="w-full sm:w-auto">
-                  <TabsList className="bg-muted/70 p-1 rounded-xl h-9 sm:h-10">
-                    <TabsTrigger value="all" className="text-xs rounded-lg font-medium">
-                      All ({workspaces.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="pending" className="text-xs rounded-lg font-medium">
-                      Incoming ({pendingRequests.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="active" className="text-xs rounded-lg font-medium">
-                      In Progress ({activeDeals.length})
-                    </TabsTrigger>
-                    <TabsTrigger value="completed" className="text-xs rounded-lg font-medium">
-                      Completed ({completedDeals.length})
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
-
+            <div className="space-y-4">
               {isLoading ? (
                 <div className="flex items-center justify-center py-20">
                   <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                 </div>
-              ) : filteredWorkspaces.length === 0 ? (
+              ) : workspaces.length === 0 ? (
                 <Card className="border-dashed border bg-card/40">
-                  <CardContent className="flex flex-col items-center justify-center py-16 text-center px-4">
-                    <h3 className="text-base font-semibold text-foreground">
-                      {filterTab === "pending"
-                        ? "No Pending Brand Requests"
-                        : filterTab === "active"
-                        ? "No Active Collaborations"
-                        : filterTab === "completed"
-                        ? "No Completed Deals Yet"
-                        : "No Direct Brand Deals Yet"}
-                    </h3>
-                    <p className="text-xs sm:text-sm text-muted-foreground max-w-md mt-1.5 mb-5">
-                      {filterTab === "pending"
-                        ? "You don't have any pending requests. When a sponsor books you directly, their proposal details will arrive here."
-                        : "When brands and sponsors choose your creator channel, their custom proposals, agreed pricing, and deliverables workspace will appear here."}
+                  <CardContent className="flex flex-col items-center justify-center py-14 text-center px-4">
+                    <h3 className="text-base font-semibold text-foreground">No Brand Deals Yet</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
+                      When a brand selects you for a campaign, it will appear here.
                     </p>
                     <Button
                       onClick={() => setMainTab("rate-card")}
-                      className="font-semibold text-xs rounded-xl h-9 px-4 shadow-xs"
-                      data-testid="button-open-rate-card"
+                      className="font-semibold text-xs rounded-xl h-9 px-4"
                     >
-                      Configure My Rate Card
+                      Set My Rate Card
                     </Button>
-                    <div className="mt-5 text-xs text-muted-foreground bg-muted/60 px-3 py-1.5 rounded-md border border-border/50">
-                      <span>All direct brand deals feature guaranteed escrow milestone protection</span>
-                    </div>
                   </CardContent>
                 </Card>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                  {filteredWorkspaces.map((ws: any) => {
-                    const isInvited = ws.status === "invited" || ws.status === "applied" || ws.status === "pending";
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {workspaces.map((ws: any) => {
+                    const isInvited =
+                      ws.status === "invited" || ws.status === "applied" || ws.status === "pending";
                     const isCompleted = ws.status === "approved" || ws.status === "completed";
 
                     return (
-                      <motion.div
+                      <Card
                         key={ws.campaignId}
-                        initial={{ opacity: 0, y: 15 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.2 }}
+                        className="overflow-hidden border border-border shadow-xs hover:border-primary/40 transition-all"
                       >
-                        <Card className="overflow-hidden border border-border/80 shadow-xs hover:border-primary/40 transition-all">
-                          <div className="p-4 border-b flex items-center justify-between bg-muted/15">
-                            <div className="flex items-center gap-3 min-w-0">
-                              {ws.brandLogo && (
-                                <img
-                                  src={ws.brandLogo}
-                                  alt={ws.brand}
-                                  className="h-9 w-9 rounded-lg object-cover border border-border shrink-0"
-                                />
-                              )}
-                              <div className="min-w-0">
-                                <h4 className="font-semibold text-sm truncate text-foreground">{ws.brand}</h4>
-                                <span className="text-xs text-muted-foreground truncate block">
-                                  {ws.genre || "Brand Sponsorship"}
-                                </span>
+                        {/* Card Top Bar */}
+                        <div className="p-4 border-b flex items-center justify-between bg-muted/20">
+                          <div className="flex items-center gap-3 min-w-0">
+                            {ws.brandLogo ? (
+                              <img
+                                src={ws.brandLogo}
+                                alt={ws.brand}
+                                className="h-10 w-10 rounded-xl object-cover border border-border shrink-0"
+                              />
+                            ) : (
+                              <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0">
+                                {(ws.brand || "B").charAt(0)}
                               </div>
+                            )}
+                            <div className="min-w-0">
+                              <span className="text-[11px] font-bold uppercase tracking-wider text-primary block truncate">
+                                {ws.brand}
+                              </span>
+                              <h3 className="font-bold text-sm text-foreground truncate">{ws.title}</h3>
                             </div>
-                            <Badge
-                              variant={isCompleted ? "secondary" : isInvited ? "outline" : "default"}
-                              className="capitalize shrink-0 text-[11px]"
-                            >
-                              {ws.status === "invited" || ws.status === "pending"
-                                ? "Pending Reservation"
-                                : ws.status.replace("_", " ")}
-                            </Badge>
                           </div>
 
-                          <CardContent className="p-4 sm:p-5 space-y-4">
+                          <Badge
+                            variant={isCompleted ? "secondary" : isInvited ? "outline" : "default"}
+                            className="capitalize shrink-0 text-[11px]"
+                          >
+                            {isInvited ? "Pending Reserve" : ws.status.replace("_", " ")}
+                          </Badge>
+                        </div>
+
+                        <CardContent className="p-4 space-y-4">
+                          {/* Rate & Status Strip */}
+                          <div className="flex items-center justify-between p-3 rounded-xl bg-muted/40 border border-border/60">
                             <div>
-                              <h3 className="font-bold text-base line-clamp-1">{ws.title}</h3>
-                              <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                                {ws.description || "Direct collaboration proposal tailored for your creator channel."}
-                              </p>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3 pt-2 border-t border-border/50 text-xs">
-                              <div className="bg-muted/40 p-2.5 rounded-xl border border-border/40">
-                                <span className="text-muted-foreground block text-[10px] uppercase font-semibold">
-                                  Deal Compensation
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                Deal Rate
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                                  {formatINR(ws.payAmount)}
                                 </span>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  <span className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
-                                    {formatINR(ws.payAmount)}
-                                  </span>
-                                  {ws.negotiationStatus === "creator_countered" && (
-                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-amber-500/40 text-amber-600">
-                                      Counter: {formatINR(ws.lastOfferedPrice)}
-                                    </Badge>
-                                  )}
-                                  {ws.negotiationStatus === "accepted" && (
-                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-emerald-500/40 text-emerald-600">
-                                      Locked
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="bg-muted/40 p-2.5 rounded-xl border border-border/40">
-                                <span className="text-muted-foreground block text-[10px] uppercase font-semibold">
-                                  Submission Deadline
-                                </span>
-                                <span className="font-medium text-foreground text-xs mt-0.5 block truncate">
-                                  {(() => {
-                                    const val = ws.deadline || ws.expiresAt;
-                                    if (!val) return "Flexible";
-                                    try {
-                                      const d = new Date(val);
-                                      return !isNaN(d.getTime()) ? d.toLocaleDateString() : "Flexible";
-                                    } catch {
-                                      return "Flexible";
-                                    }
-                                  })()}
-                                </span>
+                                {ws.negotiationStatus === "creator_countered" && ws.lastOfferedPrice && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                                  >
+                                    Your Ask: {formatINR(ws.lastOfferedPrice)}
+                                  </Badge>
+                                )}
+                                {ws.negotiationStatus === "accepted" && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                  >
+                                    Rate Locked
+                                  </Badge>
+                                )}
                               </div>
                             </div>
 
-                            {/* Separate Action Buttons: 1) Deal Info & File Download Popup vs 2) Separate Price Negotiator Popup */}
-                            <div className="pt-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                              {isInvited ? (
-                                <>
-                                  <Button
-                                    className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs font-bold text-xs h-9"
-                                    disabled={acceptInvitationMutation.isPending}
-                                    onClick={() => acceptInvitationMutation.mutate(ws.campaignId)}
-                                  >
-                                    {acceptInvitationMutation.isPending
-                                      ? "Reserving..."
-                                      : "Reserve Ad & Open Deal Info"}
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    className="shadow-xs font-semibold text-xs h-9 px-3"
-                                    onClick={() => setSelectedCampaignId(ws.campaignId)}
-                                  >
-                                    <Download className="h-3.5 w-3.5 mr-1.5" />
-                                    Files & Info
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    className="shadow-xs font-semibold text-xs h-9 px-3 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
-                                    onClick={() => {
-                                      setCounterOfferInput("");
-                                      setNegotiatingCampaignId(ws.campaignId);
-                                    }}
-                                  >
-                                    <IndianRupee className="h-3.5 w-3.5 mr-1" />
-                                    Negotiate
-                                  </Button>
-                                </>
-                              ) : (
-                                <>
-                                  <Button
-                                    className="flex-1 shadow-xs font-semibold text-xs h-9"
-                                    onClick={() => setSelectedCampaignId(ws.campaignId)}
-                                  >
-                                    <Download className="h-3.5 w-3.5 mr-1.5" />
-                                    Deal Info & Download Files
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    className="shadow-xs font-semibold text-xs h-9 px-3.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
-                                    onClick={() => {
-                                      setCounterOfferInput("");
-                                      setNegotiatingCampaignId(ws.campaignId);
-                                    }}
-                                  >
-                                    <IndianRupee className="h-3.5 w-3.5 mr-1" />
-                                    Price Negotiator
-                                  </Button>
-                                </>
+                            <div className="text-right">
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                                Deadline
+                              </span>
+                              <span className="text-xs font-semibold text-foreground mt-0.5 block">
+                                {ws.deadline
+                                  ? new Date(ws.deadline).toLocaleDateString()
+                                  : "48 Hours"}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Two Separate Action Buttons: 1) Files & Submit Reel  2) Rate Chat (₹) */}
+                          <div className="flex items-center gap-2">
+                            {isInvited ? (
+                              <Button
+                                className="flex-1 font-bold text-xs h-10 rounded-xl cursor-pointer"
+                                disabled={acceptInvitationMutation.isPending}
+                                onClick={() => acceptInvitationMutation.mutate(ws.campaignId)}
+                              >
+                                {acceptInvitationMutation.isPending
+                                  ? "Reserving..."
+                                  : "Reserve & Open Files"}
+                              </Button>
+                            ) : (
+                              <Button
+                                className="flex-1 font-bold text-xs h-10 rounded-xl cursor-pointer"
+                                onClick={() => setSelectedCampaignId(ws.campaignId)}
+                              >
+                                <Download className="h-3.5 w-3.5 mr-1.5" />
+                                Files & Submit Reel
+                              </Button>
+                            )}
+
+                            {isInvited && (
+                              <Button
+                                variant="outline"
+                                className="font-semibold text-xs h-10 px-3 rounded-xl cursor-pointer"
+                                onClick={() => setSelectedCampaignId(ws.campaignId)}
+                              >
+                                <Download className="h-3.5 w-3.5 mr-1" />
+                                Files
+                              </Button>
+                            )}
+
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "font-bold text-xs h-10 px-3.5 rounded-xl cursor-pointer border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10"
                               )}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </motion.div>
+                              onClick={() => setNegotiatingCampaignId(ws.campaignId)}
+                            >
+                              <IndianRupee className="h-3.5 w-3.5 mr-1" />
+                              Rate Chat (₹)
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
                     );
                   })}
                 </div>
@@ -553,250 +380,76 @@ export default function CreatorRequests() {
             </div>
           )}
 
-          {/* ================= TAB 2: DEDICATED PRICE NEGOTIATIONS (SEPARATE FROM FILE DOWNLOAD) ================= */}
-          {mainTab === "negotiations" && (
-            <div className="space-y-5 animate-in fade-in duration-200">
-              <Card className="border-border/80 shadow-xs">
-                <CardHeader className="p-4 sm:p-6 pb-3 border-b border-border/60 bg-muted/15">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <CardTitle className="text-base sm:text-lg font-bold flex items-center gap-2">
-                        <IndianRupee className="h-4 w-4 text-primary" />
-                        Direct Price Negotiator Desk
-                      </CardTitle>
-                      <CardDescription className="text-xs sm:text-sm mt-0.5">
-                        Negotiate deal compensation directly with sponsors in ₹. Free-text chat is disabled — accept the brand's offer or send a structured price counter-offer.
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 sm:p-6 space-y-4">
-                  {workspaces.length === 0 ? (
-                    <div className="py-12 text-center text-xs sm:text-sm text-muted-foreground">
-                      No active brand deals to negotiate right now.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {workspaces.map((ws: any) => (
-                        <div
-                          key={ws.campaignId}
-                          className="p-4 rounded-xl border border-border/80 bg-card flex flex-col justify-between gap-4 shadow-2xs"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-primary block">
-                                {ws.brand}
-                              </span>
-                              <h4 className="font-bold text-sm text-foreground truncate mt-0.5">{ws.title}</h4>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                Status:{" "}
-                                <span className="font-semibold text-foreground capitalize">
-                                  {(ws.negotiationStatus || "initial_offer").replace("_", " ")}
-                                </span>
-                              </p>
-                            </div>
-                            <div className="text-right shrink-0 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
-                              <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
-                                Brand Offer
-                              </span>
-                              <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                                {formatINR(ws.payAmount)}
-                              </span>
-                            </div>
-                          </div>
-
-                          {ws.negotiationStatus === "creator_countered" && ws.lastOfferedPrice && (
-                            <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs">
-                              <span className="text-amber-800 dark:text-amber-300 font-medium">Your Latest Counter-Offer:</span>
-                              <span className="font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                                {formatINR(ws.lastOfferedPrice)}
-                              </span>
-                            </div>
-                          )}
-
-                          <div className="flex items-center gap-2 pt-2 border-t border-border/60">
-                            {ws.negotiationStatus !== "accepted" && (
-                              <Button
-                                size="sm"
-                                disabled={negotiatePriceMutation.isPending}
-                                onClick={() =>
-                                  negotiatePriceMutation.mutate({
-                                    campaignId: ws.campaignId,
-                                    action: "accept",
-                                    amount: Number(ws.payAmount) || 1200,
-                                  })
-                                }
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-9 px-3.5"
-                              >
-                                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                                Accept {formatINR(ws.payAmount)}
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setCounterOfferInput("");
-                                setNegotiatingCampaignId(ws.campaignId);
-                              }}
-                              className="flex-1 text-xs font-semibold rounded-xl h-9"
-                            >
-                              <IndianRupee className="h-3.5 w-3.5 mr-1" />
-                              Open Price Negotiator
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
           {/* ================= TAB 2: MY RATE CARD ================= */}
           {mainTab === "rate-card" && (
-            <div className="space-y-6 animate-in fade-in duration-200">
-              <Card className="border-border/80 shadow-xs">
-                <CardHeader className="p-4 sm:p-6 pb-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <CardTitle className="text-base sm:text-lg font-bold">
-                        Direct Deal Rate Card
-                      </CardTitle>
-                      <CardDescription className="text-xs sm:text-sm mt-1">
-                        Set your standard rates for direct sponsorships. Brands browse these prices when sending custom booking proposals.
-                      </CardDescription>
-                    </div>
-                    <Button
-                      onClick={handleSaveRateCard}
-                      disabled={isSavingRates}
-                      size="sm"
-                      className="rounded-xl font-bold text-xs h-9 px-4 shadow-xs self-start sm:self-center"
-                      data-testid="button-save-rate-card"
-                    >
-                      {isSavingRates ? "Saving..." : "Save Rate Card"}
-                    </Button>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-4 sm:p-6 pt-2 space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* Deliverable 1: Instagram Reel */}
-                    <div className="p-3.5 rounded-xl border border-border/80 bg-card space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold text-foreground">Instagram Reel</Label>
-                        <Badge variant="outline" className="text-[9px] px-1.5 py-0">Video</Badge>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground line-clamp-2">
-                        Dedicated or integrated 30-60s reel showcasing sponsor's track or product.
-                      </p>
-                      <div className="relative pt-1">
-                        <span className="absolute left-3 top-3.5 text-xs font-bold text-muted-foreground">₹</span>
-                        <Input
-                          type="number"
-                          value={reelPrice}
-                          onChange={(e) => setReelPrice(e.target.value)}
-                          className="pl-7 text-xs font-semibold h-9"
-                          placeholder="2500"
-                          data-testid="input-rate-reel"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Deliverable 2: Instagram Story */}
-                    <div className="p-3.5 rounded-xl border border-border/80 bg-card space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold text-foreground">Instagram Story</Label>
-                        <Badge variant="outline" className="text-[9px] px-1.5 py-0">24 Hours</Badge>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground line-clamp-2">
-                        1-2 story slides with swipe-up/sticker link and sponsor tag.
-                      </p>
-                      <div className="relative pt-1">
-                        <span className="absolute left-3 top-3.5 text-xs font-bold text-muted-foreground">₹</span>
-                        <Input
-                          type="number"
-                          value={storyPrice}
-                          onChange={(e) => setStoryPrice(e.target.value)}
-                          className="pl-7 text-xs font-semibold h-9"
-                          placeholder="800"
-                          data-testid="input-rate-story"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Deliverable 3: Collab Package */}
-                    <div className="p-3.5 rounded-xl border border-border/80 bg-card space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold text-foreground">Collab Package</Label>
-                        <Badge className="text-[9px] px-1.5 py-0">Bundle</Badge>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground line-clamp-2">
-                        1 Dedicated Reel + 2 Supporting Stories combo for maximum engagement.
-                      </p>
-                      <div className="relative pt-1">
-                        <span className="absolute left-3 top-3.5 text-xs font-bold text-muted-foreground">₹</span>
-                        <Input
-                          type="number"
-                          value={collabPrice}
-                          onChange={(e) => setCollabPrice(e.target.value)}
-                          className="pl-7 text-xs font-semibold h-9"
-                          placeholder="5000"
-                          data-testid="input-rate-collab"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Deliverable 4: Bio Link & Story */}
-                    <div className="p-3.5 rounded-xl border border-border/80 bg-card space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold text-foreground">Bio Link and Story</Label>
-                        <Badge variant="outline" className="text-[9px] px-1.5 py-0">Traffic</Badge>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground line-clamp-2">
-                        Track/Brand link in Instagram Bio for 48 hours + 1 announcement story.
-                      </p>
-                      <div className="relative pt-1">
-                        <span className="absolute left-3 top-3.5 text-xs font-bold text-muted-foreground">₹</span>
-                        <Input
-                          type="number"
-                          value={bioLinkPrice}
-                          onChange={(e) => setBioLinkPrice(e.target.value)}
-                          className="pl-7 text-xs font-semibold h-9"
-                          placeholder="1200"
-                          data-testid="input-rate-biolink"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Informational Guidance Box */}
-                  <div className="rounded-xl border border-border/70 bg-muted/30 p-4 space-y-2 text-xs">
-                    <p className="font-semibold text-foreground">
-                      How Rate Cards Power Direct Brand Deals:
-                    </p>
-                    <ul className="list-disc list-inside space-y-1 text-muted-foreground pl-1 text-[11px] sm:text-xs">
-                      <li>Sponsors explore your channel in the Creator Discovery catalog and see your listed rates.</li>
-                      <li>When a sponsor submits a booking request, your rate card is automatically used as the proposal price.</li>
-                      <li>You can review the brand's creative brief, download campaign files, and negotiate pricing in the Deal Popup.</li>
-                      <li>All agreed funds are secured in Mingree Escrow before you produce any content.</li>
-                    </ul>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            <Card className="border-border shadow-xs">
+              <CardHeader className="p-5 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base font-bold">My Standard Rate Card</CardTitle>
+                  <CardDescription className="text-xs mt-0.5">
+                    Default prices shown to brands when booking you directly.
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={handleSaveRateCard}
+                  disabled={isSavingRates}
+                  size="sm"
+                  className="rounded-xl font-bold text-xs h-9 px-4 cursor-pointer"
+                >
+                  {isSavingRates ? "Saving..." : "Save Rates"}
+                </Button>
+              </CardHeader>
+              <CardContent className="p-5 pt-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-3.5 rounded-xl border border-border bg-card space-y-2">
+                  <Label className="text-xs font-semibold">Instagram Reel (₹)</Label>
+                  <Input
+                    type="number"
+                    value={reelPrice}
+                    onChange={(e) => setReelPrice(e.target.value)}
+                    className="text-xs font-bold h-9"
+                  />
+                </div>
+                <div className="p-3.5 rounded-xl border border-border bg-card space-y-2">
+                  <Label className="text-xs font-semibold">Instagram Story (₹)</Label>
+                  <Input
+                    type="number"
+                    value={storyPrice}
+                    onChange={(e) => setStoryPrice(e.target.value)}
+                    className="text-xs font-bold h-9"
+                  />
+                </div>
+                <div className="p-3.5 rounded-xl border border-border bg-card space-y-2">
+                  <Label className="text-xs font-semibold">Collab Package (₹)</Label>
+                  <Input
+                    type="number"
+                    value={collabPrice}
+                    onChange={(e) => setCollabPrice(e.target.value)}
+                    className="text-xs font-bold h-9"
+                  />
+                </div>
+                <div className="p-3.5 rounded-xl border border-border bg-card space-y-2">
+                  <Label className="text-xs font-semibold">Bio Link & Story (₹)</Label>
+                  <Input
+                    type="number"
+                    value={bioLinkPrice}
+                    onChange={(e) => setBioLinkPrice(e.target.value)}
+                    className="text-xs font-bold h-9"
+                  />
+                </div>
+              </CardContent>
+            </Card>
           )}
         </div>
       </main>
 
-      {/* ================= POPUP 1: DEAL INFORMATION, FILE DOWNLOAD & REEL SUBMISSION ONLY ================= */}
+      {/* ================= POPUP 1: SIMPLE FILES DOWNLOAD & REEL SUBMIT (SEPARATE FROM RATE CHAT) ================= */}
       <Dialog
         open={selectedCampaignId !== null && !!selectedDeal}
         onOpenChange={(open) => {
           if (!open) setSelectedCampaignId(null);
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0">
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto p-0">
           {selectedDeal && (() => {
             const isDealPending =
               selectedDeal.status === "pending" ||
@@ -804,60 +457,42 @@ export default function CreatorRequests() {
               selectedDeal.status === "applied";
 
             return (
-              <div className="space-y-0">
-                {/* Sticky Top Header inside Deal Info & File Download Popup */}
-                <DialogHeader className="p-5 border-b border-border bg-muted/20">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pr-6">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {selectedDeal.brandLogo && (
-                        <img
-                          src={selectedDeal.brandLogo}
-                          alt={selectedDeal.brand}
-                          className="h-11 w-11 rounded-xl object-cover border border-border shrink-0"
-                        />
-                      )}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-bold uppercase tracking-wider text-primary">
-                            {selectedDeal.brand}
-                          </span>
-                          <Badge variant={isDealPending ? "outline" : "default"} className="text-[10px] capitalize">
-                            {isDealPending ? "Pending Ad Reservation" : selectedDeal.status.replace("_", " ")}
-                          </Badge>
-                        </div>
-                        <DialogTitle className="text-base sm:text-lg font-bold text-foreground truncate mt-0.5">
-                          {selectedDeal.title}
-                        </DialogTitle>
-                        <DialogDescription className="text-xs text-muted-foreground">
-                          {selectedDeal.genre || "Music & Lifestyle"} • {selectedDeal.language || "Hindi & English"}
-                        </DialogDescription>
-                      </div>
+              <div>
+                <DialogHeader className="p-4 sm:p-5 border-b border-border bg-muted/20">
+                  <div className="flex items-center justify-between gap-3 pr-6">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-primary block">
+                        {selectedDeal.brand}
+                      </span>
+                      <DialogTitle className="text-base font-bold text-foreground truncate">
+                        {selectedDeal.title}
+                      </DialogTitle>
+                      <DialogDescription className="text-xs text-muted-foreground">
+                        Download campaign files, copy caption, and submit your Reel link
+                      </DialogDescription>
                     </div>
-
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-right">
-                        <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
-                          Deal Compensation
-                        </span>
-                        <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                          {formatINR(selectedDeal.payAmount)}
-                        </span>
-                      </div>
+                    <div className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-right shrink-0">
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
+                        Payout
+                      </span>
+                      <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                        {formatINR(selectedDeal.payAmount)}
+                      </span>
                     </div>
                   </div>
                 </DialogHeader>
 
-                <div className="p-5 space-y-5">
-                  {/* Reservation Call-to-Action Banner if Not Reserved Yet */}
+                <div className="p-4 sm:p-5 space-y-4">
+                  {/* Reserve Banner if Pending */}
                   {isDealPending && (
-                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-0.5">
-                        <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                          <Clock className="h-4 w-4 text-amber-600" />
-                          Ad Slot Awaiting Your Reservation
-                        </h4>
-                        <p className="text-xs text-muted-foreground">
-                          Click Reserve Ad Slot below to lock your {formatINR(selectedDeal.payAmount)} escrow payout and start your 48-hour delivery timer.
+                    <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
+                      <div className="text-xs">
+                        <p className="font-bold text-foreground flex items-center gap-1.5">
+                          <Clock className="h-3.5 w-3.5 text-amber-600" />
+                          Reserve Ad Slot First
+                        </p>
+                        <p className="text-muted-foreground text-[11px]">
+                          Lock your {formatINR(selectedDeal.payAmount)} payout to submit your Reel.
                         </p>
                       </div>
                       <Button
@@ -866,254 +501,126 @@ export default function CreatorRequests() {
                         onClick={() => acceptInvitationMutation.mutate(selectedDeal.campaignId)}
                         className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shrink-0"
                       >
-                        {acceptInvitationMutation.isPending ? "Reserving..." : "Accept & Reserve Ad Slot"}
+                        {acceptInvitationMutation.isPending ? "Reserving..." : "Reserve Slot"}
                       </Button>
                     </div>
                   )}
 
-                  {/* Prominent Campaign Files & Audio Download Card */}
-                  <div className="p-4 rounded-xl bg-primary/5 border border-primary/25 space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                          <Download className="h-4 w-4" />
-                          Official Campaign Files & Audio Assets
-                        </h4>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Download the brand's promotional media file, official audio track, and complete campaign brief.
-                        </p>
-                      </div>
+                  {/* Step 1: Download Files & Audio */}
+                  <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-foreground">
+                        1. Campaign Files & Audio
+                      </span>
                       <Button
                         size="sm"
+                        variant="outline"
                         onClick={() => handleDownloadBriefAndAssets(selectedDeal)}
-                        className="text-xs font-bold rounded-xl h-9 px-4 shrink-0"
+                        className="h-8 text-xs font-semibold rounded-lg"
                       >
                         <Download className="h-3.5 w-3.5 mr-1.5" />
-                        Download Complete Brief (.txt)
+                        Download Brief (.txt)
                       </Button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      {/* Media / Product Asset File */}
-                      <div className="p-3 rounded-xl bg-background border border-border flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-muted-foreground block">
-                            Campaign Media File
-                          </span>
-                          <p className="text-xs font-semibold text-foreground truncate mt-0.5">
-                            {selectedDeal.assetFileName ||
-                              (selectedDeal.productAssets && selectedDeal.productAssets[0]?.name) ||
-                              `${selectedDeal.brand || "Brand"}_Promo_Asset`}
-                          </p>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const fileUrl =
-                              (selectedDeal.productAssets && selectedDeal.productAssets[0]?.url) ||
-                              selectedDeal.assetUrl ||
-                              selectedDeal.audioUrl;
-                            handleDownloadAssetFile(
-                              fileUrl,
-                              selectedDeal.assetFileName || "Campaign_Asset",
-                              selectedDeal
-                            );
-                          }}
-                          className="h-8 px-3 text-xs font-semibold rounded-lg shrink-0"
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          const fileUrl =
+                            (selectedDeal.productAssets && selectedDeal.productAssets[0]?.url) ||
+                            selectedDeal.assetUrl ||
+                            selectedDeal.audioUrl;
+                          handleDownloadAssetFile(
+                            fileUrl,
+                            selectedDeal.assetFileName || "Campaign_Asset",
+                            selectedDeal
+                          );
+                        }}
+                        className="h-9 text-xs font-semibold rounded-xl justify-start"
+                      >
+                        <Download className="h-3.5 w-3.5 mr-2 text-primary" />
+                        <span className="truncate">Download Media File</span>
+                      </Button>
+
+                      {selectedDeal.audioUrl ? (
+                        <a
+                          href={selectedDeal.audioUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center h-9 px-3 rounded-xl bg-primary/10 text-primary hover:bg-primary/15 text-xs font-semibold"
                         >
-                          <Download className="h-3.5 w-3.5 mr-1.5" />
-                          Download File
+                          <Music2 className="h-3.5 w-3.5 mr-2 shrink-0" />
+                          <span className="truncate">Open Official Audio</span>
+                        </a>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          onClick={() => handleDownloadBriefAndAssets(selectedDeal)}
+                          className="h-9 text-xs font-semibold rounded-xl justify-start"
+                        >
+                          <Music2 className="h-3.5 w-3.5 mr-2" />
+                          Audio Info in Brief
                         </Button>
-                      </div>
-
-                      {/* Official Audio / Song Link */}
-                      <div className="p-3 rounded-xl bg-background border border-border flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <span className="text-[10px] uppercase font-bold text-muted-foreground block">
-                            Official Audio / Song Track
-                          </span>
-                          <p className="text-xs font-semibold text-foreground truncate mt-0.5">
-                            {selectedDeal.audioUrl || "Official Campaign Sound"}
-                          </p>
-                        </div>
-                        {selectedDeal.audioUrl ? (
-                          <a
-                            href={selectedDeal.audioUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center h-8 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold shrink-0"
-                          >
-                            <Music2 className="h-3.5 w-3.5 mr-1.5" />
-                            Open Audio
-                          </a>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleDownloadBriefAndAssets(selectedDeal)}
-                            className="h-8 px-3 text-xs font-semibold rounded-lg shrink-0"
-                          >
-                            Download Info
-                          </Button>
-                        )}
-                      </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Key Deal Parameters Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div className="p-3 rounded-xl bg-muted/30 border border-border">
-                      <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
-                        Deliverable
+                  {/* Step 2: Instructions & Caption Copy */}
+                  <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-foreground">
+                        2. Caption & Hashtags
                       </span>
-                      <span className="font-bold text-foreground mt-0.5 block">
-                        {Array.isArray(selectedDeal.contentTypes)
-                          ? selectedDeal.contentTypes.join(", ")
-                          : "Instagram Reel"}
-                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const textToCopy = [
+                            selectedDeal.requiredCaptionNote || selectedDeal.description || "",
+                            ...(selectedDeal.requiredTags || ["#MingreePromotions"]),
+                            ...(selectedDeal.requiredMentions || []),
+                          ]
+                            .filter(Boolean)
+                            .join(" ");
+                          navigator.clipboard.writeText(textToCopy);
+                          toast.success("Caption & hashtags copied!");
+                        }}
+                        className="h-7 px-2.5 text-[11px] font-semibold rounded-lg"
+                      >
+                        <Copy className="h-3 w-3 mr-1" />
+                        Copy All
+                      </Button>
                     </div>
-                    <div className="p-3 rounded-xl bg-muted/30 border border-border">
-                      <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
-                        Promotion Style
-                      </span>
-                      <span className="font-bold text-foreground mt-0.5 block truncate">
-                        {selectedDeal.promotionStyle || "Lyrics / Page Promo"}
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-muted/30 border border-border">
-                      <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
-                        Min. Duration
-                      </span>
-                      <span className="font-bold text-foreground mt-0.5 block">
-                        {selectedDeal.minDurationSecs || 15} Seconds
-                      </span>
-                    </div>
-                    <div className="p-3 rounded-xl bg-muted/30 border border-border">
-                      <span className="text-[10px] uppercase font-semibold text-muted-foreground block">
-                        Deadline
-                      </span>
-                      <span className="font-bold text-foreground mt-0.5 block">
-                        {selectedDeal.deadline
-                          ? new Date(selectedDeal.deadline).toLocaleDateString()
-                          : "48 Hours"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Campaign Creative Brief & Description */}
-                  <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-2">
-                    <Label className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider">
-                      Campaign Brief & Creative Instructions
-                    </Label>
-                    <p className="text-xs sm:text-sm text-foreground leading-relaxed whitespace-pre-wrap">
-                      {selectedDeal.description ||
-                        "Promote the brand's audio or product creatively on your Instagram Reels channel following the caption and tag guidelines below."}
+                    <p className="text-xs text-muted-foreground bg-background p-3 rounded-lg border border-border font-mono">
+                      {selectedDeal.requiredCaptionNote || selectedDeal.description}{" "}
+                      {(selectedDeal.requiredTags || ["#MingreePromotions"]).join(" ")}{" "}
+                      {(selectedDeal.requiredMentions || []).join(" ")}
                     </p>
                   </div>
 
-                  {/* Mandatory Caption Note + Hashtags + Mentions */}
+                  {/* Step 3: Submit Published Reel Link */}
                   <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider">
-                        Mandatory Reel Caption Note
-                      </Label>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          navigator.clipboard.writeText(
-                            selectedDeal.requiredCaptionNote || selectedDeal.description || ""
-                          );
-                          toast.success("Caption note copied to clipboard!");
-                        }}
-                        className="h-7 px-2.5 text-[11px] font-semibold rounded-lg"
-                      >
-                        <Copy className="h-3 w-3 mr-1" />
-                        Copy Caption
-                      </Button>
-                    </div>
-                    <div className="p-3 rounded-lg bg-background border border-border text-xs font-mono text-foreground">
-                      {selectedDeal.requiredCaptionNote || selectedDeal.description || "#ad | Paid Partnership"}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/60">
-                      <span className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider">
-                        Required Hashtags & Mentions
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          const combined = [
-                            ...(selectedDeal.requiredTags || ["#MingreePromotions"]),
-                            ...(selectedDeal.requiredMentions || []),
-                          ].join(" ");
-                          navigator.clipboard.writeText(combined);
-                          toast.success("Hashtags & mentions copied!");
-                        }}
-                        className="h-7 px-2.5 text-[11px] font-semibold rounded-lg"
-                      >
-                        <Copy className="h-3 w-3 mr-1" />
-                        Copy Tags
-                      </Button>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      {(selectedDeal.requiredTags && selectedDeal.requiredTags.length > 0
-                        ? selectedDeal.requiredTags
-                        : ["#MingreePromotions"]
-                      ).map((tag: string, i: number) => (
-                        <Badge key={i} variant="secondary" className="text-xs font-mono">
-                          {tag}
-                        </Badge>
-                      ))}
-                      {(selectedDeal.requiredMentions || []).map((mention: string, i: number) => (
-                        <Badge key={i} variant="outline" className="text-xs font-mono text-primary border-primary/30">
-                          {mention}
-                        </Badge>
-                      ))}
-                    </div>
-
-                    <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
-                      <strong>Mandatory Disclosure:</strong>{" "}
-                      {selectedDeal.disclosureInstructions || "Include #ad #collab in caption"}
-                    </div>
-                  </div>
-
-                  {/* Submit Published Instagram Reel Link */}
-                  <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
-                          <Video className="h-4 w-4 text-primary" />
-                          Submit Published Instagram Reel URL
-                        </h4>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Once you have published your Reel using the downloaded file/audio and caption, paste the public Instagram Reel link below to claim your {formatINR(selectedDeal.payAmount)} payout.
-                        </p>
-                      </div>
-                    </div>
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <Video className="h-3.5 w-3.5 text-primary" />
+                      3. Submit Published Instagram Reel Link
+                    </span>
 
                     {selectedDeal.submission?.postUrl ? (
-                      <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                            Reel Link Submitted
-                          </span>
-                          <Badge className="bg-emerald-600 text-white text-[10px]">
-                            {selectedDeal.status === "approved" ? "Approved & Paid" : "In Review"}
-                          </Badge>
-                        </div>
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2">
                         <a
                           href={selectedDeal.submission.postUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-xs font-mono text-primary hover:underline flex items-center gap-1.5 break-all"
+                          className="text-xs font-mono text-primary hover:underline flex items-center gap-1.5 truncate"
                         >
-                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                          {selectedDeal.submission.postUrl}
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          <span className="truncate">{selectedDeal.submission.postUrl}</span>
+                          <ExternalLink className="h-3 w-3 shrink-0" />
                         </a>
+                        <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">
+                          {selectedDeal.status === "approved" ? "Approved" : "Submitted"}
+                        </Badge>
                       </div>
                     ) : (
                       <form
@@ -1128,51 +635,27 @@ export default function CreatorRequests() {
                             postUrl: liveReelUrl.trim(),
                           });
                         }}
-                        className="flex flex-col sm:flex-row items-stretch sm:items-end gap-2.5"
+                        className="flex items-center gap-2"
                       >
-                        <div className="space-y-1.5 flex-1">
-                          <Label className="text-xs font-semibold">Instagram Reel Share Link *</Label>
-                          <Input
-                            value={liveReelUrl}
-                            onChange={(e) => setLiveReelUrl(e.target.value)}
-                            placeholder="https://www.instagram.com/reel/Cxxxxxx/"
-                            className="h-10 rounded-xl text-xs font-mono"
-                          />
-                        </div>
+                        <Input
+                          value={liveReelUrl}
+                          onChange={(e) => setLiveReelUrl(e.target.value)}
+                          placeholder="https://www.instagram.com/reel/..."
+                          className="h-9 rounded-xl text-xs font-mono flex-1"
+                        />
                         <Button
                           type="submit"
                           disabled={submitReelMutation.isPending || isDealPending}
-                          className="h-10 px-5 rounded-xl text-xs font-bold shrink-0"
+                          className="h-9 px-4 rounded-xl text-xs font-bold shrink-0"
                         >
                           {isDealPending
-                            ? "Reserve Ad Slot First"
+                            ? "Reserve First"
                             : submitReelMutation.isPending
                             ? "Submitting..."
-                            : `Submit Reel & Claim ${formatINR(selectedDeal.payAmount)}`}
+                            : "Submit Reel"}
                         </Button>
                       </form>
                     )}
-                  </div>
-
-                  {/* Footer Actions inside Deal Info & File Download Popup */}
-                  <div className="pt-3 border-t border-border flex items-center justify-between gap-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => navigate(`/campaigns/${selectedDeal.campaignId}/workspace`)}
-                      className="text-xs font-semibold rounded-xl"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
-                      Open Full Page View
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setSelectedCampaignId(null)}
-                      className="text-xs font-semibold rounded-xl px-5"
-                    >
-                      Close Popup
-                    </Button>
                   </div>
                 </div>
               </div>
@@ -1181,195 +664,38 @@ export default function CreatorRequests() {
         </DialogContent>
       </Dialog>
 
-      {/* ================= POPUP 2: DEDICATED PRICE NEGOTIATOR MODAL (COMPLETELY SEPARATE FROM FILE DOWNLOAD) ================= */}
+      {/* ================= POPUP 2: 2-WAY RATE NEGOTIATION CHAT BAR (SEPARATE FROM FILE DOWNLOAD) ================= */}
       <Dialog
         open={negotiatingCampaignId !== null && !!negotiatingDeal}
         onOpenChange={(open) => {
           if (!open) setNegotiatingCampaignId(null);
         }}
       >
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto p-0">
-          {negotiatingDeal && (() => {
-            const negotiationMessages = Array.isArray(negotiatingDeal.messages)
-              ? negotiatingDeal.messages.filter((m: any) => m.negotiationOffer || m.content?.includes("₹"))
-              : [];
-
-            return (
-              <div className="space-y-0">
-                <DialogHeader className="p-5 border-b border-border bg-muted/20">
-                  <div className="flex items-center justify-between gap-3 pr-6">
-                    <div className="min-w-0">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-primary block">
-                        {negotiatingDeal.brand} • Direct Price Negotiation
-                      </span>
-                      <DialogTitle className="text-base sm:text-lg font-bold text-foreground truncate mt-0.5">
-                        {negotiatingDeal.title}
-                      </DialogTitle>
-                      <DialogDescription className="text-xs text-muted-foreground">
-                        Accept the brand's offer or propose your counter-offer price in ₹. No free-text chat is permitted.
-                      </DialogDescription>
-                    </div>
-                    <div className="px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-right shrink-0">
-                      <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
-                        Brand Offer
-                      </span>
-                      <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                        {formatINR(negotiatingDeal.payAmount)}
-                      </span>
-                    </div>
-                  </div>
-                </DialogHeader>
-
-                <div className="p-5 space-y-4">
-                  {negotiatingDeal.negotiationStatus === "creator_countered" && negotiatingDeal.lastOfferedPrice && (
-                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs">
-                      <span className="font-semibold text-amber-800 dark:text-amber-300">
-                        Your Active Counter-Offer Sent to Brand:
-                      </span>
-                      <span className="font-extrabold text-sm text-amber-700 dark:text-amber-400 tabular-nums">
-                        {formatINR(negotiatingDeal.lastOfferedPrice)}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Accept Brand's Current Price Offer */}
-                  {negotiatingDeal.negotiationStatus !== "accepted" && (
-                    <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-bold text-foreground">
-                          Happy with the Brand's Offer of {formatINR(negotiatingDeal.payAmount)}?
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Lock this payout rate immediately for your deliverable.
-                        </p>
-                      </div>
-                      <Button
-                        size="sm"
-                        disabled={negotiatePriceMutation.isPending}
-                        onClick={() =>
-                          negotiatePriceMutation.mutate({
-                            campaignId: negotiatingDeal.campaignId,
-                            action: "accept",
-                            amount: Number(negotiatingDeal.payAmount) || 1200,
-                          })
-                        }
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shrink-0"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
-                        Accept {formatINR(negotiatingDeal.payAmount)}
-                      </Button>
-                    </div>
-                  )}
-
-                  {/* Propose Counter-Offer Price in ₹ */}
-                  <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-3">
-                    <Label className="text-xs font-bold text-foreground block">
-                      Propose Counter-Offer Price (₹)
-                    </Label>
-
-                    {/* Quick Preset Price Chips */}
-                    <div className="flex flex-wrap gap-2">
-                      {[1500, 2000, 2500, 3500, 5000, 7500].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setCounterOfferInput(String(preset))}
-                          className={cn(
-                            "px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all",
-                            Number(counterOfferInput) === preset
-                              ? "bg-primary text-primary-foreground border-primary"
-                              : "bg-background hover:bg-muted border-border text-foreground"
-                          )}
-                        >
-                          ₹{preset.toLocaleString("en-IN")}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
-                      <div className="relative flex-1">
-                        <span className="absolute left-3.5 top-2.5 text-sm font-bold text-muted-foreground">
-                          ₹
-                        </span>
-                        <Input
-                          type="number"
-                          min={100}
-                          step={50}
-                          value={counterOfferInput}
-                          onChange={(e) => setCounterOfferInput(e.target.value.replace(/[^0-9]/g, ""))}
-                          placeholder="Enter your counter-offer amount (e.g. 1800)"
-                          className="pl-8 h-10 rounded-xl text-xs font-bold bg-background"
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        disabled={!counterOfferInput || Number(counterOfferInput) <= 0 || negotiatePriceMutation.isPending}
-                        onClick={() =>
-                          negotiatePriceMutation.mutate({
-                            campaignId: negotiatingDeal.campaignId,
-                            action: "counter_offer",
-                            amount: Number(counterOfferInput),
-                          })
-                        }
-                        className="h-10 px-5 rounded-xl text-xs font-bold shrink-0"
-                      >
-                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                        {negotiatePriceMutation.isPending ? "Sending..." : "Send Counter-Offer Price"}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Negotiation History Log */}
-                  <div className="space-y-2 pt-1">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                      Price Offer History
-                    </span>
-                    {negotiationMessages.length === 0 ? (
-                      <div className="p-4 rounded-xl bg-muted/20 border border-border text-center text-xs text-muted-foreground">
-                        Initial Brand Offer: <strong className="text-foreground">{formatINR(negotiatingDeal.payAmount)}</strong>. Use the controls above to accept or propose your counter price.
-                      </div>
-                    ) : (
-                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                        {negotiationMessages.map((msg: any) => (
-                          <div
-                            key={msg.id}
-                            className="p-3 rounded-xl bg-muted/20 border border-border flex items-center justify-between gap-3 text-xs"
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <Badge
-                                variant={msg.senderRole === "sponsor" ? "default" : "secondary"}
-                                className="text-[10px] uppercase"
-                              >
-                                {msg.senderRole === "sponsor" ? "Brand" : "You"}
-                              </Badge>
-                              <span className="font-semibold text-foreground">{msg.content}</span>
-                            </div>
-                            <span className="text-[10px] text-muted-foreground shrink-0">
-                              {new Date(msg.createdAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="pt-3 border-t border-border flex items-center justify-end">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setNegotiatingCampaignId(null)}
-                      className="text-xs font-semibold rounded-xl px-5"
-                    >
-                      Close Price Negotiator
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+        <DialogContent className="max-w-md p-0 overflow-hidden border-0 bg-transparent shadow-none">
+          {negotiatingDeal && (
+            <div>
+              <DialogHeader className="sr-only">
+                <DialogTitle>Rate Negotiation Chat</DialogTitle>
+                <DialogDescription>Two-way rate negotiation chat bar in INR</DialogDescription>
+              </DialogHeader>
+              <RateNegotiationChat
+                campaignId={negotiatingDeal.campaignId}
+                viewerRole="creator"
+                brandName={negotiatingDeal.brand || "Brand"}
+                brandLogo={negotiatingDeal.brandLogo}
+                creatorId={Number(negotiatingDeal.creatorId || user?.id || 1)}
+                creatorName={user?.name || "Creator"}
+                creatorHandle={user?.handle}
+                creatorAvatar={user?.avatar}
+                currentPayoutAmount={Number(negotiatingDeal.payAmount || 1200)}
+                basePayAmount={Number(negotiatingDeal.basePayAmount || negotiatingDeal.payAmount || 1200)}
+                lastOfferedPrice={Number(negotiatingDeal.lastOfferedPrice || negotiatingDeal.payAmount || 1200)}
+                lastOfferBy={negotiatingDeal.lastOfferBy}
+                negotiationStatus={negotiatingDeal.negotiationStatus}
+                messages={negotiatingDeal.messages || []}
+              />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

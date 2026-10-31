@@ -8,6 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { RateNegotiationChat } from "@/components/RateNegotiationChat";
+import { IndianRupee } from "lucide-react";
 import { toast } from "sonner";
 
 // Live 48-Hour Countdown Timer Component with multiple display variants
@@ -104,7 +107,7 @@ export default function CreatorCampaignWorkspace() {
 
   // Direct Published Reel Submission Form State
   const [liveReelUrl, setLiveReelUrl] = useState("");
-  const [counterOfferAmount, setCounterOfferAmount] = useState<string>("");
+  const [isRateChatOpen, setIsRateChatOpen] = useState(false);
 
   const {
     data: workspace,
@@ -345,6 +348,16 @@ export default function CreatorCampaignWorkspace() {
             {participantStatus === "reserved" && (
               <LiveCountdownTimer expiresAt={expiryTime} variant="badge" />
             )}
+
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsRateChatOpen(true)}
+              className="h-9 px-3 rounded-xl text-xs font-bold border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 cursor-pointer"
+            >
+              <IndianRupee className="h-3.5 w-3.5 mr-1" />
+              Rate Chat (₹)
+            </Button>
 
             <div className="text-right px-3.5 py-1.5 rounded-xl border border-border/80 bg-card">
               <span className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider block">Escrow Payout</span>
@@ -757,6 +770,34 @@ export default function CreatorCampaignWorkspace() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* SEPARATE 2-WAY RATE NEGOTIATION CHAT BAR MODAL */}
+      <Dialog open={isRateChatOpen} onOpenChange={setIsRateChatOpen}>
+        <DialogContent className="max-w-md p-0 overflow-hidden border-0 bg-transparent shadow-none">
+          <div>
+            <DialogHeader className="sr-only">
+              <DialogTitle>Rate Negotiation Chat</DialogTitle>
+              <DialogDescription>Two-way rate negotiation chat bar in INR</DialogDescription>
+            </DialogHeader>
+            <RateNegotiationChat
+              campaignId={workspace.id}
+              viewerRole="creator"
+              brandName={workspace.brand || "Brand"}
+              brandLogo={workspace.brandLogo}
+              creatorId={Number(participant.creatorId || user?.id || 1)}
+              creatorName={participant.creatorName || user?.name || "Creator"}
+              creatorHandle={participant.creatorHandle || user?.handle}
+              creatorAvatar={participant.creatorAvatar || user?.avatar}
+              currentPayoutAmount={Number(payoutAmount || 1200)}
+              basePayAmount={Number(workspace.payAmount || payoutAmount || 1200)}
+              lastOfferedPrice={Number(participant.lastOfferedPrice || payoutAmount || 1200)}
+              lastOfferBy={participant.lastOfferBy}
+              negotiationStatus={participant.negotiationStatus}
+              messages={workspace.messages || []}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
