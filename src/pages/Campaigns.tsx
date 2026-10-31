@@ -422,45 +422,163 @@ export default function Campaigns() {
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2.5">
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" data-testid="text-page-title">Fixed Price Campaigns</h1>
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" data-testid="text-page-title">
+                      {activeTab === "category-groups" ? "Category & Tier Groups" : "Fixed Price Campaigns"}
+                    </h1>
                     <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20 font-semibold">
-                      Tier & City Matched
+                      {activeTab === "category-groups" ? "Group Join System" : "Tier & City Matched"}
                     </Badge>
                   </div>
                   <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                    Promotional ads automatically matched to your verified follower tier and home city.
+                    {activeTab === "category-groups"
+                      ? "Join category groups for your follower tier to access fixed-payout campaigns."
+                      : "Promotional ads automatically matched to your verified follower tier and home city."}
                   </p>
+                </div>
+
+                <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/70 self-start md:self-center">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("all-campaigns")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      activeTab === "all-campaigns"
+                        ? "bg-background text-foreground shadow-2xs border border-border/80"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Fixed Price Ads
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("category-groups")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      activeTab === "category-groups"
+                        ? "bg-background text-foreground shadow-2xs border border-border/80"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Category Groups ({subscriptions.length})
+                  </button>
                 </div>
               </div>
             </motion.div>
 
             <div className="w-full">
-              {user?.instagramUsername ? (
-                <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-foreground font-semibold shrink-0 border border-border/60">
-                      {getTierNameByFollowers(user.followers || user.instagramFollowers || 0, true).charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <span className="font-semibold text-foreground">
-                        {getTierBannerText(user.followers || user.instagramFollowers || 0, true)}
-                      </span>
-                      <span className="text-muted-foreground ml-1.5">
-                        ({(user.followers || user.instagramFollowers || 0).toLocaleString()} followers verified)
-                      </span>
-                    </div>
+              {activeTab === "category-groups" ? (
+                <div className="space-y-4">
+                  <div className="rounded-xl bg-muted/40 p-4 border border-border">
+                    <p className="font-semibold text-sm text-foreground">Joined {subscriptions.length} Category Groups</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Join groups for your category and tier to access guaranteed fixed-payout campaigns.
+                    </p>
                   </div>
-                  <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline">
-                    Click any card to reserve your slot
-                  </span>
+
+                  <div className="space-y-3">
+                    {PROMOTION_CATEGORIES.map((category) => {
+                      const subCount = getSubscriptionCount(category.id);
+                      return (
+                        <Accordion key={category.id} type="single" collapsible>
+                          <AccordionItem value={category.id} className="border rounded-xl overflow-hidden bg-card">
+                            <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-muted/30" data-testid={`accordion-${category.id}`}>
+                              <div className="text-left">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-sm text-foreground">{category.name}</span>
+                                  {subCount > 0 && (
+                                    <Badge variant="secondary" className="text-[10px]">
+                                      {subCount} joined
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">{category.description}</p>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent className="px-4 pb-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 mt-2">
+                                {TIERS.map((tier) => {
+                                  const subscribed = isSubscribed(category.id, tier.name);
+                                  const groupKey = `${category.id}-${tier.name}`;
+                                  const isLoading = loadingGroup === groupKey;
+                                  const eligible = canJoinTier(tier.id);
+                                  
+                                  return (
+                                    <Card 
+                                      key={tier.name} 
+                                      className={`transition-all rounded-xl ${subscribed ? "border-foreground bg-muted/20" : ""} ${!eligible && !subscribed ? "opacity-60" : ""}`}
+                                    >
+                                      <CardContent className="p-3">
+                                        <div className="flex items-center justify-between">
+                                          <div>
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="font-medium text-xs text-foreground">{tier.name}</span>
+                                              {subscribed && (
+                                                <span className="text-[10px] text-foreground font-semibold px-1 py-0.2 bg-muted rounded">Joined</span>
+                                              )}
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                                              {formatFollowers(tier.minFollowers)} - {formatFollowers(tier.maxFollowers)}
+                                            </p>
+                                          </div>
+                                          {eligible || subscribed ? (
+                                            <Button
+                                              size="sm"
+                                              variant={subscribed ? "outline" : "default"}
+                                              disabled={isLoading}
+                                              onClick={() => handleToggleSubscription(category.id, tier.name, tier.id)}
+                                              className="text-xs h-8 rounded-lg cursor-pointer"
+                                            >
+                                              {isLoading ? "..." : subscribed ? "Leave" : "Join"}
+                                            </Button>
+                                          ) : (
+                                            <Button
+                                              size="sm"
+                                              variant="secondary"
+                                              disabled
+                                              className="text-xs h-8 rounded-lg"
+                                            >
+                                              Locked
+                                            </Button>
+                                          )}
+                                        </div>
+                                      </CardContent>
+                                    </Card>
+                                  );
+                                })}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        </Accordion>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : (
-                <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
-                  <div>
-                    <span className="font-medium text-foreground">Connect Instagram in Profile to sync audience tier</span>
-                  </div>
-                </div>
-              )}
+                <>
+                  {user?.instagramUsername ? (
+                    <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="h-7 w-7 rounded-lg bg-muted flex items-center justify-center text-foreground font-semibold shrink-0 border border-border/60">
+                          {getTierNameByFollowers(user.followers || user.instagramFollowers || 0, true).charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <span className="font-semibold text-foreground">
+                            {getTierBannerText(user.followers || user.instagramFollowers || 0, true)}
+                          </span>
+                          <span className="text-muted-foreground ml-1.5">
+                            ({(user.followers || user.instagramFollowers || 0).toLocaleString()} followers verified)
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline">
+                        Click any card to reserve your slot
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-border/80 bg-card p-3 sm:p-4 text-xs sm:text-sm">
+                      <div>
+                        <span className="font-medium text-foreground">Connect Instagram in Profile to sync audience tier</span>
+                      </div>
+                    </div>
+                  )}
 
               {campaignGroups.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center rounded-xl border border-dashed border-border bg-card/40">
@@ -576,6 +694,8 @@ export default function Campaigns() {
                     );
                   })}
                 </div>
+              )}
+              </>
               )}
             </div>
           </div>

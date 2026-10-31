@@ -40,6 +40,11 @@ export function Sidebar() {
       tag: "Tier"
     },
     { 
+      href: "/groups", 
+      label: "Category & Tier Groups", 
+      tag: "Groups"
+    },
+    { 
       href: "/creator-requests", 
       label: "Direct Brand Deals", 
       tag: "Direct"
@@ -61,6 +66,7 @@ export function Sidebar() {
   const getMobilePageTitle = (path: string) => {
     if (path.startsWith("/profile")) return "My Profile";
     if (path.startsWith("/campaigns")) return "Fixed Price Campaigns";
+    if (path.startsWith("/groups")) return "Category & Tier Groups";
     if (path.startsWith("/creator-requests")) return "Direct Brand Deals";
     if (path.startsWith("/my-campaigns")) return "My Workspaces";
     if (path.startsWith("/earnings")) return "Earnings & Wallet";
