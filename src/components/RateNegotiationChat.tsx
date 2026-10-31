@@ -64,7 +64,21 @@ export function RateNegotiationChat({
     maxCreatorRate,
     Number(effLastOfferedPrice || effPayoutAmount || maxCreatorRate)
   );
-  const isLocked = effNegotiationStatus === "accepted";
+  const isLocked =
+    effNegotiationStatus === "accepted" ||
+    (Array.isArray(messages) &&
+      messages.some(
+        (m: any) =>
+          m.negotiationOffer?.action === "accept" ||
+          String(m.content || "").toLowerCase().includes("locked") ||
+          String(m.content || "").toLowerCase().includes("accepted")
+      )) ||
+    localMsgs.some(
+      (m: any) =>
+        m.negotiationOffer?.action === "accept" ||
+        String(m.content || "").toLowerCase().includes("locked") ||
+        String(m.content || "").toLowerCase().includes("accepted")
+    );
 
   // Combine server messages with any optimistic local messages (deduplicated)
   const combinedMessages = (() => {
@@ -452,98 +466,105 @@ export function RateNegotiationChat({
         <div ref={chatEndRef} />
       </div>
 
-      {/* 3. Bottom Rate-Only Chat Bar (Capped at <= maxCreatorRate) */}
-      <div className="p-3 border-t border-border bg-background space-y-2.5">
-        {/* Quick Lower-or-Equal Rate Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
-          <span className="text-[10px] font-bold uppercase text-muted-foreground shrink-0 mr-1">
-            Lower ₹ (Max {formatINR(maxCreatorRate)}):
-          </span>
-          {quickPresets.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              onClick={() => setRateInput(String(preset))}
-              className={cn(
-                "px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all shrink-0 cursor-pointer",
-                Number(rateInput) === preset
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-muted/50 hover:bg-muted text-foreground border-border"
-              )}
-            >
-              ₹{preset.toLocaleString("en-IN")}
-            </button>
-          ))}
-        </div>
-
-        {/* Rate Input Chat Bar */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <IndianRupee className="h-3.5 w-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-            <Input
-              type="number"
-              min={100}
-              max={maxCreatorRate}
-              step={50}
-              value={rateInput}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleSendRate();
-                }
-              }}
-              onChange={(e) => {
-                const raw = e.target.value.replace(/[^0-9]/g, "");
-                if (!raw) {
-                  setRateInput("");
-                  return;
-                }
-                const num = Number(raw);
-                if (num > maxCreatorRate) {
-                  setRateInput(String(maxCreatorRate));
-                  toast.info(`Maximum allowed rate is ${formatINR(maxCreatorRate)}`);
-                } else {
-                  setRateInput(raw);
-                }
-              }}
-              placeholder={`Enter rate ≤ ${formatINR(maxCreatorRate)} (lower only)...`}
-              className="pl-8 h-10 rounded-xl text-xs font-bold bg-muted/30 border-border focus-visible:ring-1"
-            />
+      {/* 3. Bottom Rate-Only Chat Bar (Capped at <= maxCreatorRate) — Hidden when rate is locked */}
+      {!isLocked ? (
+        <div className="p-3 border-t border-border bg-background space-y-2.5">
+          {/* Quick Lower-or-Equal Rate Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
+            <span className="text-[10px] font-bold uppercase text-muted-foreground shrink-0 mr-1">
+              Lower ₹ (Max {formatINR(maxCreatorRate)}):
+            </span>
+            {quickPresets.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setRateInput(String(preset))}
+                className={cn(
+                  "px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all shrink-0 cursor-pointer",
+                  Number(rateInput) === preset
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-muted/50 hover:bg-muted text-foreground border-border"
+                )}
+              >
+                ₹{preset.toLocaleString("en-IN")}
+              </button>
+            ))}
           </div>
 
-          <Button
-            type="button"
-            onClick={() => handleSendRate()}
-            disabled={
-              !rateInput ||
-              Number(rateInput) < 100 ||
-              Number(rateInput) > maxCreatorRate ||
-              negotiateMutation.isPending
-            }
-            className="h-10 px-4 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
-          >
-            <Send className="h-3.5 w-3.5 mr-1.5" />
-            {negotiateMutation.isPending ? "Sending..." : "Send ₹"}
-          </Button>
+          {/* Rate Input Chat Bar */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <IndianRupee className="h-3.5 w-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                type="number"
+                min={100}
+                max={maxCreatorRate}
+                step={50}
+                value={rateInput}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSendRate();
+                  }
+                }}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9]/g, "");
+                  if (!raw) {
+                    setRateInput("");
+                    return;
+                  }
+                  const num = Number(raw);
+                  if (num > maxCreatorRate) {
+                    setRateInput(String(maxCreatorRate));
+                    toast.info(`Maximum allowed rate is ${formatINR(maxCreatorRate)}`);
+                  } else {
+                    setRateInput(raw);
+                  }
+                }}
+                placeholder={`Enter rate ≤ ${formatINR(maxCreatorRate)} (lower only)...`}
+                className="pl-8 h-10 rounded-xl text-xs font-bold bg-muted/30 border-border focus-visible:ring-1"
+              />
+            </div>
 
-          {incomingOfferToAccept !== null && (
             <Button
               type="button"
-              disabled={negotiateMutation.isPending}
-              onClick={() =>
-                negotiateMutation.mutate({
-                  action: "accept",
-                  amount: incomingOfferToAccept,
-                })
+              onClick={() => handleSendRate()}
+              disabled={
+                !rateInput ||
+                Number(rateInput) < 100 ||
+                Number(rateInput) > maxCreatorRate ||
+                negotiateMutation.isPending
               }
-              className="h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 cursor-pointer"
+              className="h-10 px-4 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
             >
-              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-              Accept {formatINR(incomingOfferToAccept)}
+              <Send className="h-3.5 w-3.5 mr-1.5" />
+              {negotiateMutation.isPending ? "Sending..." : "Send ₹"}
             </Button>
-          )}
+
+            {incomingOfferToAccept !== null && (
+              <Button
+                type="button"
+                disabled={negotiateMutation.isPending}
+                onClick={() =>
+                  negotiateMutation.mutate({
+                    action: "accept",
+                    amount: incomingOfferToAccept,
+                  })
+                }
+                className="h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 cursor-pointer"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                Accept {formatINR(incomingOfferToAccept)}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="px-4 py-2.5 border-t border-border bg-emerald-500/10 flex items-center justify-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+          <span>Rate locked at {formatINR(activeBrandRate)} • Negotiation is closed</span>
+        </div>
+      )}
     </div>
   );
 }
