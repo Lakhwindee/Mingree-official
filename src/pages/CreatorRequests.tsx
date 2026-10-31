@@ -460,225 +460,393 @@ export default function CreatorRequests() {
         </div>
       </main>
 
-      {/* ================= POPUP 1: CLEAN DEAL INFO, FILE DOWNLOAD & SUBMIT REEL ================= */}
+      {/* ================= POPUP 1: COMPREHENSIVE DEAL INFO, BRAND GUIDELINES, MENTIONS, FILES & REEL SUBMIT ================= */}
       <Dialog
         open={selectedCampaignId !== null && !!selectedDeal}
         onOpenChange={(open) => {
           if (!open) setSelectedCampaignId(null);
         }}
       >
-        <DialogContent className="max-w-xl p-6 rounded-2xl border-border bg-card shadow-lg">
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto p-0 rounded-2xl border-border bg-card shadow-lg">
           {selectedDeal && (() => {
             const isDealPending =
               selectedDeal.status === "pending" ||
               selectedDeal.status === "invited" ||
               selectedDeal.status === "applied";
 
-            const mentions = Array.isArray(selectedDeal.requiredMentions) && selectedDeal.requiredMentions.length > 0
-              ? selectedDeal.requiredMentions.join(" ")
-              : "";
-            const tags = Array.isArray(selectedDeal.requiredTags) && selectedDeal.requiredTags.length > 0
-              ? selectedDeal.requiredTags.join(" ")
-              : "#MingreePromotions";
+            const mentionsList =
+              Array.isArray(selectedDeal.requiredMentions) && selectedDeal.requiredMentions.length > 0
+                ? selectedDeal.requiredMentions
+                : [`@${(selectedDeal.brand || "brand").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase()}`];
 
-            const fullCaption = [
-              selectedDeal.requiredCaptionNote || selectedDeal.description || "Promote brand audio / product on Instagram Reels across top creator channels.",
-              mentions,
-              tags,
+            const tagsList =
+              Array.isArray(selectedDeal.requiredTags) && selectedDeal.requiredTags.length > 0
+                ? selectedDeal.requiredTags
+                : ["#MingreePromotions"];
+
+            const captionNoteText =
+              selectedDeal.requiredCaptionNote ||
+              selectedDeal.description ||
+              "Check out this official release! Use official audio.";
+
+            const disclosureText =
+              selectedDeal.disclosureInstructions || "#ad | Paid Partnership";
+
+            const fullCaptionPack = [
+              captionNoteText,
+              mentionsList.length > 0 ? mentionsList.join(" ") : "",
+              tagsList.length > 0 ? tagsList.join(" ") : "",
+              disclosureText,
             ]
               .filter(Boolean)
-              .join(" ");
+              .join("\n\n");
 
             return (
               <div>
-                {/* Header */}
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <span className="text-xs font-bold uppercase tracking-wider text-primary block">
-                      {selectedDeal.brand}
-                    </span>
-                    <DialogTitle className="text-base sm:text-lg font-bold text-foreground mt-0.5">
-                      {selectedDeal.title}
-                    </DialogTitle>
-                    <DialogDescription className="text-xs text-muted-foreground mt-0.5">
-                      Download campaign files, copy caption, and submit your Reel link
-                    </DialogDescription>
-                  </div>
-                  <div className="px-3.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center shrink-0">
-                    <span className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 block">
-                      Payout
-                    </span>
-                    <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400">
-                      {formatINR(selectedDeal.payAmount)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Optional Reserve Banner if slot is still pending */}
-                {isDealPending && (
-                  <div className="mt-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
-                    <div className="text-xs">
-                      <p className="font-bold text-foreground flex items-center gap-1.5">
-                        <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                        Reserve Slot to Confirm
-                      </p>
-                      <p className="text-muted-foreground text-[11px]">
-                        Lock your ad slot to begin recording and submit your link.
-                      </p>
+                {/* 1. Top Header with Brand, Title, and Compensation */}
+                <DialogHeader className="p-4 sm:p-5 border-b border-border bg-muted/20">
+                  <div className="flex items-start justify-between gap-3 pr-6">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {selectedDeal.brandLogo ? (
+                        <img
+                          src={selectedDeal.brandLogo}
+                          alt={selectedDeal.brand}
+                          className="h-10 w-10 rounded-xl object-cover border border-border shrink-0"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary font-bold text-sm flex items-center justify-center shrink-0">
+                          {(selectedDeal.brand || "B").charAt(0)}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-primary block truncate">
+                          {selectedDeal.brand}
+                        </span>
+                        <DialogTitle className="text-base font-bold text-foreground truncate">
+                          {selectedDeal.title}
+                        </DialogTitle>
+                        <DialogDescription className="text-xs text-muted-foreground truncate">
+                          Campaign deliverable instructions, audio & official submission
+                        </DialogDescription>
+                      </div>
                     </div>
-                    <Button
-                      size="sm"
-                      disabled={acceptInvitationMutation.isPending}
-                      onClick={() => acceptInvitationMutation.mutate(selectedDeal.campaignId)}
-                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shrink-0 cursor-pointer"
-                    >
-                      {acceptInvitationMutation.isPending ? "Reserving..." : "Reserve Slot"}
-                    </Button>
+
+                    <div className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-right shrink-0">
+                      <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
+                        Payout
+                      </span>
+                      <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                        {formatINR(selectedDeal.payAmount)}
+                      </span>
+                    </div>
                   </div>
-                )}
+                </DialogHeader>
 
-                {/* 1. Campaign Files & Audio */}
-                <div className="mt-5 p-4 rounded-xl border border-border/70 bg-muted/20 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground">
-                      1. Campaign Files & Audio
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDownloadBriefAndAssets(selectedDeal)}
-                      className="h-8 px-3 text-xs font-semibold rounded-lg border-border cursor-pointer"
-                    >
-                      <Download className="h-3.5 w-3.5 mr-1.5" />
-                      Download Brief (.txt)
-                    </Button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        const fileUrl =
-                          (selectedDeal.productAssets && selectedDeal.productAssets[0]?.url) ||
-                          selectedDeal.assetUrl ||
-                          selectedDeal.audioUrl;
-                        handleDownloadAssetFile(
-                          fileUrl,
-                          selectedDeal.assetFileName || "Campaign_Asset",
-                          selectedDeal
-                        );
-                      }}
-                      className="h-10 text-xs font-semibold rounded-xl cursor-pointer"
-                    >
-                      <Download className="h-3.5 w-3.5 mr-1.5 text-primary" />
-                      Download Media File
-                    </Button>
-
-                    {selectedDeal.audioUrl ? (
-                      <a
-                        href={selectedDeal.audioUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center justify-center h-10 px-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold transition-colors cursor-pointer"
+                <div className="p-4 sm:p-5 space-y-4">
+                  {/* Reserve Alert Banner if Pending */}
+                  {isDealPending && (
+                    <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="text-xs">
+                        <p className="font-bold text-foreground flex items-center gap-1.5">
+                          <Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                          Reserve Slot to Lock Payout
+                        </p>
+                        <p className="text-muted-foreground text-[11px] mt-0.5">
+                          Click below to confirm your spot and activate the 48-hour submission window.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={acceptInvitationMutation.isPending}
+                        onClick={() => acceptInvitationMutation.mutate(selectedDeal.campaignId)}
+                        className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shrink-0 cursor-pointer"
                       >
-                        <Music2 className="h-3.5 w-3.5 mr-1.5" />
-                        Open Official Audio
-                      </a>
-                    ) : (
+                        {acceptInvitationMutation.isPending ? "Reserving..." : "Reserve Slot"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* 2. Key Deliverable Specs Strip (Horizontal, Clean, Minimal) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/70">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                        Deliverable
+                      </span>
+                      <span className="text-xs font-bold text-foreground mt-0.5 flex items-center gap-1 truncate">
+                        <Film className="h-3 w-3 text-primary shrink-0" />
+                        {selectedDeal.contentTypes?.[0] || "Instagram Reel"}
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/70">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                        Promotion Style
+                      </span>
+                      <span className="text-xs font-bold text-foreground mt-0.5 flex items-center gap-1 truncate">
+                        <Sparkles className="h-3 w-3 text-amber-500 shrink-0" />
+                        {selectedDeal.promotionStyle || "Lyrics / Page Promo"}
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/70">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                        Category & Lang
+                      </span>
+                      <span className="text-xs font-bold text-foreground mt-0.5 flex items-center gap-1 truncate">
+                        <Layers className="h-3 w-3 text-blue-500 shrink-0" />
+                        {selectedDeal.genre || "Music"} • {selectedDeal.language || "Hindi"}
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-muted/30 border border-border/70">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                        Deadline
+                      </span>
+                      <span className="text-xs font-bold text-foreground mt-0.5 flex items-center gap-1 truncate">
+                        <Clock className="h-3 w-3 text-muted-foreground shrink-0" />
+                        {selectedDeal.deadline ? new Date(selectedDeal.deadline).toLocaleDateString() : "48 Hours"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3. Campaign Description & Creative Brief (What Brand Entered) */}
+                  <div className="p-3.5 rounded-xl bg-muted/20 border border-border space-y-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block">
+                      Campaign Brief & Creative Instructions
+                    </span>
+                    <p className="text-xs text-foreground leading-relaxed whitespace-pre-line">
+                      {selectedDeal.description || selectedDeal.requiredCaptionNote || "Promote brand audio / product on Instagram Reels across top creator channels."}
+                    </p>
+                  </div>
+
+                  {/* 4. Mandatory Mentions & Hashtags */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Mentions */}
+                    <div className="p-3.5 rounded-xl bg-muted/20 border border-border space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <AtSign className="h-3 w-3 text-primary" />
+                          Accounts to Mention
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(mentionsList.join(" "));
+                            toast.success("Mentions copied!");
+                          }}
+                          className="h-6 px-2 text-[10px] font-semibold text-primary hover:text-primary cursor-pointer"
+                        >
+                          <Copy className="h-2.5 w-2.5 mr-1" />
+                          Copy All
+                        </Button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {mentionsList.map((m: string) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(m);
+                              toast.success(`Copied ${m}`);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-colors cursor-pointer"
+                          >
+                            <span>{m}</span>
+                            <Copy className="h-2.5 w-2.5 opacity-60" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Hashtags */}
+                    <div className="p-3.5 rounded-xl bg-muted/20 border border-border space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <Hash className="h-3 w-3 text-primary" />
+                          Required Hashtags
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(tagsList.join(" "));
+                            toast.success("Hashtags copied!");
+                          }}
+                          className="h-6 px-2 text-[10px] font-semibold text-primary hover:text-primary cursor-pointer"
+                        >
+                          <Copy className="h-2.5 w-2.5 mr-1" />
+                          Copy All
+                        </Button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {tagsList.map((tag: string) => (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(tag);
+                              toast.success(`Copied ${tag}`);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-muted text-foreground border border-border hover:bg-muted/80 transition-colors cursor-pointer"
+                          >
+                            <span>{tag}</span>
+                            <Copy className="h-2.5 w-2.5 opacity-60" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 5. Complete Ready-to-Paste Caption Note & One-Click Copy */}
+                  <div className="p-3.5 rounded-xl bg-muted/20 border border-border space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Ready-to-Paste Caption & Disclosure
+                      </span>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(fullCaptionPack);
+                          toast.success("Complete caption, mentions & tags copied!");
+                        }}
+                        className="h-7 px-3 text-[11px] font-bold rounded-lg cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90"
+                      >
+                        <Copy className="h-3 w-3 mr-1" />
+                        Copy Full Caption Pack
+                      </Button>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-background border border-border text-xs text-foreground/90 font-mono space-y-1.5 leading-relaxed">
+                      <p className="font-sans font-medium text-foreground">{captionNoteText}</p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-primary pt-1 border-t border-border/50 text-[11px]">
+                        <span>{mentionsList.join(" ")}</span>
+                        <span>{tagsList.join(" ")}</span>
+                        <span className="text-muted-foreground font-semibold">{disclosureText}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 6. Campaign Audio, Media Assets & Brief Download */}
+                  <div className="p-3.5 rounded-xl bg-muted/20 border border-border space-y-2.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block">
+                      Campaign Audio & Deliverable Files
+                    </span>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {selectedDeal.audioUrl ? (
+                        <a
+                          href={selectedDeal.audioUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center justify-center h-9 px-3 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-bold cursor-pointer"
+                        >
+                          <Music2 className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                          <span className="truncate">Open Official Audio</span>
+                        </a>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          onClick={() => handleDownloadBriefAndAssets(selectedDeal)}
+                          className="h-9 text-xs font-semibold rounded-xl justify-center cursor-pointer"
+                        >
+                          <Music2 className="h-3.5 w-3.5 mr-1.5" />
+                          Audio in Brief
+                        </Button>
+                      )}
+
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          const fileUrl =
+                            (selectedDeal.productAssets && selectedDeal.productAssets[0]?.url) ||
+                            selectedDeal.assetUrl ||
+                            selectedDeal.audioUrl;
+                          handleDownloadAssetFile(
+                            fileUrl,
+                            selectedDeal.assetFileName || "Campaign_Asset",
+                            selectedDeal
+                          );
+                        }}
+                        className="h-9 text-xs font-semibold rounded-xl justify-center cursor-pointer"
+                      >
+                        <Download className="h-3.5 w-3.5 mr-1.5 text-primary" />
+                        <span className="truncate">Download Media File</span>
+                      </Button>
+
                       <Button
                         variant="outline"
                         onClick={() => handleDownloadBriefAndAssets(selectedDeal)}
-                        className="h-10 text-xs font-semibold rounded-xl cursor-pointer"
+                        className="h-9 text-xs font-semibold rounded-xl justify-center cursor-pointer"
                       >
-                        <Music2 className="h-3.5 w-3.5 mr-1.5" />
-                        Audio in Brief
+                        <Download className="h-3.5 w-3.5 mr-1.5" />
+                        Download Brief (.txt)
                       </Button>
+                    </div>
+                  </div>
+
+                  {/* 7. Submit Published Instagram Reel Link */}
+                  <div className="p-3.5 rounded-xl bg-muted/20 border border-border space-y-2.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Video className="h-3.5 w-3.5 text-primary" />
+                      Submit Published Instagram Reel Link
+                    </span>
+
+                    {selectedDeal.submission?.postUrl ? (
+                      <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2">
+                        <a
+                          href={selectedDeal.submission.postUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-mono text-primary hover:underline flex items-center gap-1.5 truncate"
+                        >
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          <span className="truncate">{selectedDeal.submission.postUrl}</span>
+                          <ExternalLink className="h-3 w-3 shrink-0" />
+                        </a>
+                        <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">
+                          {selectedDeal.status === "approved" ? "Approved" : "Submitted"}
+                        </Badge>
+                      </div>
+                    ) : (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!liveReelUrl.trim()) {
+                            toast.error("Please paste your Instagram Reel URL");
+                            return;
+                          }
+                          submitReelMutation.mutate({
+                            campaignId: selectedDeal.campaignId,
+                            postUrl: liveReelUrl.trim(),
+                          });
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <Input
+                          value={liveReelUrl}
+                          onChange={(e) => setLiveReelUrl(e.target.value)}
+                          placeholder="https://www.instagram.com/reel/..."
+                          className="h-10 rounded-xl text-xs font-mono flex-1 bg-background"
+                        />
+                        <Button
+                          type="submit"
+                          disabled={submitReelMutation.isPending || isDealPending}
+                          className="h-10 px-4 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
+                        >
+                          {isDealPending
+                            ? "Reserve First"
+                            : submitReelMutation.isPending
+                            ? "Submitting..."
+                            : "Submit Reel"}
+                        </Button>
+                      </form>
                     )}
                   </div>
-                </div>
-
-                {/* 2. Caption & Hashtags */}
-                <div className="mt-4 p-4 rounded-xl border border-border/70 bg-muted/20 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground">
-                      2. Caption & Hashtags
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        navigator.clipboard.writeText(fullCaption);
-                        toast.success("Caption & hashtags copied!");
-                      }}
-                      className="h-8 px-3 text-xs font-semibold rounded-lg border-border cursor-pointer"
-                    >
-                      <Copy className="h-3.5 w-3.5 mr-1.5" />
-                      Copy All
-                    </Button>
-                  </div>
-
-                  <div className="p-3.5 rounded-lg bg-background border border-border/80 text-xs text-foreground/90 font-mono leading-relaxed whitespace-pre-line">
-                    {fullCaption}
-                  </div>
-                </div>
-
-                {/* 3. Submit Published Instagram Reel Link */}
-                <div className="mt-4 p-4 rounded-xl border border-border/70 bg-muted/20 space-y-2.5">
-                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                    <Video className="h-3.5 w-3.5 text-primary" />
-                    3. Submit Published Instagram Reel Link
-                  </span>
-
-                  {selectedDeal.submission?.postUrl ? (
-                    <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-2">
-                      <a
-                        href={selectedDeal.submission.postUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-mono text-primary hover:underline flex items-center gap-1.5 truncate"
-                      >
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                        <span className="truncate">{selectedDeal.submission.postUrl}</span>
-                        <ExternalLink className="h-3 w-3 shrink-0" />
-                      </a>
-                      <Badge className="bg-emerald-600 text-white text-[10px] shrink-0">
-                        {selectedDeal.status === "approved" ? "Approved" : "Submitted"}
-                      </Badge>
-                    </div>
-                  ) : (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (!liveReelUrl.trim()) {
-                          toast.error("Please paste your Instagram Reel URL");
-                          return;
-                        }
-                        submitReelMutation.mutate({
-                          campaignId: selectedDeal.campaignId,
-                          postUrl: liveReelUrl.trim(),
-                        });
-                      }}
-                      className="flex items-center gap-2"
-                    >
-                      <Input
-                        value={liveReelUrl}
-                        onChange={(e) => setLiveReelUrl(e.target.value)}
-                        placeholder="https://www.instagram.com/reel/..."
-                        className="h-10 rounded-xl text-xs font-mono flex-1 bg-background"
-                      />
-                      <Button
-                        type="submit"
-                        disabled={submitReelMutation.isPending || isDealPending}
-                        className="h-10 px-4 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
-                      >
-                        {isDealPending
-                          ? "Reserve First"
-                          : submitReelMutation.isPending
-                          ? "Submitting..."
-                          : "Submit Reel"}
-                      </Button>
-                    </form>
-                  )}
                 </div>
               </div>
             );
