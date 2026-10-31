@@ -250,9 +250,10 @@ export default function CampaignWorkspace() {
                                   </strong>
                                 </span>
                                 {p.negotiationStatus === "creator_countered" &&
-                                  p.lastOfferedPrice && (
+                                  p.lastOfferedPrice &&
+                                  p.lastOfferedPrice <= (p.baseRate || workspace.payAmount || 1200) && (
                                     <span className="text-amber-600 dark:text-amber-400 font-bold">
-                                      • Creator Ask: {formatINR(p.lastOfferedPrice)}
+                                      • Creator Offer: {formatINR(p.lastOfferedPrice)}
                                     </span>
                                   )}
                                 {p.negotiationStatus === "accepted" && (
@@ -560,10 +561,11 @@ export default function CampaignWorkspace() {
                                 p.payoutAmount || workspace.payAmount || 1200
                               )}
                               basePayAmount={Number(
-                                workspace.payAmount || p.payoutAmount || 1200
+                                p.baseRate || workspace.payAmount || p.payoutAmount || 1200
                               )}
-                              lastOfferedPrice={Number(
-                                p.lastOfferedPrice || p.payoutAmount || 1200
+                              lastOfferedPrice={Math.min(
+                                Number(p.baseRate || workspace.payAmount || 1200),
+                                Number(p.lastOfferedPrice || p.payoutAmount || 1200)
                               )}
                               lastOfferBy={p.lastOfferBy}
                               negotiationStatus={p.negotiationStatus}

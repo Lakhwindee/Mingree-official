@@ -789,8 +789,11 @@ export default function CreatorCampaignWorkspace() {
               creatorHandle={participant.creatorHandle || user?.handle}
               creatorAvatar={participant.creatorAvatar || user?.avatar}
               currentPayoutAmount={Number(payoutAmount || 1200)}
-              basePayAmount={Number(workspace.payAmount || payoutAmount || 1200)}
-              lastOfferedPrice={Number(participant.lastOfferedPrice || payoutAmount || 1200)}
+              basePayAmount={Number(participant.baseRate || workspace.payAmount || payoutAmount || 1200)}
+              lastOfferedPrice={Math.min(
+                Number(participant.baseRate || workspace.payAmount || 1200),
+                Number(participant.lastOfferedPrice || payoutAmount || 1200)
+              )}
               lastOfferBy={participant.lastOfferBy}
               negotiationStatus={participant.negotiationStatus}
               messages={workspace.messages || []}

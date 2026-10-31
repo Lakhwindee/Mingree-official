@@ -45,20 +45,36 @@ export function RateNegotiationChat({
   const [rateInput, setRateInput] = useState<string>("");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const initialBrandRate = Number(basePayAmount || currentPayoutAmount || 1200);
-  const activeBrandRate = Number(currentPayoutAmount || 1200);
-  const latestRate = Number(lastOfferedPrice || currentPayoutAmount || 1200);
+  // Maximum negotiable rate is strictly the creator's base rate
+  const maxCreatorRate = Math.max(100, Number(basePayAmount || currentPayoutAmount || 1200));
+  const activeBrandRate = Math.min(maxCreatorRate, Number(currentPayoutAmount || maxCreatorRate));
+  const latestRate = Math.min(
+    maxCreatorRate,
+    Number(lastOfferedPrice || currentPayoutAmount || maxCreatorRate)
+  );
   const isLocked = negotiationStatus === "accepted";
 
-  // Filter only rate negotiation messages for this creator thread
+  // Filter only rate negotiation messages for this creator thread that are <= maxCreatorRate
   const rateMessages = (Array.isArray(messages) ? messages : []).filter((m: any) => {
     const isForThisCreator =
       !m.negotiationOffer?.creatorId ||
       Number(m.negotiationOffer?.creatorId) === Number(creatorId) ||
       Number(m.senderId) === Number(creatorId) ||
       Number(m.recipientId) === Number(creatorId);
-    const isRateMsg = Boolean(m.negotiationOffer) || (typeof m.content === "string" && m.content.includes("₹"));
-    return isForThisCreator && isRateMsg;
+    const isRateMsg =
+      Boolean(m.negotiationOffer) ||
+      (typeof m.content === "string" && m.content.includes("₹") && !m.isAnnouncement);
+    if (!isForThisCreator || !isRateMsg) return false;
+
+    const msgAmount =
+      m.negotiationOffer?.amount ||
+      (() => {
+        const match = String(m.content || "").match(/₹([\d,]+)/);
+        return match ? Number(match[1].replace(/,/g, "")) : 0;
+      })();
+
+    if (msgAmount > maxCreatorRate) return false;
+    return true;
   });
 
   useEffect(() => {
@@ -66,7 +82,10 @@ export function RateNegotiationChat({
   }, [rateMessages.length, negotiationStatus, latestRate]);
 
   const negotiateMutation = useMutation({
-    mutationFn: (params: { action: "offer" | "counter_offer" | "accept" | "decline"; amount: number }) =>
+    mutationFn: (params: {
+      action: "offer" | "counter_offer" | "accept" | "decline";
+      amount: number;
+    }) =>
       api.negotiateCampaignPrice(campaignId, {
         creatorId,
         action: params.action,
@@ -92,10 +111,8 @@ export function RateNegotiationChat({
   const incomingOfferToAccept = (() => {
     if (isLocked) return null;
     if (viewerRole === "creator") {
-      // Creator can always accept the Brand's current offer
       return activeBrandRate;
     } else {
-      // Sponsor can accept Creator's counter-offer when creator has countered
       if (negotiationStatus === "creator_countered" || lastOfferBy === "creator") {
         return latestRate;
       }
@@ -110,13 +127,30 @@ export function RateNegotiationChat({
       toast.error("Please enter a valid rate in ₹ (minimum ₹100)");
       return;
     }
+    if (numericRate > maxCreatorRate) {
+      toast.error(
+        `Cannot negotiate above creator's rate of ${formatINR(maxCreatorRate)}. Please enter ${formatINR(maxCreatorRate)} or lower.`
+      );
+      return;
+    }
     negotiateMutation.mutate({
       action: viewerRole === "sponsor" ? "offer" : "counter_offer",
       amount: numericRate,
     });
   };
 
-  const quickPresets = [1000, 1200, 1500, 2000, 2500, 3500, 5000];
+  // Build quick presets strictly <= maxCreatorRate (lower rates up to creator's max rate)
+  const quickPresets = (() => {
+    const candidates = [
+      Math.round((maxCreatorRate * 0.5) / 50) * 50,
+      Math.round((maxCreatorRate * 0.65) / 50) * 50,
+      Math.round((maxCreatorRate * 0.75) / 50) * 50,
+      Math.round((maxCreatorRate * 0.85) / 50) * 50,
+      Math.round((maxCreatorRate * 0.9) / 50) * 50,
+      maxCreatorRate,
+    ].filter((val) => val >= 100 && val <= maxCreatorRate);
+    return Array.from(new Set(candidates)).sort((a, b) => a - b);
+  })();
 
   return (
     <div className="flex flex-col rounded-2xl border border-border bg-card overflow-hidden shadow-xs">
@@ -157,7 +191,7 @@ export function RateNegotiationChat({
               )}
             </div>
             <p className="text-[11px] text-muted-foreground">
-              2-Way Rate Negotiation • Only ₹ Offers
+              Creator Rate: <strong className="text-foreground">{formatINR(maxCreatorRate)}</strong> • Negotiate ≤ {formatINR(maxCreatorRate)} only
             </p>
           </div>
         </div>
@@ -169,20 +203,26 @@ export function RateNegotiationChat({
               Locked: {formatINR(activeBrandRate)}
             </Badge>
           ) : negotiationStatus === "creator_countered" ? (
-            <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-bold px-2.5 py-1">
-              Creator Ask: {formatINR(latestRate)}
+            <Badge
+              variant="outline"
+              className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-bold px-2.5 py-1"
+            >
+              Creator Offer: {formatINR(latestRate)}
             </Badge>
           ) : (
-            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs font-bold px-2.5 py-1">
-              Brand Offer: {formatINR(activeBrandRate)}
+            <Badge
+              variant="outline"
+              className="border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs font-bold px-2.5 py-1"
+            >
+              Current Rate: {formatINR(activeBrandRate)}
             </Badge>
           )}
         </div>
       </div>
 
-      {/* 2. Middle Chat Stream (Strictly Rate Bubbles from Both Sides) */}
-      <div className="p-4 space-y-3 min-h-[240px] max-h-[320px] overflow-y-auto bg-muted/10 flex flex-col">
-        {/* Initial Brand Rate Bubble */}
+      {/* 2. Middle Chat Stream (Strictly Rate Bubbles from Both Sides, <= Creator Rate) */}
+      <div className="p-4 space-y-3 min-h-[220px] max-h-[300px] overflow-y-auto bg-muted/10 flex flex-col">
+        {/* Initial Creator / Brand Rate Bubble */}
         <div
           className={cn(
             "flex flex-col max-w-[82%]",
@@ -190,7 +230,7 @@ export function RateNegotiationChat({
           )}
         >
           <span className="text-[10px] font-semibold text-muted-foreground mb-1 px-1">
-            {viewerRole === "sponsor" ? "You (Initial Brand Rate)" : `${brandName} (Initial Offer)`}
+            {viewerRole === "sponsor" ? "Creator Base Rate" : `${brandName} (Initial Rate)`}
           </span>
           <div
             className={cn(
@@ -202,10 +242,10 @@ export function RateNegotiationChat({
           >
             <div>
               <span className="text-[10px] uppercase font-bold text-muted-foreground block">
-                Offered Rate
+                Max Creator Rate
               </span>
               <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {formatINR(initialBrandRate)}
+                {formatINR(maxCreatorRate)}
               </span>
             </div>
             {viewerRole === "creator" && rateMessages.length === 0 && !isLocked && (
@@ -215,7 +255,7 @@ export function RateNegotiationChat({
                 onClick={() =>
                   negotiateMutation.mutate({
                     action: "accept",
-                    amount: initialBrandRate,
+                    amount: activeBrandRate,
                   })
                 }
                 className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold ml-1"
@@ -233,16 +273,18 @@ export function RateNegotiationChat({
           const msgSide: "sponsor" | "creator" =
             offer?.proposedBy || (msg.senderRole === "sponsor" ? "sponsor" : "creator");
           const isMine = msgSide === viewerRole;
-          const isAcceptMsg = offer?.action === "accept" || String(msg.content).includes("Accepted");
-          const isDeclineMsg = offer?.action === "decline" || String(msg.content).includes("Declined");
+          const isAcceptMsg =
+            offer?.action === "accept" || String(msg.content).includes("Accepted");
+          const isDeclineMsg =
+            offer?.action === "decline" || String(msg.content).includes("Declined");
 
-          // Extract numeric amount if not in offer.amount
-          const bubbleAmount =
+          const rawBubbleAmount =
             offer?.amount ||
             (() => {
               const m = String(msg.content || "").match(/₹([\d,]+)/);
               return m ? Number(m[1].replace(/,/g, "")) : activeBrandRate;
             })();
+          const bubbleAmount = Math.min(maxCreatorRate, rawBubbleAmount);
 
           const isLatestMessage = idx === rateMessages.length - 1;
 
@@ -266,14 +308,12 @@ export function RateNegotiationChat({
               )}
             >
               <span className="text-[10px] font-semibold text-muted-foreground mb-1 px-1">
-                {isMine
-                  ? "You"
-                  : msgSide === "sponsor"
-                  ? brandName
-                  : creatorName}{" "}
-                •{" "}
+                {isMine ? "You" : msgSide === "sponsor" ? brandName : creatorName} •{" "}
                 {msg.createdAt
-                  ? new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                  ? new Date(msg.createdAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
                   : "Just now"}
               </span>
 
@@ -291,7 +331,9 @@ export function RateNegotiationChat({
                   <span
                     className={cn(
                       "text-[10px] uppercase font-bold block",
-                      isMine && !isDeclineMsg ? "text-primary-foreground/80" : "text-muted-foreground"
+                      isMine && !isDeclineMsg
+                        ? "text-primary-foreground/80"
+                        : "text-muted-foreground"
                     )}
                   >
                     {isDeclineMsg
@@ -330,12 +372,12 @@ export function RateNegotiationChat({
         <div ref={chatEndRef} />
       </div>
 
-      {/* 3. Bottom Rate-Only Chat Bar ("char baar" — both sides can send ₹ rate or accept) */}
+      {/* 3. Bottom Rate-Only Chat Bar (Capped at <= maxCreatorRate) */}
       <div className="p-3 border-t border-border bg-background space-y-2.5">
-        {/* Quick Rate Chips */}
+        {/* Quick Lower-or-Equal Rate Chips */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
           <span className="text-[10px] font-bold uppercase text-muted-foreground shrink-0 mr-1">
-            Quick ₹:
+            Lower ₹ (Max {formatINR(maxCreatorRate)}):
           </span>
           {quickPresets.map((preset) => (
             <button
@@ -361,21 +403,36 @@ export function RateNegotiationChat({
             <Input
               type="number"
               min={100}
+              max={maxCreatorRate}
               step={50}
               value={rateInput}
-              onChange={(e) => setRateInput(e.target.value.replace(/[^0-9]/g, ""))}
-              placeholder={
-                viewerRole === "creator"
-                  ? "Enter your counter rate in ₹ (e.g. 1500)..."
-                  : "Enter brand rate offer in ₹ (e.g. 1500)..."
-              }
+              onChange={(e) => {
+                const raw = e.target.value.replace(/[^0-9]/g, "");
+                if (!raw) {
+                  setRateInput("");
+                  return;
+                }
+                const num = Number(raw);
+                if (num > maxCreatorRate) {
+                  setRateInput(String(maxCreatorRate));
+                  toast.info(`Maximum allowed rate is ${formatINR(maxCreatorRate)}`);
+                } else {
+                  setRateInput(raw);
+                }
+              }}
+              placeholder={`Enter rate ≤ ${formatINR(maxCreatorRate)} (lower only)...`}
               className="pl-8 h-10 rounded-xl text-xs font-bold bg-muted/30 border-border focus-visible:ring-1"
             />
           </div>
 
           <Button
             type="submit"
-            disabled={!rateInput || Number(rateInput) < 100 || negotiateMutation.isPending}
+            disabled={
+              !rateInput ||
+              Number(rateInput) < 100 ||
+              Number(rateInput) > maxCreatorRate ||
+              negotiateMutation.isPending
+            }
             className="h-10 px-4 rounded-xl text-xs font-bold shrink-0 cursor-pointer"
           >
             <Send className="h-3.5 w-3.5 mr-1.5" />

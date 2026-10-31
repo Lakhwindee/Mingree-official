@@ -303,6 +303,7 @@ export interface WorkspaceParticipant {
     | "rejected"
     | "withdrawn";
   payoutAmount: number;
+  baseRate?: number;
   reservedAt: string;
   expiresAt: string;
   briefAcknowledgedVersion: number;

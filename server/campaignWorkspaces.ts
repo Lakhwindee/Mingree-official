@@ -79,6 +79,7 @@ export interface CampaignParticipant {
     | "rejected"
     | "withdrawn";
   payoutAmount: number;
+  baseRate?: number;
   reservedAt: string;
   expiresAt: string;
   briefAcknowledgedVersion: number;
@@ -553,14 +554,56 @@ export async function ensureWorkspacesLoaded(_force = false): Promise<CampaignWo
   return Array.from(workspacesCache.values());
 }
 
+function normalizeWorkspaceRates(ws: CampaignWorkspaceData): CampaignWorkspaceData {
+  if (!ws) return ws;
+  const count = Math.max(1, Array.isArray(ws.participants) ? ws.participants.length : 1);
+  const derivedBase =
+    ws.totalBudget && ws.totalBudget > 0
+      ? Math.round(ws.totalBudget / 1.075 / count)
+      : ws.payAmount || 1200;
+
+  if (Array.isArray(ws.participants)) {
+    for (const p of ws.participants) {
+      const maxRate = p.baseRate || derivedBase || ws.payAmount || 1200;
+      p.baseRate = maxRate;
+      if (p.payoutAmount > maxRate) {
+        p.payoutAmount = maxRate;
+      }
+      if (p.lastOfferedPrice && p.lastOfferedPrice > maxRate) {
+        p.lastOfferedPrice = p.payoutAmount || maxRate;
+        if (p.negotiationStatus === "creator_countered") {
+          p.negotiationStatus = "initial";
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(ws.messages)) {
+    ws.messages = ws.messages.filter((m) => {
+      if (m.negotiationOffer && m.negotiationOffer.amount) {
+        const part = (ws.participants || []).find(
+          (p) => Number(p.creatorId) === Number(m.negotiationOffer?.creatorId)
+        );
+        const maxRate = part?.baseRate || derivedBase || ws.payAmount || 1200;
+        if (Number(m.negotiationOffer.amount) > maxRate) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  return ws;
+}
+
 export function loadAllWorkspaces(): CampaignWorkspaceData[] {
   if (workspacesCache.size === 0) {
     const loaded = loadWorkspacesFromDisk();
     if (loaded.length > 0) {
-      workspacesCache = new Map(loaded.map((c) => [c.id, c]));
+      workspacesCache = new Map(loaded.map((c) => [c.id, normalizeWorkspaceRates(c)]));
     }
   }
-  return Array.from(workspacesCache.values());
+  return Array.from(workspacesCache.values()).map((c) => normalizeWorkspaceRates(c));
 }
 
 export async function saveAllWorkspaces(list: CampaignWorkspaceData[]): Promise<void> {
@@ -839,9 +882,12 @@ export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: st
         promotionStyle: c.promotionStyle || "Lyrics / Page promotion",
         description: c.description,
         payAmount: participant.payoutAmount || c.payAmount,
-        basePayAmount: c.payAmount || 1200,
+        basePayAmount: participant.baseRate || c.payAmount || 1200,
         negotiationStatus: participant.negotiationStatus || "initial",
-        lastOfferedPrice: participant.lastOfferedPrice || participant.payoutAmount || c.payAmount || 1200,
+        lastOfferedPrice: Math.min(
+          participant.baseRate || c.payAmount || 1200,
+          participant.lastOfferedPrice || participant.payoutAmount || c.payAmount || 1200
+        ),
         lastOfferBy: participant.lastOfferBy || "sponsor",
         status: participant.status,
         reservedAt: participant.reservedAt,
@@ -1783,14 +1829,43 @@ export async function negotiateCampaignPrice(params: {
       throw new Error("Participant not found in this campaign");
     }
 
-    const cleanAmount = Math.max(100, Math.round(Number(params.amount) || participant.payoutAmount || campaign.payAmount || 1200));
+    const maxCreatorRate =
+      participant.baseRate ||
+      (campaign.totalBudget && campaign.totalBudget > 0
+        ? Math.round(campaign.totalBudget / 1.075 / Math.max(1, campaign.participants.length))
+        : campaign.payAmount) ||
+      1200;
+    participant.baseRate = maxCreatorRate;
+
+    const requestedAmount = Math.round(
+      Number(params.amount) || participant.payoutAmount || maxCreatorRate
+    );
+
+    if (
+      (params.action === "offer" || params.action === "counter_offer") &&
+      requestedAmount > maxCreatorRate
+    ) {
+      throw new Error(
+        `Cannot negotiate above creator's rate of ₹${maxCreatorRate.toLocaleString("en-IN")}. Only ₹${maxCreatorRate.toLocaleString("en-IN")} or lower is allowed.`
+      );
+    }
+
+    const cleanAmount = Math.min(maxCreatorRate, Math.max(100, requestedAmount));
     const isSponsorSide = params.user.role === "sponsor" || params.user.role === "admin";
     const proposedBy: "sponsor" | "creator" = isSponsorSide ? "sponsor" : "creator";
 
     let msgContent = "";
 
     if (params.action === "accept") {
-      const agreedAmount = Math.round(Number(params.amount) || participant.lastOfferedPrice || participant.payoutAmount || campaign.payAmount || 1200);
+      const agreedAmount = Math.min(
+        maxCreatorRate,
+        Math.round(
+          Number(params.amount) ||
+            participant.lastOfferedPrice ||
+            participant.payoutAmount ||
+            maxCreatorRate
+        )
+      );
       participant.payoutAmount = agreedAmount;
       participant.lastOfferedPrice = agreedAmount;
       participant.negotiationStatus = "accepted";
@@ -1802,13 +1877,13 @@ export async function negotiateCampaignPrice(params: {
         : `✅ Creator Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}`;
     } else if (params.action === "decline") {
       participant.negotiationStatus = isSponsorSide ? "brand_offered" : "declined";
-      const standingAmount = participant.payoutAmount || campaign.payAmount || 1200;
+      const standingAmount = Math.min(maxCreatorRate, participant.payoutAmount || maxCreatorRate);
       participant.lastOfferedPrice = standingAmount;
       msgContent = isSponsorSide
         ? `❌ Rate Declined — Brand Offer: ₹${standingAmount.toLocaleString("en-IN")}`
         : `❌ Rate Declined by Creator`;
     } else {
-      // offer or counter_offer
+      // offer or counter_offer (always <= maxCreatorRate)
       participant.lastOfferedPrice = cleanAmount;
       participant.lastOfferBy = proposedBy;
       if (isSponsorSide) {
