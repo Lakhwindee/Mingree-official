@@ -167,10 +167,19 @@ export default function Campaigns() {
       return api.applyOrReserveSlot(campaignId);
     },
     onSuccess: (data, variables) => {
+      try {
+        const raw = localStorage.getItem("mingree_reserved_campaigns");
+        const ids: number[] = raw ? JSON.parse(raw) : [];
+        if (!ids.includes(Number(variables.campaignId))) {
+          ids.push(Number(variables.campaignId));
+          localStorage.setItem("mingree_reserved_campaigns", JSON.stringify(ids));
+        }
+      } catch {}
       queryClient.invalidateQueries({ queryKey: ["reservations"] });
       queryClient.invalidateQueries({ queryKey: ["allCampaigns"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       queryClient.invalidateQueries({ queryKey: ["creatorCampaignWorkspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
       setSelectedGroup(null);
       setSelectedTierCampaign(null);
       toast.success(data.message || "Slot confirmed! Opening My Campaigns...");

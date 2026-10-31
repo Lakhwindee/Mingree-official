@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
 import { Badge } from "@/components/ui/badge";
@@ -93,6 +94,61 @@ export default function CreatorRequests() {
     retry: 2,
   });
 
+  const { data: reservations = [] } = useQuery({
+    queryKey: ["reservations", user?.id],
+    queryFn: () => (user ? api.getUserReservations(user.id) : []),
+    enabled: !!user?.id,
+    refetchInterval: 3000,
+  });
+
+  // Filter out any campaigns that the creator has already reserved or submitted work for
+  const isDealReserved = (deal: any) => {
+    if (!deal) return false;
+    const s = String(deal.status || "").toLowerCase().trim();
+    if (
+      s === "reserved" ||
+      s === "content_submitted" ||
+      s === "submitted" ||
+      s === "in_progress" ||
+      s === "revision_requested" ||
+      s === "approved" ||
+      s === "completed"
+    ) {
+      return true;
+    }
+
+    if (deal.submission?.postUrl || deal.submission?.submittedAt) {
+      return true;
+    }
+
+    const hasActiveReservation = reservations.some((r: any) => {
+      if (Number(r.campaignId) !== Number(deal.campaignId)) return false;
+      const rStatus = String(r.status || "").toLowerCase().trim();
+      return (
+        rStatus === "reserved" ||
+        rStatus === "content_submitted" ||
+        rStatus === "submitted" ||
+        rStatus === "in_progress" ||
+        rStatus === "revision_requested" ||
+        rStatus === "approved" ||
+        rStatus === "completed"
+      );
+    });
+    if (hasActiveReservation) return true;
+
+    try {
+      const rawRes = localStorage.getItem("mingree_reserved_campaigns");
+      if (rawRes) {
+        const ids: number[] = JSON.parse(rawRes);
+        if (ids.includes(Number(deal.campaignId))) return true;
+      }
+    } catch {}
+
+    return false;
+  };
+
+  const pendingBrandDeals = workspaces.filter((ws: any) => !isDealReserved(ws));
+
   const selectedDeal =
     workspaces.find((w: any) => Number(w.campaignId) === Number(selectedCampaignId)) || null;
   const negotiatingDeal =
@@ -101,12 +157,20 @@ export default function CreatorRequests() {
   const acceptInvitationMutation = useMutation({
     mutationFn: (campaignId: number) => api.acceptCampaignInvitation(campaignId),
     onSuccess: (data, campaignId) => {
+      try {
+        const raw = localStorage.getItem("mingree_reserved_campaigns");
+        const ids: number[] = raw ? JSON.parse(raw) : [];
+        if (!ids.includes(Number(campaignId))) {
+          ids.push(Number(campaignId));
+          localStorage.setItem("mingree_reserved_campaigns", JSON.stringify(ids));
+        }
+      } catch {}
       queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
       queryClient.invalidateQueries({ queryKey: ["reservations"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
-      toast.success(data.message || "Ad slot reserved! You can now download files and submit your Reel.");
-      setSelectedCampaignId(campaignId);
+      toast.success(data.message || "Ad slot reserved! You can now access and manage it in My Workspaces.");
+      setSelectedCampaignId(null);
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to reserve ad slot");
@@ -117,11 +181,20 @@ export default function CreatorRequests() {
     mutationFn: (params: { campaignId: number; postUrl: string }) =>
       api.submitCreatorReel(params.campaignId, { postUrl: params.postUrl, audioConfirmed: true }),
     onSuccess: (_data, variables) => {
+      try {
+        const raw = localStorage.getItem("mingree_reserved_campaigns");
+        const ids: number[] = raw ? JSON.parse(raw) : [];
+        if (!ids.includes(Number(variables.campaignId))) {
+          ids.push(Number(variables.campaignId));
+          localStorage.setItem("mingree_reserved_campaigns", JSON.stringify(ids));
+        }
+      } catch {}
       queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
       queryClient.invalidateQueries({ queryKey: ["reservations"] });
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", variables.campaignId] });
       toast.success("Instagram Reel link submitted for payout!");
       setLiveReelUrl("");
+      setSelectedCampaignId(null);
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to submit Reel URL");
@@ -226,7 +299,7 @@ export default function CreatorRequests() {
                 onClick={() => setMainTab("deals")}
                 className="text-xs rounded-xl font-semibold h-9 px-4 cursor-pointer"
               >
-                Brand Deals ({workspaces.length})
+                Brand Deals ({pendingBrandDeals.length})
               </Button>
               <Button
                 variant={mainTab === "rate-card" ? "default" : "outline"}
@@ -237,6 +310,11 @@ export default function CreatorRequests() {
                 My Rate Card
               </Button>
             </div>
+            <Link href="/my-campaigns">
+              <span className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 cursor-pointer">
+                My Workspaces <ExternalLink className="h-3 w-3" />
+              </span>
+            </Link>
           </div>
 
           {/* ================= TAB 1: SIMPLE BRAND DEALS LIST ================= */}
@@ -246,24 +324,35 @@ export default function CreatorRequests() {
                 <div className="flex items-center justify-center py-20">
                   <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                 </div>
-              ) : workspaces.length === 0 ? (
+              ) : pendingBrandDeals.length === 0 ? (
                 <Card className="border-dashed border bg-card/40">
                   <CardContent className="flex flex-col items-center justify-center py-14 text-center px-4">
-                    <h3 className="text-base font-semibold text-foreground">No Brand Deals Yet</h3>
+                    <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mb-3">
+                      <CheckCircle2 className="h-6 w-6" />
+                    </div>
+                    <h3 className="text-base font-semibold text-foreground">No Pending Brand Deals</h3>
                     <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
-                      When a brand selects you for a campaign, it will appear here.
+                      All campaigns you have reserved or submitted are in your active workspaces.
                     </p>
-                    <Button
-                      onClick={() => setMainTab("rate-card")}
-                      className="font-semibold text-xs rounded-xl h-9 px-4"
-                    >
-                      Set My Rate Card
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Link href="/my-campaigns">
+                        <Button className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer">
+                          Go to My Workspaces
+                        </Button>
+                      </Link>
+                      <Button
+                        variant="outline"
+                        onClick={() => setMainTab("rate-card")}
+                        className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer"
+                      >
+                        Set My Rate Card
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {workspaces.map((ws: any) => {
+                  {pendingBrandDeals.map((ws: any) => {
                     const isInvited =
                       ws.status === "invited" || ws.status === "applied" || ws.status === "pending";
                     const isCompleted = ws.status === "approved" || ws.status === "completed";
