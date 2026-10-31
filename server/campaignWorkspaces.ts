@@ -87,6 +87,9 @@ export interface CampaignParticipant {
   draftSubmission?: DraftSubmission | null;
   draftStatus?: "none" | "submitted" | "approved" | "revision_requested";
   draftFeedbackNotes?: string;
+  negotiationStatus?: "initial" | "brand_offered" | "creator_countered" | "accepted" | "declined";
+  lastOfferedPrice?: number;
+  lastOfferBy?: "sponsor" | "creator";
 }
 
 export interface CampaignMessage {
@@ -102,6 +105,13 @@ export interface CampaignMessage {
   isAnnouncement?: boolean;
   isBriefChange?: boolean;
   briefVersion?: number;
+  negotiationOffer?: {
+    action: "offer" | "counter_offer" | "accept" | "decline";
+    amount: number;
+    proposedBy: "sponsor" | "creator";
+    participantId: number;
+    creatorId: number;
+  };
   createdAt: string;
   readBy: number[];
 }
@@ -812,28 +822,46 @@ export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: st
       const latestBriefVersion = c.briefVersions && c.briefVersions.length > 0 ? c.briefVersions[c.briefVersions.length - 1].version : 1;
       const needsBriefAcknowledgement = (participant.briefAcknowledgedVersion || 1) < latestBriefVersion;
 
+      const creatorMsgs = (c.messages || []).filter(
+        (m) => m.recipientId === null || Number(m.recipientId) === Number(participant!.creatorId) || Number(m.senderId) === Number(participant!.creatorId)
+      );
+
       results.push({
         campaignId: c.id,
         participantId: participant.id,
+        creatorId: participant.creatorId,
         title: c.title,
         brand: c.brand,
         brandLogo: c.brandLogo,
         genre: c.genre,
+        language: c.language || "Hindi & English",
+        contentTypes: c.contentTypes || ["Reel"],
+        promotionStyle: c.promotionStyle || "Lyrics / Page promotion",
         description: c.description,
         payAmount: participant.payoutAmount || c.payAmount,
+        basePayAmount: c.payAmount || 1200,
+        negotiationStatus: participant.negotiationStatus || "initial",
+        lastOfferedPrice: participant.lastOfferedPrice || participant.payoutAmount || c.payAmount || 1200,
+        lastOfferBy: participant.lastOfferBy || "sponsor",
         status: participant.status,
         reservedAt: participant.reservedAt,
         expiresAt: participant.expiresAt,
         deadline: c.deadline,
-        audioUrl: c.audioUrl,
+        audioUrl: c.audioUrl || "",
+        referenceVideoUrl: c.referenceVideoUrl || "",
+        productAssets: c.productAssets || [],
+        assetUrl: (c.productAssets && c.productAssets[0]?.url) || (c as any).assetUrl || c.audioUrl || "",
+        assetFileName: (c.productAssets && c.productAssets[0]?.name) || (c as any).assetFileName || `${(c.brand || "Campaign").replace(/\s+/g, "_")}_Asset`,
         requiredCaptionNote: c.requiredCaptionNote,
         requiredTags: c.requiredTags || [],
         requiredMentions: c.requiredMentions || [],
-        disclosureInstructions: c.disclosureInstructions,
+        disclosureInstructions: c.disclosureInstructions || "Include #ad #collab in caption",
+        minDurationSecs: c.minDurationSecs || 15,
         needsBriefAcknowledgement,
         latestBriefVersion,
         submission: participant.submission,
         revisions: participant.revisions || [],
+        messages: creatorMsgs,
         unreadMessagesCount: (c.messages || []).filter(
           (m) => (m.recipientId === null || m.recipientId === creatorId) && !m.readBy.includes(creatorId)
         ).length,
@@ -1718,3 +1746,113 @@ export function getWorkspaceMessages(params: {
 
   return msgs;
 }
+
+// Structured Price Negotiator (Sponsor <-> Creator price proposals without free-text chat)
+export async function negotiateCampaignPrice(params: {
+  campaignId: number;
+  user: {
+    id: number;
+    name: string;
+    role: "sponsor" | "creator" | "admin";
+    avatar?: string;
+    handle?: string;
+  };
+  creatorId?: number;
+  action: "offer" | "counter_offer" | "accept" | "decline";
+  amount: number;
+}): Promise<{
+  success: boolean;
+  participant: CampaignParticipant;
+  message: CampaignMessage;
+}> {
+  return acquireLock(params.campaignId, async () => {
+    await ensureWorkspacesLoaded(true);
+    const campaign = getWorkspaceById(params.campaignId);
+    if (!campaign) {
+      throw new Error("Campaign workspace not found");
+    }
+
+    const targetCreatorId = params.user.role === "creator" ? Number(params.user.id) : Number(params.creatorId || 0);
+    let participant = campaign.participants.find(
+      (p) => Number(p.creatorId) === targetCreatorId || Number(p.id) === targetCreatorId
+    );
+    if (!participant && campaign.participants.length > 0) {
+      participant = campaign.participants[0];
+    }
+    if (!participant) {
+      throw new Error("Participant not found in this campaign");
+    }
+
+    const cleanAmount = Math.max(100, Math.round(Number(params.amount) || participant.payoutAmount || campaign.payAmount || 1200));
+    const isSponsorSide = params.user.role === "sponsor" || params.user.role === "admin";
+    const proposedBy: "sponsor" | "creator" = isSponsorSide ? "sponsor" : "creator";
+
+    let msgContent = "";
+
+    if (params.action === "accept") {
+      const agreedAmount = Math.round(Number(params.amount) || participant.lastOfferedPrice || participant.payoutAmount || campaign.payAmount || 1200);
+      participant.payoutAmount = agreedAmount;
+      participant.lastOfferedPrice = agreedAmount;
+      participant.negotiationStatus = "accepted";
+      msgContent = isSponsorSide
+        ? `✅ Brand Accepted Creator Price: ₹${agreedAmount.toLocaleString("en-IN")}`
+        : `✅ Creator Accepted Brand Offer: ₹${agreedAmount.toLocaleString("en-IN")}`;
+    } else if (params.action === "decline") {
+      participant.negotiationStatus = isSponsorSide ? "brand_offered" : "declined";
+      const standingAmount = participant.payoutAmount || campaign.payAmount || 1200;
+      participant.lastOfferedPrice = standingAmount;
+      msgContent = isSponsorSide
+        ? `❌ Counter-Offer Declined — Brand Standing Offer: ₹${standingAmount.toLocaleString("en-IN")}`
+        : `❌ Offer Declined by Creator`;
+    } else {
+      // offer or counter_offer
+      participant.lastOfferedPrice = cleanAmount;
+      participant.lastOfferBy = proposedBy;
+      if (isSponsorSide) {
+        participant.payoutAmount = cleanAmount;
+        participant.negotiationStatus = "brand_offered";
+        msgContent = `💰 Brand Price Offer: ₹${cleanAmount.toLocaleString("en-IN")}`;
+      } else {
+        participant.negotiationStatus = "creator_countered";
+        msgContent = `💬 Creator Counter-Offer: ₹${cleanAmount.toLocaleString("en-IN")}`;
+      }
+    }
+
+    // Recalculate committed payouts
+    campaign.committedPayouts = campaign.participants.reduce(
+      (sum, p) => sum + (p.payoutAmount || campaign.payAmount || 1200),
+      0
+    );
+
+    const newMsg: CampaignMessage = {
+      id: Date.now(),
+      campaignId: campaign.id,
+      senderId: params.user.id,
+      senderName: isSponsorSide ? (campaign.brand || params.user.name) : (participant.creatorName || params.user.name),
+      senderRole: params.user.role,
+      senderAvatar: isSponsorSide ? (campaign.brandLogo || params.user.avatar || "") : (participant.creatorAvatar || params.user.avatar || ""),
+      recipientId: isSponsorSide ? participant.creatorId : campaign.sponsorId,
+      content: msgContent,
+      negotiationOffer: {
+        action: params.action,
+        amount: participant.lastOfferedPrice || cleanAmount,
+        proposedBy,
+        participantId: participant.id,
+        creatorId: participant.creatorId,
+      },
+      createdAt: new Date().toISOString(),
+      readBy: [params.user.id],
+    };
+
+    campaign.messages.push(newMsg);
+    campaign.updatedAt = new Date().toISOString();
+    await saveSingleWorkspace(campaign);
+
+    return {
+      success: true,
+      participant,
+      message: newMsg,
+    };
+  });
+}
+

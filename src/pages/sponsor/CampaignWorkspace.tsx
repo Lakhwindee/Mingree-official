@@ -21,11 +21,10 @@ import {
   ExternalLink,
   FileText,
   FolderOpen,
-  Megaphone,
-  MessageSquare,
+  IndianRupee,
   Music2,
   RotateCcw,
-  Send,
+  Sparkles,
   Users,
   Video,
 } from "lucide-react";
@@ -40,10 +39,9 @@ export default function CampaignWorkspace() {
   // Active section tab
   const [activeTab, setActiveTab] = useState<string>("overview");
 
-  // Chat thread: "group" or creatorId as string for 1:1
+  // Price Negotiator selected creator ID (as string)
   const [chatThread, setChatThread] = useState<string>("group");
-  const [chatMessage, setChatMessage] = useState<string>("");
-  const [isAnnouncement, setIsAnnouncement] = useState<boolean>(false);
+  const [offerAmountInput, setOfferAmountInput] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Modals state
@@ -149,17 +147,23 @@ export default function CampaignWorkspace() {
     },
   });
 
-  // Send message mutation
-  const sendMessageMutation = useMutation({
-    mutationFn: (data: { content: string; recipientId?: number | null; isAnnouncement?: boolean }) =>
-      api.postWorkspaceMessage(campaignId, data),
-    onSuccess: () => {
+  // Structured Price Negotiator mutation (no free-text chat)
+  const negotiatePriceMutation = useMutation({
+    mutationFn: (data: { creatorId: number; action: "offer" | "counter_offer" | "accept" | "decline"; amount: number }) =>
+      api.negotiateCampaignPrice(campaignId, data),
+    onSuccess: (_res, vars) => {
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
-      setChatMessage("");
-      setIsAnnouncement(false);
+      setOfferAmountInput("");
+      if (vars.action === "accept") {
+        toast.success(`Accepted creator price of ${formatINR(vars.amount)}!`);
+      } else if (vars.action === "decline") {
+        toast.success("Counter-offer declined. Standing offer maintained.");
+      } else {
+        toast.success(`Price offer of ${formatINR(vars.amount)} sent to creator!`);
+      }
     },
     onError: (err: any) => {
-      toast.error(err.message || "Failed to send message");
+      toast.error(err.message || "Failed to send price offer");
     },
   });
 
@@ -207,17 +211,12 @@ export default function CampaignWorkspace() {
     },
   });
 
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim()) return;
-
-    const recipientId = chatThread === "group" ? null : Number(chatThread);
-    sendMessageMutation.mutate({
-      content: chatMessage.trim(),
-      recipientId,
-      isAnnouncement: chatThread === "group" && isAnnouncement,
-    });
-  };
+  // Default negotiator selection to first creator participant when loaded
+  useEffect(() => {
+    if (workspace?.participants?.length && (chatThread === "group" || !chatThread)) {
+      setChatThread(String(workspace.participants[0].creatorId));
+    }
+  }, [workspace?.participants, chatThread]);
 
   const handleSaveBrief = () => {
     if (!briefFormData.changesSummary.trim()) {
@@ -579,6 +578,14 @@ export default function CampaignWorkspace() {
                             <span>
                               Payout: <strong className="text-emerald-600 dark:text-emerald-400">{formatINR(p.payoutAmount)}</strong>
                             </span>
+                            {p.negotiationStatus === "creator_countered" && (
+                              <>
+                                <span>•</span>
+                                <span className="text-amber-600 dark:text-amber-400 font-bold">
+                                  Creator Counter-Offer: {formatINR(p.lastOfferedPrice)}
+                                </span>
+                              </>
+                            )}
                             {p.status !== "pending" && p.reservedAt && (
                               <>
                                 <span>•</span>
@@ -602,8 +609,8 @@ export default function CampaignWorkspace() {
                             }}
                             className="h-8 px-3 text-xs font-semibold rounded-lg"
                           >
-                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-                            Chat
+                            <IndianRupee className="mr-1 h-3.5 w-3.5 text-primary" />
+                            Negotiate Price
                           </Button>
 
                           {p.status === "content_submitted" && (
@@ -647,7 +654,7 @@ export default function CampaignWorkspace() {
                 )}
               </TabsTrigger>
               <TabsTrigger value="chat" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
-                3. Shared Campaign Chat
+                3. Price Negotiator (₹)
               </TabsTrigger>
               <TabsTrigger value="submissions" className="text-xs py-2 px-3.5 gap-1.5 rounded-lg shrink-0 font-semibold">
                 4. Reels & Reviews
@@ -910,7 +917,7 @@ export default function CampaignWorkspace() {
                             }}
                             className="text-xs rounded-lg"
                           >
-                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" /> Message Creator
+                            <IndianRupee className="mr-1 h-3.5 w-3.5 text-primary" /> Negotiate Price
                           </Button>
                         </div>
                       </div>
@@ -1022,7 +1029,7 @@ export default function CampaignWorkspace() {
                             }}
                             className="text-xs"
                           >
-                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" /> Message
+                            <IndianRupee className="mr-1 h-3.5 w-3.5 text-primary" /> Negotiate Price
                           </Button>
                           {p.status === "content_submitted" && (
                             <Button
@@ -1049,181 +1056,304 @@ export default function CampaignWorkspace() {
               </Card>
             </TabsContent>
 
-            {/* TAB 3: SHARED CAMPAIGN CHAT */}
+            {/* TAB 3: STRUCTURED PRICE NEGOTIATOR (NO FREE-TEXT CHAT) */}
             <TabsContent value="chat" className="space-y-4 mt-5">
               <Card className="bg-card border-border overflow-hidden shadow-2xs">
                 <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-border">
-                  {/* Channels / Direct Threads Sidebar */}
-                  <div className="p-4 space-y-4 bg-muted/20">
+                  {/* Left Sidebar: Campaign Creators List for Negotiation */}
+                  <div className="p-4 space-y-3 bg-muted/20">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Communication Channels</span>
-                      <div className="mt-2 space-y-1">
-                        <button
-                          onClick={() => setChatThread("group")}
-                          className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs font-semibold transition-all ${
-                            chatThread === "group"
-                              ? "bg-primary text-primary-foreground shadow-xs"
-                              : "text-foreground hover:bg-muted"
-                          }`}
-                        >
-                          <span className="flex items-center gap-2">
-                            <Megaphone className="h-4 w-4" />
-                            Campaign Group Chat
-                          </span>
-                          <Badge variant="secondary" className="text-[10px]">
-                            {workspace.messages.filter((m) => m.recipientId === null).length}
-                          </Badge>
-                        </button>
-                      </div>
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
+                        Select Creator to Negotiate
+                      </span>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Propose custom deal prices in ₹. Free-text chat is disabled.
+                      </p>
                     </div>
 
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Direct Creator Threads</span>
-                      <div className="mt-2 space-y-1 max-h-72 overflow-y-auto">
-                        {allParticipants.map((p) => {
-                          const threadMsgCount = workspace.messages.filter(
-                            (m) =>
-                              (m.senderId === p.creatorId && m.recipientId === workspace.sponsorId) ||
-                              (m.senderId === workspace.sponsorId && m.recipientId === p.creatorId)
-                          ).length;
-
+                    <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
+                      {allParticipants.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-muted-foreground">
+                          No creators in this campaign yet.
+                        </div>
+                      ) : (
+                        allParticipants.map((p) => {
+                          const isSelected = String(chatThread) === String(p.creatorId);
                           return (
                             <button
                               key={p.creatorId}
+                              type="button"
                               onClick={() => setChatThread(String(p.creatorId))}
-                              className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-all ${
-                                chatThread === String(p.creatorId)
-                                  ? "bg-primary/10 text-primary font-bold"
-                                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                              className={`w-full flex items-center justify-between p-2.5 rounded-xl text-xs transition-all border ${
+                                isSelected
+                                  ? "bg-primary/10 text-primary border-primary/30 font-bold shadow-2xs"
+                                  : "bg-background/60 text-foreground border-border/60 hover:bg-muted"
                               }`}
                             >
-                              <div className="flex items-center gap-2 truncate">
-                                <img src={p.creatorAvatar} alt="" className="h-6 w-6 rounded-full object-cover shrink-0" />
-                                <span className="truncate">{p.creatorName}</span>
+                              <div className="flex items-center gap-2.5 min-w-0 text-left">
+                                <img
+                                  src={p.creatorAvatar}
+                                  alt={p.creatorName}
+                                  className="h-8 w-8 rounded-full object-cover shrink-0 border border-border"
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold text-foreground">{p.creatorName}</p>
+                                  <span className="text-[10px] text-muted-foreground font-mono block truncate">
+                                    {p.creatorHandle}
+                                  </span>
+                                </div>
                               </div>
-                              {threadMsgCount > 0 && (
-                                <span className="text-[10px] text-muted-foreground font-mono">{threadMsgCount}</span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Chat Messages Area */}
-                  <div className="md:col-span-3 flex flex-col h-[520px] bg-background">
-                    <div className="p-3.5 border-b border-border bg-muted/20 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {chatThread === "group" ? (
-                          <div>
-                            <h4 className="text-xs font-bold text-foreground">Campaign-Wide Group Broadcast</h4>
-                            <p className="text-[10px] text-muted-foreground">
-                              Messages sent here are received by all {allParticipants.length} campaign creators.
-                            </p>
-                          </div>
-                        ) : (
-                          <div>
-                            <h4 className="text-xs font-bold text-foreground">
-                              Direct 1:1 Thread with {workspace.participants.find((p) => p.creatorId === Number(chatThread))?.creatorName || "Creator"}
-                            </h4>
-                            <p className="text-[10px] text-muted-foreground">Private instructions and revision exchange.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex-1 p-4 overflow-y-auto space-y-3.5">
-                      {filteredMessages.length === 0 ? (
-                        <div className="text-center py-20 text-muted-foreground text-xs">
-                          No messages in this channel yet. Say hello or post an official announcement!
-                        </div>
-                      ) : (
-                        filteredMessages.map((msg) => {
-                          const isMe = msg.senderId === user?.id;
-                          const isSys = msg.senderRole === "system";
-
-                          if (isSys) {
-                            return (
-                              <div key={msg.id} className="text-center my-2">
-                                <span className="px-3 py-1 rounded-full bg-muted border border-border text-[11px] text-muted-foreground inline-block">
-                                  {msg.content}
+                              <div className="text-right shrink-0 ml-2">
+                                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 block">
+                                  {formatINR(p.payoutAmount)}
                                 </span>
+                                {p.negotiationStatus === "creator_countered" && (
+                                  <span className="text-[9px] text-amber-600 font-bold block">
+                                    Ask: {formatINR(p.lastOfferedPrice)}
+                                  </span>
+                                )}
                               </div>
-                            );
-                          }
-
-                          return (
-                            <div
-                              key={msg.id}
-                              className={`flex gap-3 max-w-xl ${isMe ? "ml-auto flex-row-reverse" : "mr-auto"}`}
-                            >
-                              <img
-                                src={msg.senderAvatar}
-                                alt={msg.senderName}
-                                className="h-8 w-8 rounded-full object-cover shrink-0 border border-border"
-                              />
-                              <div className={`space-y-1 ${isMe ? "text-right" : "text-left"}`}>
-                                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                                  <span className="font-semibold text-foreground">{msg.senderName}</span>
-                                  <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                                </div>
-
-                                <div
-                                  className={`p-3 rounded-2xl text-xs leading-relaxed whitespace-pre-wrap ${
-                                    msg.isAnnouncement
-                                      ? "bg-primary/10 border border-primary/30 text-foreground"
-                                      : isMe
-                                      ? "bg-primary text-primary-foreground rounded-tr-none"
-                                      : "bg-muted text-foreground rounded-tl-none border border-border"
-                                  }`}
-                                >
-                                  {msg.content}
-                                </div>
-                              </div>
-                            </div>
+                            </button>
                           );
                         })
                       )}
-                      <div ref={messagesEndRef} />
                     </div>
+                  </div>
 
-                    <form onSubmit={handleSendMessage} className="p-3 border-t border-border bg-card space-y-2">
-                      {chatThread === "group" && (
-                        <div className="flex items-center gap-2 px-1">
-                          <label className="flex items-center gap-1.5 text-xs text-primary cursor-pointer font-medium">
-                            <input
-                              type="checkbox"
-                              checked={isAnnouncement}
-                              onChange={(e) => setIsAnnouncement(e.target.checked)}
-                              className="rounded border-border"
-                            />
-                            Mark as Official Announcement
-                          </label>
-                        </div>
-                      )}
+                  {/* Right Panel: Structured Price Negotiator Controls & Offer History */}
+                  <div className="md:col-span-3 flex flex-col bg-background p-5 space-y-5">
+                    {(() => {
+                      const activeCreator =
+                        allParticipants.find((p) => Number(p.creatorId) === Number(chatThread)) ||
+                        allParticipants[0] ||
+                        null;
 
-                      <div className="flex items-center gap-2">
-                        <Input
-                          value={chatMessage}
-                          onChange={(e) => setChatMessage(e.target.value)}
-                          placeholder={
-                            chatThread === "group"
-                              ? "Broadcast an announcement or instruction to all creators..."
-                              : "Send private instruction or feedback..."
-                          }
-                          className="text-xs h-10 rounded-xl"
-                        />
-                        <Button
-                          type="submit"
-                          disabled={!chatMessage.trim() || sendMessageMutation.isPending}
-                          className="h-10 px-4 rounded-xl text-xs font-semibold"
-                        >
-                          <Send className="h-3.5 w-3.5 mr-1.5" />
-                          Send
-                        </Button>
-                      </div>
-                    </form>
+                      if (!activeCreator) {
+                        return (
+                          <div className="py-20 text-center text-xs text-muted-foreground">
+                            Select a creator from the left panel to propose or negotiate deal pricing.
+                          </div>
+                        );
+                      }
+
+                      const creatorOfferHistory = workspace.messages.filter(
+                        (m) =>
+                          ((m.senderId === activeCreator.creatorId && m.recipientId === workspace.sponsorId) ||
+                            (m.senderId === workspace.sponsorId && m.recipientId === activeCreator.creatorId)) &&
+                          (m.negotiationOffer || m.content.includes("₹"))
+                      );
+
+                      return (
+                        <>
+                          {/* Selected Creator Negotiation Header */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border">
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={activeCreator.creatorAvatar}
+                                alt={activeCreator.creatorName}
+                                className="h-12 w-12 rounded-full object-cover border border-border"
+                              />
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h4 className="text-sm font-bold text-foreground">{activeCreator.creatorName}</h4>
+                                  <span className="text-xs font-mono text-primary">{activeCreator.creatorHandle}</span>
+                                  {renderCreatorStatusBadge(activeCreator.status)}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  Followers: <strong>{activeCreator.creatorFollowers.toLocaleString()}</strong> • Median Views:{" "}
+                                  <strong>{activeCreator.creatorMedianViews.toLocaleString()}</strong>
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              <div className="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-right">
+                                <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 block">
+                                  Current Brand Offer
+                                </span>
+                                <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                                  {formatINR(activeCreator.payoutAmount)}
+                                </span>
+                              </div>
+                              {activeCreator.negotiationStatus === "creator_countered" && (
+                                <div className="px-4 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-right">
+                                  <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block">
+                                    Creator Counter-Offer
+                                  </span>
+                                  <span className="text-base font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">
+                                    {formatINR(activeCreator.lastOfferedPrice)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* If Creator Sent a Counter-Offer: Accept or Decline Banner */}
+                          {activeCreator.negotiationStatus === "creator_countered" && (
+                            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div>
+                                <h5 className="text-xs font-bold text-foreground">
+                                  {activeCreator.creatorName} proposed a Counter-Offer of{" "}
+                                  <span className="text-amber-600 dark:text-amber-400">
+                                    {formatINR(activeCreator.lastOfferedPrice)}
+                                  </span>
+                                </h5>
+                                <p className="text-[11px] text-muted-foreground mt-0.5">
+                                  You can accept the creator's counter-offer, decline it, or send a new price offer below.
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={negotiatePriceMutation.isPending}
+                                  onClick={() =>
+                                    negotiatePriceMutation.mutate({
+                                      creatorId: activeCreator.creatorId,
+                                      action: "decline",
+                                      amount: activeCreator.payoutAmount,
+                                    })
+                                  }
+                                  className="text-xs font-semibold rounded-xl"
+                                >
+                                  Decline
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  disabled={negotiatePriceMutation.isPending}
+                                  onClick={() =>
+                                    negotiatePriceMutation.mutate({
+                                      creatorId: activeCreator.creatorId,
+                                      action: "accept",
+                                      amount: activeCreator.lastOfferedPrice || activeCreator.payoutAmount,
+                                    })
+                                  }
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl"
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                                  Accept {formatINR(activeCreator.lastOfferedPrice)}
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Brand Price Offer Box (Strictly Price Input — No Free-Text Typing) */}
+                          <div className="p-4 rounded-xl bg-muted/25 border border-border space-y-3.5">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                                  <IndianRupee className="h-3.5 w-3.5 text-primary" />
+                                  Propose Brand Price Offer (₹)
+                                </Label>
+                                <p className="text-[11px] text-muted-foreground mt-0.5">
+                                  Select a preset rate or enter your custom price offer in INR for {activeCreator.creatorName}.
+                                </p>
+                              </div>
+                              <Badge variant="outline" className="text-[10px]">
+                                Price-Only Negotiator
+                              </Badge>
+                            </div>
+
+                            {/* Quick Preset Price Buttons */}
+                            <div className="flex flex-wrap gap-2">
+                              {[1000, 1200, 1500, 2000, 2500, 3500, 5000, 10000].map((preset) => (
+                                <button
+                                  key={preset}
+                                  type="button"
+                                  onClick={() => setOfferAmountInput(String(preset))}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                                    Number(offerAmountInput) === preset
+                                      ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                                      : "bg-background hover:bg-muted border-border text-foreground"
+                                  }`}
+                                >
+                                  ₹{preset.toLocaleString("en-IN")}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
+                              <div className="relative flex-1">
+                                <span className="absolute left-3.5 top-2.5 text-sm font-bold text-muted-foreground">
+                                  ₹
+                                </span>
+                                <Input
+                                  type="number"
+                                  min={100}
+                                  step={50}
+                                  value={offerAmountInput}
+                                  onChange={(e) => setOfferAmountInput(e.target.value.replace(/[^0-9]/g, ""))}
+                                  placeholder="Enter your price offer in ₹ (e.g. 1500)"
+                                  className="pl-8 h-10 rounded-xl text-xs font-bold bg-background"
+                                />
+                              </div>
+                              <Button
+                                type="button"
+                                disabled={
+                                  !offerAmountInput ||
+                                  Number(offerAmountInput) <= 0 ||
+                                  negotiatePriceMutation.isPending
+                                }
+                                onClick={() =>
+                                  negotiatePriceMutation.mutate({
+                                    creatorId: activeCreator.creatorId,
+                                    action: "offer",
+                                    amount: Number(offerAmountInput),
+                                  })
+                                }
+                                className="h-10 px-6 rounded-xl text-xs font-bold shrink-0"
+                              >
+                                <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                                {negotiatePriceMutation.isPending ? "Sending Offer..." : "Send Price Offer"}
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Structured Negotiation Offer History */}
+                          <div className="space-y-2.5">
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
+                              Negotiation Timeline with {activeCreator.creatorName}
+                            </span>
+
+                            {creatorOfferHistory.length === 0 ? (
+                              <div className="p-6 rounded-xl bg-muted/15 border border-border text-center text-xs text-muted-foreground">
+                                Initial campaign offer for {activeCreator.creatorName} is{" "}
+                                <strong className="text-foreground">{formatINR(activeCreator.payoutAmount)}</strong>.
+                                Any new price offers or counter-offers will appear here.
+                              </div>
+                            ) : (
+                              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                {creatorOfferHistory.map((msg) => (
+                                  <div
+                                    key={msg.id}
+                                    className="p-3 rounded-xl bg-muted/20 border border-border flex items-center justify-between gap-3 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2.5">
+                                      <Badge
+                                        variant={msg.senderRole === "sponsor" ? "default" : "secondary"}
+                                        className="text-[10px] uppercase"
+                                      >
+                                        {msg.senderRole === "sponsor" ? "Your Brand Offer" : "Creator Response"}
+                                      </Badge>
+                                      <span className="font-semibold text-foreground">{msg.content}</span>
+                                    </div>
+                                    <span className="text-[10px] text-muted-foreground shrink-0">
+                                      {new Date(msg.createdAt).toLocaleString([], {
+                                        month: "short",
+                                        day: "2-digit",
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                      })}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
+                    <div ref={messagesEndRef} />
                   </div>
                 </div>
               </Card>

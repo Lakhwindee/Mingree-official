@@ -150,6 +150,7 @@ import {
   handleParticipantApplication,
   postWorkspaceMessage,
   getWorkspaceMessages,
+  negotiateCampaignPrice,
   canUserAccessWorkspace,
   type CampaignWorkspaceData,
   type CampaignParticipant,
@@ -2391,6 +2392,9 @@ app.get("/api/campaigns/:id/workspace", requireAuth, async (req: AuthRequest, re
       revisions: p.revisions || [],
       draftSubmission: p.draftSubmission || null,
       draftStatus: p.draftStatus || "none",
+      negotiationStatus: p.negotiationStatus || "initial",
+      lastOfferedPrice: p.lastOfferedPrice || p.payoutAmount || p.offeredPrice || workspace.payAmount || 1200,
+      lastOfferBy: p.lastOfferBy || "sponsor",
     };
   }));
 
@@ -2433,6 +2437,9 @@ app.get("/api/campaigns/:id/workspace", requireAuth, async (req: AuthRequest, re
       revisions: p.creatorId === userId ? p.revisions : [],
       draftSubmission: p.creatorId === userId ? p.draftSubmission : null,
       draftStatus: p.creatorId === userId ? p.draftStatus : ("none" as const),
+      negotiationStatus: p.negotiationStatus || "initial",
+      lastOfferedPrice: p.lastOfferedPrice || p.payoutAmount,
+      lastOfferBy: p.lastOfferBy || "sponsor",
     }));
   }
 
@@ -2799,6 +2806,35 @@ app.post("/api/campaigns/:id/messages", requireAuth, async (req: AuthRequest, re
     res.json(message);
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Failed to post message" });
+  }
+});
+
+// POST /api/campaigns/:id/negotiate - Structured Price Negotiator (Sponsor <-> Creator)
+app.post("/api/campaigns/:id/negotiate", requireAuth, async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const { creatorId, action, amount } = req.body;
+
+  if (!action || !["offer", "counter_offer", "accept", "decline"].includes(action)) {
+    return res.status(400).json({ error: "Valid negotiation action ('offer', 'counter_offer', 'accept', 'decline') is required" });
+  }
+
+  try {
+    const result = await negotiateCampaignPrice({
+      campaignId,
+      user: {
+        id: req.user!.id,
+        name: req.user!.companyName || req.user!.name,
+        role: req.user!.role,
+        avatar: req.user!.avatar,
+        handle: req.user!.instagramUsername || req.user!.handle,
+      },
+      creatorId: creatorId ? Number(creatorId) : req.user!.id,
+      action,
+      amount: Number(amount) || 0,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to process price negotiation" });
   }
 });
 
@@ -6784,7 +6820,13 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
       promotionStyle: details?.promotionStyle || "Hook Step",
       audioUrl: details?.songUrl || details?.audioUrl || "",
       referenceVideoUrl: details?.referenceVideoUrl || "",
-      productAssets: [],
+      productAssets: Array.isArray(details?.productAssets) && details.productAssets.length > 0
+        ? details.productAssets
+        : details?.assetUrl
+        ? [{ name: details.assetFileName || "Campaign_Media_Asset", url: details.assetUrl, type: "file" }]
+        : (details?.songUrl || details?.audioUrl)
+        ? [{ name: `${(details?.title || "Campaign").replace(/\s+/g, "_")}_Audio_Asset`, url: details.songUrl || details.audioUrl, type: "audio" }]
+        : [],
       payAmount: billData.subtotal / (creatorIds.length || 1),
       totalBudget: totalPayable,
       escrowHeld: totalPayable,

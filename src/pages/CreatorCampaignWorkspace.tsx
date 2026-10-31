@@ -104,6 +104,7 @@ export default function CreatorCampaignWorkspace() {
 
   // Direct Published Reel Submission Form State
   const [liveReelUrl, setLiveReelUrl] = useState("");
+  const [counterOfferAmount, setCounterOfferAmount] = useState<string>("");
 
   const {
     data: workspace,
@@ -131,6 +132,9 @@ export default function CreatorCampaignWorkspace() {
     creatorMedianViews: (user?.isInstagramVerified && user?.medianViews) ? user.medianViews : 0,
     status: "reserved",
     payoutAmount: workspace?.payAmount || 1000,
+    negotiationStatus: "initial" as const,
+    lastOfferedPrice: workspace?.payAmount || 1000,
+    lastOfferBy: "sponsor" as const,
     reservedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 48 * 3600000).toISOString(),
     briefAcknowledgedVersion: workspace?.briefVersions?.length || 1,
@@ -176,6 +180,60 @@ export default function CreatorCampaignWorkspace() {
       toast.error(err.message || "Failed to submit Reel URL");
     },
   });
+
+  const negotiatePriceMutation = useMutation({
+    mutationFn: (data: {
+      creatorId: number | string;
+      action: "offer" | "accept" | "decline";
+      amount?: number;
+    }) => api.negotiateCampaignPrice(campaignId, data),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
+      toast.success(res.message || "Price negotiation updated!");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to update price negotiation");
+    },
+  });
+
+  const handleDownloadBriefPack = () => {
+    if (!workspace) return;
+    const content = [
+      `==================================================`,
+      `MINGREE CAMPAIGN BRIEF & DELIVERABLE PACK`,
+      `==================================================`,
+      `Campaign Title : ${workspace.title}`,
+      `Brand / Sponsor: ${workspace.brand}`,
+      `Deal Payout    : ₹${Number(participant.payoutAmount ?? workspace.payAmount ?? 0).toLocaleString("en-IN")}`,
+      `Deadline       : ${workspace.deadline || "48 Hours from reservation"}`,
+      `Official Audio : ${workspace.audioUrl || "N/A"}`,
+      ``,
+      `--- CAMPAIGN DESCRIPTION & INSTRUCTIONS ---`,
+      `${workspace.description || "Follow campaign instructions."}`,
+      ``,
+      `--- MANDATORY REEL CAPTION NOTE ---`,
+      `${workspace.requiredCaptionNote || "N/A"}`,
+      ``,
+      `--- REQUIRED MENTIONS & HASHTAGS ---`,
+      `${(workspace.requiredMentions || []).join(" ")}`,
+      ``,
+      `--- MANDATORY DISCLOSURE ---`,
+      `${workspace.disclosureInstructions || "Use Instagram Paid Partnership label"}`,
+      `==================================================`,
+    ].join("\n");
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(workspace.title || "campaign").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-brief-pack.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Campaign Brief Pack downloaded!");
+  };
 
   const handleCopyCaption = () => {
     if (!workspace) return;
@@ -367,12 +425,18 @@ export default function CreatorCampaignWorkspace() {
 
         {/* Workspace Navigation Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
-          <TabsList className="h-9 p-1 bg-muted/70 rounded-xl border border-border/60 inline-flex">
+          <TabsList className="h-9 p-1 bg-muted/70 rounded-xl border border-border/60 inline-flex flex-wrap">
             <TabsTrigger
               value="brief"
               className="text-xs font-semibold rounded-lg px-3.5 py-1.5 cursor-pointer"
             >
-              Brief & Assets
+              Brief & File Download
+            </TabsTrigger>
+            <TabsTrigger
+              value="negotiate"
+              className="text-xs font-semibold rounded-lg px-3.5 py-1.5 cursor-pointer"
+            >
+              Price Negotiator (₹)
             </TabsTrigger>
             <TabsTrigger
               value="submit"
@@ -392,6 +456,64 @@ export default function CreatorCampaignWorkspace() {
           <TabsContent value="brief" className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2 space-y-4">
+                {/* Official Campaign Files & Brief Download Card */}
+                <Card className="rounded-xl border-2 border-primary/25 bg-primary/[0.03] p-5 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-bold text-foreground">Campaign Files & Deliverable Pack</h3>
+                      <p className="text-xs text-muted-foreground">Download official sponsor assets and the complete brief document</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDownloadBriefPack}
+                      className="h-8 text-xs font-semibold rounded-lg border-primary/30 text-primary hover:bg-primary/10 cursor-pointer shrink-0"
+                    >
+                      Download Brief Pack (.txt)
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {workspace.productAssets && workspace.productAssets.length > 0 && workspace.productAssets[0] && (
+                      <div className="p-3.5 rounded-lg bg-card border border-border/80 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold text-foreground">{workspace.productAssets[0].name || "Campaign Media File"}</p>
+                          <p className="text-[11px] text-muted-foreground">Official media file uploaded by sponsor</p>
+                        </div>
+                        <a
+                          href={workspace.productAssets[0].url}
+                          download={workspace.productAssets[0].name || "campaign-asset"}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold inline-flex items-center shrink-0 shadow-xs"
+                        >
+                          Download File
+                        </a>
+                      </div>
+                    )}
+
+                    <div className="p-3.5 rounded-lg bg-card border border-border/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-xs font-semibold text-foreground">Official Campaign Audio Track</h4>
+                        <p className="text-[11px] text-muted-foreground">Select this audio on Instagram for your Reel</p>
+                      </div>
+
+                      {workspace.audioUrl ? (
+                        <a
+                          href={workspace.audioUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold shadow-xs shrink-0"
+                        >
+                          Listen / Open Audio
+                        </a>
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">Audio link included in brief</span>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
                 {/* Description & Instructions */}
                 <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-3">
                   <div>
@@ -402,66 +524,6 @@ export default function CreatorCampaignWorkspace() {
                     <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{workspace.description}</p>
                   </div>
                 </Card>
-
-                {/* Audio Track Asset */}
-                <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">Official Audio Track</h3>
-                    <p className="text-xs text-muted-foreground">Select this audio on Instagram for your Reel</p>
-                  </div>
-
-                  <div className="p-3.5 rounded-lg bg-muted/30 border border-border/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <h4 className="text-xs font-semibold text-foreground">Official Campaign Track</h4>
-                      <p className="text-[11px] text-muted-foreground">Synced with sponsor catalog</p>
-                    </div>
-
-                    {workspace.audioUrl ? (
-                      <a
-                        href={workspace.audioUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold shadow-xs"
-                      >
-                        Listen / Open Audio
-                      </a>
-                    ) : (
-                      <span className="text-xs text-muted-foreground italic">Audio link in main brief</span>
-                    )}
-                  </div>
-                </Card>
-
-                {/* Brand Asset File Card */}
-                {workspace.productAssets && workspace.productAssets.length > 0 && workspace.productAssets[0] && (
-                  <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-foreground">Campaign Media File</h3>
-                      <p className="text-xs text-muted-foreground">Download official file provided by sponsor</p>
-                    </div>
-
-                    <div className="space-y-2">
-                      {(() => {
-                        const asset = workspace.productAssets[0];
-                        return (
-                          <div className="p-3.5 rounded-lg bg-muted/30 border border-border/60 flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs font-semibold text-foreground">{asset.name || "Campaign Asset File"}</p>
-                              <p className="text-[11px] text-muted-foreground">Official asset</p>
-                            </div>
-                            <a
-                              href={asset.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold inline-flex items-center shrink-0 shadow-xs"
-                            >
-                              Download File
-                            </a>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </Card>
-                )}
 
                 {/* Caption, Hashtags & Mentions */}
                 <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-4">
@@ -553,7 +615,136 @@ export default function CreatorCampaignWorkspace() {
             </div>
           </TabsContent>
 
-          {/* TAB 2: DIRECT REEL SUBMISSION */}
+          {/* TAB 2: PRICE NEGOTIATOR (PURE NUMERIC - NO FREE TEXT CHAT) */}
+          <TabsContent value="negotiate" className="space-y-4">
+            <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-5">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Direct Price Negotiator</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Structured price negotiation with {workspace.brand}. No text chat is permitted — accept the offered price or propose a counter-offer price in ₹.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                    Current Agreed / Brand Offer Price
+                  </span>
+                  <p className="text-xl font-black text-emerald-600 tabular-nums mt-1">
+                    {formatINR(payoutAmount)}
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">
+                    {participant.negotiationStatus === "accepted"
+                      ? "Final price locked in escrow"
+                      : "Brand's active offer"}
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                    Latest Proposal ({participant.lastOfferBy === "creator" ? "Your Counter-Offer" : "Brand Offer"})
+                  </span>
+                  <p className="text-xl font-black text-foreground tabular-nums mt-1">
+                    {formatINR(participant.lastOfferedPrice ?? payoutAmount)}
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">
+                    Status: {(participant.negotiationStatus || "initial").replace("_", " ")}
+                  </span>
+                </div>
+              </div>
+
+              {participant.negotiationStatus !== "accepted" && (
+                <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold text-foreground">
+                      Accept Brand's Price Offer ({formatINR(participant.lastOfferBy === "sponsor" ? (participant.lastOfferedPrice ?? payoutAmount) : payoutAmount)})
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Lock this compensation amount immediately for your Reel delivery.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={() =>
+                      negotiatePriceMutation.mutate({
+                        creatorId: participant.creatorId || user?.id || 1,
+                        action: "accept",
+                      })
+                    }
+                    disabled={negotiatePriceMutation.isPending}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-9 px-4 shrink-0 cursor-pointer"
+                  >
+                    Accept {formatINR(participant.lastOfferBy === "sponsor" ? (participant.lastOfferedPrice ?? payoutAmount) : payoutAmount)}
+                  </Button>
+                </div>
+              )}
+
+              <div className="p-4 rounded-xl border border-border/80 bg-muted/15 space-y-3">
+                <div>
+                  <Label className="text-xs font-bold text-foreground">
+                    Send Counter-Offer Price (₹ Only)
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Select a preset price or enter your counter-offer in ₹.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {[1500, 2000, 2500, 3500, 5000, 7500].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setCounterOfferAmount(String(preset))}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                        Number(counterOfferAmount) === preset
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-card text-foreground border-border/80 hover:bg-muted"
+                      }`}
+                    >
+                      ₹{preset.toLocaleString("en-IN")}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
+                      ₹
+                    </span>
+                    <Input
+                      type="number"
+                      min={100}
+                      step={50}
+                      value={counterOfferAmount}
+                      onChange={(e) => setCounterOfferAmount(e.target.value)}
+                      placeholder="Enter counter-offer price in ₹"
+                      className="pl-7 h-10 rounded-xl text-xs font-bold tabular-nums"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    disabled={negotiatePriceMutation.isPending}
+                    onClick={() => {
+                      const amt = Number(counterOfferAmount);
+                      if (!Number.isFinite(amt) || amt <= 0) {
+                        toast.error("Please enter a valid price in ₹");
+                        return;
+                      }
+                      negotiatePriceMutation.mutate({
+                        creatorId: participant.creatorId || user?.id || 1,
+                        action: "offer",
+                        amount: Math.round(amt),
+                      });
+                    }}
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-xs rounded-xl h-10 px-5 shrink-0 cursor-pointer"
+                  >
+                    Send Counter-Offer
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </TabsContent>
+
+          {/* TAB 3: DIRECT REEL SUBMISSION */}
           <TabsContent value="submit" className="space-y-4">
             <Card className="rounded-xl border border-border/80 bg-card overflow-hidden">
               <CardHeader className="p-5 pb-3 border-b border-border/80">
@@ -660,7 +851,7 @@ export default function CreatorCampaignWorkspace() {
             </Card>
           </TabsContent>
 
-          {/* TAB 3: PAYOUT TRACKER */}
+          {/* TAB 4: PAYOUT TRACKER */}
           <TabsContent value="payout" className="space-y-4">
             <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-4">
               <div>

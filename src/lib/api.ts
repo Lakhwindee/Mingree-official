@@ -311,6 +311,9 @@ export interface WorkspaceParticipant {
   draftSubmission?: WorkspaceDraftSubmission | null;
   draftStatus?: "none" | "submitted" | "approved" | "revision_requested";
   draftFeedbackNotes?: string;
+  negotiationStatus?: "initial" | "brand_offered" | "creator_countered" | "accepted" | "declined";
+  lastOfferedPrice?: number;
+  lastOfferBy?: "sponsor" | "creator";
 }
 
 export interface WorkspaceMessage {
@@ -326,6 +329,13 @@ export interface WorkspaceMessage {
   isAnnouncement?: boolean;
   isBriefChange?: boolean;
   briefVersion?: number;
+  negotiationOffer?: {
+    action: "offer" | "counter_offer" | "accept" | "decline";
+    amount: number;
+    proposedBy: "sponsor" | "creator";
+    participantId: number;
+    creatorId: number;
+  };
   createdAt: string;
   readBy: number[];
 }
@@ -613,6 +623,23 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Failed to send message");
+    }
+    return await res.json();
+  },
+
+  async negotiateCampaignPrice(
+    campaignId: number,
+    data: { creatorId?: number | string; action: "offer" | "counter_offer" | "accept" | "decline"; amount?: number }
+  ): Promise<{ success: boolean; participant: WorkspaceParticipant; message?: any }> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/negotiate`, {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to send price offer");
     }
     return await res.json();
   },
@@ -1793,6 +1820,7 @@ export const api = {
 
   async getCreatorWorkspaces(creatorId: number): Promise<any[]> {
     const res = await fetch(`${API_BASE}/creators/${creatorId}/campaign-workspaces`, {
+      headers: getAuthHeaders(),
       credentials: "include",
     });
     if (!res.ok) {
