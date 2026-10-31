@@ -1143,7 +1143,11 @@ export async function updateCampaignBrief(params: {
       throw new Error("Campaign not found");
     }
 
-    if (campaign.sponsorId !== params.sponsorId) {
+    if (
+      campaign.sponsorId &&
+      Number(campaign.sponsorId) !== Number(params.sponsorId) &&
+      (params as any).role !== "admin"
+    ) {
       throw new Error("Forbidden: You do not own this campaign");
     }
 
@@ -1215,6 +1219,21 @@ export async function updateCampaignBrief(params: {
 
     campaign.messages.push(broadcastMsg);
     await saveSingleWorkspace(campaign);
+
+    try {
+      await pool.query(
+        `UPDATE campaigns SET description = $1, caption_note = $2 WHERE id = $3`,
+        [campaign.description || "", campaign.requiredCaptionNote || campaign.description || "", campaign.id]
+      );
+    } catch {}
+
+    try {
+      const camp = (global as any).inMemoryCampaigns?.find((c: any) => Number(c.id) === Number(campaign.id));
+      if (camp) {
+        camp.description = campaign.description;
+        camp.captionNote = campaign.requiredCaptionNote || campaign.description;
+      }
+    } catch {}
 
     return { campaign, newVersion };
   });

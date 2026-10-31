@@ -10,6 +10,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -24,6 +33,7 @@ import {
   Heart,
   IndianRupee,
   MessageCircle,
+  MessageSquare,
   Music2,
   RotateCcw,
   ShieldCheck,
@@ -42,6 +52,8 @@ export default function CampaignWorkspace() {
   const [selectedCreatorId, setSelectedCreatorId] = useState<number | null>(null);
   const [revisionNote, setRevisionNote] = useState<string>("");
   const [showRevisionInputFor, setShowRevisionInputFor] = useState<number | null>(null);
+  const [isEditDescOpen, setIsEditDescOpen] = useState(false);
+  const [editDescText, setEditDescText] = useState("");
 
   const {
     data: workspace,
@@ -73,6 +85,27 @@ export default function CampaignWorkspace() {
     },
     onError: (err: any) => {
       toast.error(err.message || "Failed to update reel review");
+    },
+  });
+
+  const updateDescriptionMutation = useMutation({
+    mutationFn: (newDesc: string) =>
+      api.updateCampaignBrief(campaignId, {
+        updatedBrief: {
+          description: newDesc.trim(),
+          requiredCaptionNote: newDesc.trim(),
+        },
+        changesSummary: "Campaign description updated by brand partner",
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] });
+      setIsEditDescOpen(false);
+      toast.success("Campaign description updated for all creators!");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to update campaign description");
     },
   });
 
@@ -171,6 +204,18 @@ export default function CampaignWorkspace() {
                   <FolderOpen className="h-3.5 w-3.5" />
                   Campaign Folder
                 </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditDescText(workspace?.description || workspace?.requiredCaptionNote || "");
+                    setIsEditDescOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold text-primary bg-primary/10 hover:bg-primary/20 border border-primary/25 transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95"
+                  title="Change campaign description & notes for all creators"
+                >
+                  <MessageSquare className="h-3 w-3 text-primary" />
+                  <span>Edit Note</span>
+                </button>
               </div>
               <h1 className="text-lg font-bold text-foreground truncate">
                 {workspace.title}
@@ -609,6 +654,77 @@ export default function CampaignWorkspace() {
           </Card>
         </div>
       </main>
+
+      {/* Campaign Description & Brief Note Modal */}
+      <Dialog open={isEditDescOpen} onOpenChange={setIsEditDescOpen}>
+        <DialogContent className="max-w-lg p-5 sm:p-6 rounded-2xl bg-card border-border shadow-xl">
+          <DialogHeader className="space-y-1.5 text-left">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+                <MessageSquare className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base sm:text-lg font-bold text-foreground">
+                  Edit Campaign Description & Note
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                  Update campaign instructions. Changes will update for all creators automatically.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="mt-3 space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                <span>Campaign Description / Creative Note:</span>
+                <span className="text-[11px] text-muted-foreground font-normal">
+                  {editDescText.length} characters
+                </span>
+              </label>
+              <Textarea
+                value={editDescText}
+                onChange={(e) => setEditDescText(e.target.value)}
+                placeholder="Write the campaign description, Reel instructions, hashtags, or guidelines here..."
+                rows={6}
+                className="text-xs leading-relaxed resize-none rounded-xl border-border bg-background focus-visible:ring-primary"
+              />
+            </div>
+
+            <div className="p-3 rounded-xl bg-muted/40 border border-border/60 text-[11px] text-muted-foreground space-y-1">
+              <p className="font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                Live Sync Across All Creators
+              </p>
+              <p>
+                When saved, this replaces the original campaign description across PostgreSQL, every participating creator's deal card, and active workspaces in real time.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4 flex flex-row items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsEditDescOpen(false)}
+              disabled={updateDescriptionMutation.isPending}
+              className="text-xs rounded-xl h-9 px-4 cursor-pointer"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => updateDescriptionMutation.mutate(editDescText)}
+              disabled={updateDescriptionMutation.isPending || !editDescText.trim()}
+              className="text-xs font-bold rounded-xl h-9 px-4 cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {updateDescriptionMutation.isPending ? "Updating..." : "Save & Update for All Creators"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

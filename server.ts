@@ -2623,7 +2623,7 @@ app.post("/api/campaigns/:id/accept-invitation", requireAuth, async (req: AuthRe
 });
 
 // POST /api/campaigns/:id/brief - Brand updates brief & notifies all creators
-app.post("/api/campaigns/:id/brief", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+app.post("/api/campaigns/:id/brief", requireAuth, requireRole("sponsor", "admin", "brand"), async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.id);
   const { updatedBrief, changesSummary } = req.body;
 
@@ -2635,9 +2635,10 @@ app.post("/api/campaigns/:id/brief", requireAuth, requireRole("sponsor", "admin"
     const result = await updateCampaignBrief({
       campaignId,
       sponsorId: req.user!.id,
+      role: req.user!.role,
       updatedBrief,
       changesSummary: changesSummary || "Campaign brief instructions updated",
-    });
+    } as any);
     res.json({
       success: true,
       message: `Brief successfully updated to Version ${result.newVersion.version}. All participating creators have been notified.`,
