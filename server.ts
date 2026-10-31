@@ -208,6 +208,35 @@ const globalRateLimiter = rateLimit({
 app.use("/api/", globalRateLimiter);
 
 app.use(cookieParser());
+
+// Prevent express.json() from hanging on Vercel Serverless when req.body is already pre-parsed by the runtime
+app.use((req: any, _res, next) => {
+  if (req.body !== undefined && req.body !== null) {
+    if (Buffer.isBuffer(req.body)) {
+      req.rawBody = req.body;
+      const str = req.body.toString("utf-8").trim();
+      if (str.startsWith("{") || str.startsWith("[")) {
+        try {
+          req.body = JSON.parse(str);
+        } catch {}
+      }
+      req._body = true;
+    } else if (typeof req.body === "string") {
+      req.rawBody = Buffer.from(req.body, "utf-8");
+      const str = req.body.trim();
+      if (str.startsWith("{") || str.startsWith("[")) {
+        try {
+          req.body = JSON.parse(str);
+        } catch {}
+      }
+      req._body = true;
+    } else if (typeof req.body === "object") {
+      req._body = true;
+    }
+  }
+  next();
+});
+
 app.use(
   express.json({
     limit: "100kb",
@@ -2809,12 +2838,13 @@ app.post("/api/campaigns/:id/messages", requireAuth, async (req: AuthRequest, re
   }
 });
 
-// POST /api/campaigns/:id/negotiate - Structured Price Negotiator (Sponsor <-> Creator)
-app.post("/api/campaigns/:id/negotiate", requireAuth, async (req: AuthRequest, res) => {
-  const campaignId = Number(req.params.id);
-  const { creatorId, action, amount } = req.body;
+// POST or GET /api/campaigns/:id/negotiate - Structured Price Negotiator (Sponsor <-> Creator)
+const handleNegotiateCampaignPrice = async (req: AuthRequest, res: any) => {
+  const campaignId = Number(req.params.id || 1);
+  const payload = { ...(req.query || {}), ...(req.body && typeof req.body === "object" ? req.body : {}) } as any;
+  const { creatorId, creatorName, creatorHandle, creatorAvatar, baseRate, brandName, action, amount } = payload;
 
-  if (!action || !["offer", "counter_offer", "accept", "decline"].includes(action)) {
+  if (!action || !["offer", "counter_offer", "accept", "decline"].includes(String(action))) {
     return res.status(400).json({ error: "Valid negotiation action ('offer', 'counter_offer', 'accept', 'decline') is required" });
   }
 
@@ -2829,14 +2859,21 @@ app.post("/api/campaigns/:id/negotiate", requireAuth, async (req: AuthRequest, r
         handle: req.user!.instagramUsername || req.user!.handle,
       },
       creatorId: creatorId ? Number(creatorId) : req.user!.id,
-      action,
+      creatorName: creatorName ? String(creatorName) : undefined,
+      creatorHandle: creatorHandle ? String(creatorHandle) : undefined,
+      creatorAvatar: creatorAvatar ? String(creatorAvatar) : undefined,
+      baseRate: baseRate ? Number(baseRate) : undefined,
+      brandName: brandName ? String(brandName) : undefined,
+      action: String(action) as "offer" | "counter_offer" | "accept" | "decline",
       amount: Number(amount) || 0,
     });
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Failed to process price negotiation" });
   }
-});
+};
+app.post("/api/campaigns/:id/negotiate", requireAuth, handleNegotiateCampaignPrice);
+app.get("/api/campaigns/:id/negotiate", requireAuth, handleNegotiateCampaignPrice);
 
 // GET /api/sponsors/:id/campaign-cards - Real campaign cards for Brand Dashboard
 app.get(["/api/sponsors/:id/campaign-cards", "/api/sponsor/campaign-cards"], requireAuth, async (req: AuthRequest, res) => {

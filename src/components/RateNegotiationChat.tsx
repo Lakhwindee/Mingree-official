@@ -43,19 +43,49 @@ export function RateNegotiationChat({
 }: RateNegotiationChatProps) {
   const queryClient = useQueryClient();
   const [rateInput, setRateInput] = useState<string>("");
+  const [localMsgs, setLocalMsgs] = useState<any[]>([]);
+  const [localParticipantOverride, setLocalParticipantOverride] = useState<{
+    payoutAmount?: number;
+    lastOfferedPrice?: number;
+    lastOfferBy?: "sponsor" | "creator";
+    negotiationStatus?: string;
+  } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Maximum negotiable rate is strictly the creator's base rate
   const maxCreatorRate = Math.max(100, Number(basePayAmount || currentPayoutAmount || 1200));
-  const activeBrandRate = Math.min(maxCreatorRate, Number(currentPayoutAmount || maxCreatorRate));
+  const effPayoutAmount = localParticipantOverride?.payoutAmount ?? currentPayoutAmount;
+  const effLastOfferedPrice = localParticipantOverride?.lastOfferedPrice ?? lastOfferedPrice;
+  const effLastOfferBy = localParticipantOverride?.lastOfferBy ?? lastOfferBy;
+  const effNegotiationStatus = localParticipantOverride?.negotiationStatus ?? negotiationStatus;
+
+  const activeBrandRate = Math.min(maxCreatorRate, Number(effPayoutAmount || maxCreatorRate));
   const latestRate = Math.min(
     maxCreatorRate,
-    Number(lastOfferedPrice || currentPayoutAmount || maxCreatorRate)
+    Number(effLastOfferedPrice || effPayoutAmount || maxCreatorRate)
   );
-  const isLocked = negotiationStatus === "accepted";
+  const isLocked = effNegotiationStatus === "accepted";
+
+  // Combine server messages with any optimistic local messages (deduplicated)
+  const combinedMessages = (() => {
+    const base = Array.isArray(messages) ? [...messages] : [];
+    for (const lm of localMsgs) {
+      const exists = base.some(
+        (bm: any) =>
+          Number(bm.id) === Number(lm.id) ||
+          (bm.negotiationOffer &&
+            lm.negotiationOffer &&
+            bm.negotiationOffer.action === lm.negotiationOffer.action &&
+            Number(bm.negotiationOffer.amount) === Number(lm.negotiationOffer.amount) &&
+            Math.abs(new Date(bm.createdAt).getTime() - new Date(lm.createdAt).getTime()) < 5000)
+      );
+      if (!exists) base.push(lm);
+    }
+    return base;
+  })();
 
   // Filter only rate negotiation messages for this creator thread that are <= maxCreatorRate
-  const rateMessages = (Array.isArray(messages) ? messages : []).filter((m: any) => {
+  const rateMessages = combinedMessages.filter((m: any) => {
     const isForThisCreator =
       !m.negotiationOffer?.creatorId ||
       Number(m.negotiationOffer?.creatorId) === Number(creatorId) ||
@@ -79,7 +109,7 @@ export function RateNegotiationChat({
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [rateMessages.length, negotiationStatus, latestRate]);
+  }, [rateMessages.length, effNegotiationStatus, latestRate]);
 
   const negotiateMutation = useMutation({
     mutationFn: (params: {
@@ -88,10 +118,60 @@ export function RateNegotiationChat({
     }) =>
       api.negotiateCampaignPrice(campaignId, {
         creatorId,
+        creatorName,
+        creatorHandle,
+        creatorAvatar,
+        baseRate: maxCreatorRate,
+        brandName,
+        viewerRole,
         action: params.action,
         amount: params.amount,
       }),
-    onSuccess: (_data, vars) => {
+    onSuccess: (data, vars) => {
+      if (data?.participant) {
+        setLocalParticipantOverride({
+          payoutAmount: data.participant.payoutAmount,
+          lastOfferedPrice: data.participant.lastOfferedPrice,
+          lastOfferBy: data.participant.lastOfferBy,
+          negotiationStatus: data.participant.negotiationStatus,
+        });
+      }
+      if (data?.message) {
+        setLocalMsgs((prev) => [...prev, data.message]);
+      }
+
+      // Immediately update campaignWorkspace query cache so parent cards reflect the new rate right away
+      queryClient.setQueryData(["campaignWorkspace", campaignId], (oldData: any) => {
+        if (!oldData) return oldData;
+        const updatedParticipants = Array.isArray(oldData.participants)
+          ? oldData.participants.map((p: any) =>
+              Number(p.creatorId) === Number(creatorId) || Number(p.id) === Number(creatorId)
+                ? {
+                    ...p,
+                    payoutAmount: data?.participant?.payoutAmount ?? vars.amount,
+                    lastOfferedPrice: data?.participant?.lastOfferedPrice ?? vars.amount,
+                    lastOfferBy: data?.participant?.lastOfferBy ?? viewerRole,
+                    negotiationStatus:
+                      data?.participant?.negotiationStatus ??
+                      (vars.action === "accept"
+                        ? "accepted"
+                        : viewerRole === "sponsor"
+                        ? "brand_offered"
+                        : "creator_countered"),
+                  }
+                : p
+            )
+          : oldData.participants;
+        const updatedMessages = data?.message
+          ? [...(oldData.messages || []), data.message]
+          : oldData.messages;
+        return {
+          ...oldData,
+          participants: updatedParticipants,
+          messages: updatedMessages,
+        };
+      });
+
       queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
       queryClient.invalidateQueries({ queryKey: ["brandCampaignCards"] });
@@ -107,16 +187,16 @@ export function RateNegotiationChat({
     },
   });
 
-  // Determine the incoming offer that the current viewer can immediately accept
+  // Determine the rate that the current viewer can immediately accept/lock
   const incomingOfferToAccept = (() => {
     if (isLocked) return null;
     if (viewerRole === "creator") {
       return activeBrandRate;
     } else {
-      if (negotiationStatus === "creator_countered" || lastOfferBy === "creator") {
+      if (effNegotiationStatus === "creator_countered" || effLastOfferBy === "creator") {
         return latestRate;
       }
-      return null;
+      return activeBrandRate;
     }
   })();
 
@@ -202,7 +282,7 @@ export function RateNegotiationChat({
               <Lock className="h-3 w-3" />
               Locked: {formatINR(activeBrandRate)}
             </Badge>
-          ) : negotiationStatus === "creator_countered" ? (
+          ) : effNegotiationStatus === "creator_countered" ? (
             <Badge
               variant="outline"
               className="border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-bold px-2.5 py-1"
@@ -397,7 +477,7 @@ export function RateNegotiationChat({
         </div>
 
         {/* Rate Input Chat Bar */}
-        <form onSubmit={handleSendRate} className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <IndianRupee className="h-3.5 w-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
@@ -406,6 +486,12 @@ export function RateNegotiationChat({
               max={maxCreatorRate}
               step={50}
               value={rateInput}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleSendRate();
+                }
+              }}
               onChange={(e) => {
                 const raw = e.target.value.replace(/[^0-9]/g, "");
                 if (!raw) {
@@ -426,7 +512,8 @@ export function RateNegotiationChat({
           </div>
 
           <Button
-            type="submit"
+            type="button"
+            onClick={() => handleSendRate()}
             disabled={
               !rateInput ||
               Number(rateInput) < 100 ||
@@ -455,7 +542,7 @@ export function RateNegotiationChat({
               Accept {formatINR(incomingOfferToAccept)}
             </Button>
           )}
-        </form>
+        </div>
       </div>
     </div>
   );

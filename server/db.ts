@@ -66,8 +66,15 @@ export const db = drizzle(pool, { schema });
 let schemaInitialized = false;
 
 export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<void> {
-  if (schemaInitialized) return;
-  const localClient = client || (await pool.connect());
+  if (!isDatabaseConfigured || schemaInitialized) return;
+  schemaInitialized = true;
+  let localClient: pg.PoolClient | undefined;
+  try {
+    localClient = client || (await pool.connect());
+  } catch (connErr: any) {
+    console.warn("[DB SCHEMA CONNECT SKIPPED]", connErr?.message || connErr);
+    return;
+  }
   const shouldRelease = !client;
   try {
     const migrationPath = path.join(process.cwd(), "migrations", "001_init.sql");
