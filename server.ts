@@ -2492,6 +2492,51 @@ app.post("/api/campaigns/:id/reserve-or-apply", requireAuth, requireRole("creato
   }
 });
 
+// POST /api/campaigns/:id/accept-invitation - Creator accepts campaign invitation
+app.post("/api/campaigns/:id/accept-invitation", requireAuth, requireRole("creator"), async (req: AuthRequest, res) => {
+  const campaignId = Number(req.params.id);
+  const creatorId = req.user!.id;
+
+  const workspace = getWorkspaceById(campaignId);
+  if (!workspace) {
+    return res.status(404).json({ error: "Campaign workspace not found" });
+  }
+
+  const participant = workspace.participants.find((p) => Number(p.creatorId) === creatorId);
+  if (!participant) {
+    return res.status(404).json({ error: "You are not an invited participant in this campaign" });
+  }
+
+  if (participant.status !== "pending" && participant.status !== "applied") {
+    return res.json({ success: true, message: "Campaign slot already reserved!", participant });
+  }
+
+  participant.status = "reserved";
+  participant.reservedAt = new Date().toISOString();
+  participant.expiresAt = new Date(Date.now() + 48 * 3600000).toISOString();
+
+  workspace.reservedSlots = (workspace.reservedSlots || 0) + 1;
+  workspace.remainingSlots = Math.max(0, (workspace.totalSlots || 1) - workspace.reservedSlots);
+
+  workspace.messages.push({
+    id: Date.now(),
+    campaignId: workspace.id,
+    senderId: creatorId,
+    senderName: participant.creatorName,
+    senderRole: "creator",
+    senderAvatar: participant.creatorAvatar,
+    recipientId: null,
+    content: `🎉 ${participant.creatorName} (@${participant.creatorHandle.replace(/^@/, '')}) accepted the campaign invitation & reserved their ad slot!`,
+    createdAt: new Date().toISOString(),
+    readBy: [creatorId],
+  });
+
+  workspace.updatedAt = new Date().toISOString();
+  saveSingleWorkspace(workspace);
+
+  res.json({ success: true, message: "Invitation accepted & ad slot reserved!", participant });
+});
+
 // POST /api/campaigns/:id/brief - Brand updates brief & notifies all creators
 app.post("/api/campaigns/:id/brief", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.id);
@@ -6560,7 +6605,7 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
         creatorAvatar: creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
         creatorFollowers: creatorFollowers || 10000,
         creatorMedianViews: creatorMedianViews || 4000,
-        status: "reserved" as const,
+        status: "pending" as const,
         payoutAmount: billData.subtotal / (creatorIds.length || 1),
         reservedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),

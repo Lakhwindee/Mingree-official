@@ -196,6 +196,18 @@ export default function CampaignWorkspace() {
     },
   });
 
+  // Accept invitation mutation for creators
+  const acceptInvitationMutation = useMutation({
+    mutationFn: () => api.acceptCampaignInvitation(campaignId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
+      toast.success(data.message || "Campaign invitation accepted & ad slot reserved!");
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to accept invitation");
+    },
+  });
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatMessage.trim()) return;
@@ -282,8 +294,10 @@ export default function CampaignWorkspace() {
   });
 
   // Calculate metrics
+  const pendingCreators = workspace.participants.filter((p) => p.status === "pending");
   const pendingApplications = workspace.participants.filter((p) => p.status === "applied");
-  const reservedCreators = workspace.participants.filter((p) => p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn");
+  const reservedCreators = workspace.participants.filter((p) => p.status !== "pending" && p.status !== "applied" && p.status !== "rejected" && p.status !== "withdrawn");
+  const currentUserParticipant = workspace.participants.find((p) => Number(p.creatorId) === Number(user?.id));
   const submittedReels = workspace.participants.filter((p) => p.submission !== null);
   const pendingReviews = workspace.participants.filter((p) => p.status === "content_submitted");
   const approvedSubmissions = workspace.participants.filter((p) => p.status === "approved" || p.status === "completed");
@@ -439,6 +453,32 @@ export default function CampaignWorkspace() {
                 6. Escrow & Ledger
               </TabsTrigger>
             </TabsList>
+
+            {/* Invitation Acceptance Banner for Logged-in Creator */}
+            {currentUserParticipant?.status === "pending" && (
+              <Card className="bg-amber-950/40 border-amber-500/50 p-4 mt-6 mb-2 shadow-lg shadow-amber-950/30">
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-lg shrink-0">
+                      🎉
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-amber-200">You've Been Selected for This Campaign!</h3>
+                      <p className="text-xs text-zinc-300 mt-0.5">
+                        {workspace.brand} selected you for this campaign with a payout of <strong className="text-emerald-400 font-bold">{formatINR(currentUserParticipant.payoutAmount)}</strong>. Accept & reserve your slot now to start creating.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => acceptInvitationMutation.mutate()}
+                    disabled={acceptInvitationMutation.isPending}
+                    className="bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs whitespace-nowrap px-6 py-2 shadow-md shrink-0"
+                  >
+                    {acceptInvitationMutation.isPending ? "Reserving Slot..." : "Accept & Reserve Slot"}
+                  </Button>
+                </div>
+              </Card>
+            )}
 
             {/* TAB 1: OVERVIEW & SETTINGS */}
             <TabsContent value="overview" className="space-y-6 mt-6">
@@ -632,6 +672,65 @@ export default function CampaignWorkspace() {
 
             {/* TAB 2: CREATORS & APPLICANTS */}
             <TabsContent value="creators" className="space-y-6 mt-6">
+              {/* Selected Creators (Pending Acceptance) */}
+              {pendingCreators.length > 0 && (
+                <Card className="bg-zinc-900 border-amber-900/40">
+                  <CardHeader className="pb-3 border-b border-amber-900/30 bg-amber-950/20">
+                    <CardTitle className="text-base text-white flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <BadgeAlert className="h-4 w-4 text-amber-400" />
+                        Selected Creators (Pending Reservation) ({pendingCreators.length})
+                      </span>
+                      <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40">Pending Acceptance</Badge>
+                    </CardTitle>
+                    <CardDescription className="text-xs text-zinc-400">
+                      Creators you selected when launching this campaign. They will show as Reserved once they accept the invitation.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-3">
+                    {pendingCreators.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-zinc-950 border border-zinc-800 gap-4"
+                      >
+                        <div className="flex items-center gap-3">
+                          <img src={p.creatorAvatar} alt={p.creatorName} className="h-11 w-11 rounded-full object-cover border border-zinc-700" />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-white text-sm">{p.creatorName}</h4>
+                              <span className="text-xs text-amber-400 font-mono">{p.creatorHandle}</span>
+                              <Badge className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                                Pending Acceptance (Not Reserved Yet)
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1">
+                              <span>Followers: <strong className="text-zinc-200">{p.creatorFollowers.toLocaleString()}</strong></span>
+                              <span>•</span>
+                              <span>Offered Payout: <strong className="text-emerald-400">{formatINR(p.payoutAmount)}</strong></span>
+                              <span>•</span>
+                              <span className="text-amber-400 font-medium">Invited by Brand</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-end sm:self-center">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setChatThread(String(p.creatorId));
+                              setActiveTab("chat");
+                            }}
+                            className="border-zinc-700 hover:bg-zinc-800 text-xs text-zinc-300"
+                          >
+                            <MessageSquare className="mr-1.5 h-3.5 w-3.5 text-pink-400" /> Message Creator
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
               {/* Pending Applications Section */}
               {pendingApplications.length > 0 && (
                 <Card className="bg-zinc-900 border-pink-900/40">

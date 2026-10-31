@@ -278,6 +278,7 @@ export interface WorkspaceParticipant {
   creatorFollowers: number;
   creatorMedianViews: number;
   status:
+    | "pending"
     | "applied"
     | "reserved"
     | "accepted"
@@ -550,6 +551,19 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Failed to process application");
+    }
+    return await res.json();
+  },
+
+  async acceptCampaignInvitation(campaignId: number): Promise<any> {
+    const res = await fetch(`${API_BASE}/campaigns/${campaignId}/accept-invitation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Failed to accept invitation");
     }
     return await res.json();
   },

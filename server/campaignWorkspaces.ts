@@ -68,6 +68,7 @@ export interface CampaignParticipant {
   creatorFollowers: number;
   creatorMedianViews: number;
   status:
+    | "pending"
     | "applied"
     | "reserved"
     | "accepted"
