@@ -547,7 +547,16 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Failed to reserve slot");
     }
-    return await res.json();
+    const data = await res.json();
+    try {
+      const raw = localStorage.getItem("mingree_reserved_campaigns");
+      const ids: number[] = raw ? JSON.parse(raw) : [];
+      if (!ids.includes(Number(campaignId))) {
+        ids.push(Number(campaignId));
+        localStorage.setItem("mingree_reserved_campaigns", JSON.stringify(ids));
+      }
+    } catch {}
+    return data;
   },
 
   async updateCampaignBrief(campaignId: number, data: { updatedBrief: any; changesSummary: string }): Promise<any> {
@@ -686,7 +695,16 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Failed to accept invitation");
     }
-    return await res.json();
+    const data = await res.json();
+    try {
+      const raw = localStorage.getItem("mingree_reserved_campaigns");
+      const ids: number[] = raw ? JSON.parse(raw) : [];
+      if (!ids.includes(Number(campaignId))) {
+        ids.push(Number(campaignId));
+        localStorage.setItem("mingree_reserved_campaigns", JSON.stringify(ids));
+      }
+    } catch {}
+    return data;
   },
 
   async getWorkspaceMessages(campaignId: number, thread?: string, since?: string): Promise<WorkspaceMessage[]> {
@@ -1135,7 +1153,16 @@ export const api = {
       const error = await res.json();
       throw new Error(error.error || "Failed to reserve campaign");
     }
-    return res.json();
+    const data = await res.json();
+    try {
+      const raw = localStorage.getItem("mingree_reserved_campaigns");
+      const ids: number[] = raw ? JSON.parse(raw) : [];
+      if (!ids.includes(Number(campaignId))) {
+        ids.push(Number(campaignId));
+        localStorage.setItem("mingree_reserved_campaigns", JSON.stringify(ids));
+      }
+    } catch {}
+    return data;
   },
 
   // Submissions
