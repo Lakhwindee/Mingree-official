@@ -415,6 +415,10 @@ export interface CreatorCampaignItem {
   brand: string;
   brandLogo: string;
   genre: string;
+  language?: string;
+  contentTypes?: string[];
+  promotionStyle?: string;
+  description?: string;
   payAmount: number;
   payoutAmount?: number;
   basePayAmount?: number;
@@ -427,6 +431,10 @@ export interface CreatorCampaignItem {
   expiresAt: string;
   deadline: string;
   audioUrl: string;
+  referenceVideoUrl?: string;
+  assetUrl?: string;
+  assetFileName?: string;
+  productAssets?: Array<{ name: string; url: string; type?: string }>;
   requiredCaptionNote: string;
   requiredTags: string[];
   requiredMentions: string[];
