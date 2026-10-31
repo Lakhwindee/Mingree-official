@@ -423,7 +423,7 @@ export default function CreatorCampaignWorkspace() {
           </div>
         )}
 
-        {/* Workspace Navigation Tabs */}
+        {/* Workspace Navigation Tabs (Brief & File Download, Submit Reel Link, Payout Tracker — Price Negotiation is kept separate) */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
           <TabsList className="h-9 p-1 bg-muted/70 rounded-xl border border-border/60 inline-flex flex-wrap">
             <TabsTrigger
@@ -431,12 +431,6 @@ export default function CreatorCampaignWorkspace() {
               className="text-xs font-semibold rounded-lg px-3.5 py-1.5 cursor-pointer"
             >
               Brief & File Download
-            </TabsTrigger>
-            <TabsTrigger
-              value="negotiate"
-              className="text-xs font-semibold rounded-lg px-3.5 py-1.5 cursor-pointer"
-            >
-              Price Negotiator (₹)
             </TabsTrigger>
             <TabsTrigger
               value="submit"
@@ -613,135 +607,6 @@ export default function CreatorCampaignWorkspace() {
                 </Card>
               </div>
             </div>
-          </TabsContent>
-
-          {/* TAB 2: PRICE NEGOTIATOR (PURE NUMERIC - NO FREE TEXT CHAT) */}
-          <TabsContent value="negotiate" className="space-y-4">
-            <Card className="rounded-xl border border-border/80 bg-card p-5 space-y-5">
-              <div>
-                <h3 className="text-base font-bold text-foreground">Direct Price Negotiator</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Structured price negotiation with {workspace.brand}. No text chat is permitted — accept the offered price or propose a counter-offer price in ₹.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                    Current Agreed / Brand Offer Price
-                  </span>
-                  <p className="text-xl font-black text-emerald-600 tabular-nums mt-1">
-                    {formatINR(payoutAmount)}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">
-                    {participant.negotiationStatus === "accepted"
-                      ? "Final price locked in escrow"
-                      : "Brand's active offer"}
-                  </span>
-                </div>
-
-                <div className="p-4 rounded-xl border border-border/80 bg-muted/20">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                    Latest Proposal ({participant.lastOfferBy === "creator" ? "Your Counter-Offer" : "Brand Offer"})
-                  </span>
-                  <p className="text-xl font-black text-foreground tabular-nums mt-1">
-                    {formatINR(participant.lastOfferedPrice ?? payoutAmount)}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">
-                    Status: {(participant.negotiationStatus || "initial").replace("_", " ")}
-                  </span>
-                </div>
-              </div>
-
-              {participant.negotiationStatus !== "accepted" && (
-                <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-bold text-foreground">
-                      Accept Brand's Price Offer ({formatINR(participant.lastOfferBy === "sponsor" ? (participant.lastOfferedPrice ?? payoutAmount) : payoutAmount)})
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Lock this compensation amount immediately for your Reel delivery.
-                    </p>
-                  </div>
-                  <Button
-                    onClick={() =>
-                      negotiatePriceMutation.mutate({
-                        creatorId: participant.creatorId || user?.id || 1,
-                        action: "accept",
-                      })
-                    }
-                    disabled={negotiatePriceMutation.isPending}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl h-9 px-4 shrink-0 cursor-pointer"
-                  >
-                    Accept {formatINR(participant.lastOfferBy === "sponsor" ? (participant.lastOfferedPrice ?? payoutAmount) : payoutAmount)}
-                  </Button>
-                </div>
-              )}
-
-              <div className="p-4 rounded-xl border border-border/80 bg-muted/15 space-y-3">
-                <div>
-                  <Label className="text-xs font-bold text-foreground">
-                    Send Counter-Offer Price (₹ Only)
-                  </Label>
-                  <p className="text-[11px] text-muted-foreground">
-                    Select a preset price or enter your counter-offer in ₹.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5">
-                  {[1500, 2000, 2500, 3500, 5000, 7500].map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      onClick={() => setCounterOfferAmount(String(preset))}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
-                        Number(counterOfferAmount) === preset
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "bg-card text-foreground border-border/80 hover:bg-muted"
-                      }`}
-                    >
-                      ₹{preset.toLocaleString("en-IN")}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <div className="relative flex-1">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
-                      ₹
-                    </span>
-                    <Input
-                      type="number"
-                      min={100}
-                      step={50}
-                      value={counterOfferAmount}
-                      onChange={(e) => setCounterOfferAmount(e.target.value)}
-                      placeholder="Enter counter-offer price in ₹"
-                      className="pl-7 h-10 rounded-xl text-xs font-bold tabular-nums"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    disabled={negotiatePriceMutation.isPending}
-                    onClick={() => {
-                      const amt = Number(counterOfferAmount);
-                      if (!Number.isFinite(amt) || amt <= 0) {
-                        toast.error("Please enter a valid price in ₹");
-                        return;
-                      }
-                      negotiatePriceMutation.mutate({
-                        creatorId: participant.creatorId || user?.id || 1,
-                        action: "offer",
-                        amount: Math.round(amt),
-                      });
-                    }}
-                    className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold text-xs rounded-xl h-10 px-5 shrink-0 cursor-pointer"
-                  >
-                    Send Counter-Offer
-                  </Button>
-                </div>
-              </div>
-            </Card>
           </TabsContent>
 
           {/* TAB 3: DIRECT REEL SUBMISSION */}
