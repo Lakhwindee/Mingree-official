@@ -177,17 +177,41 @@ async function acquireLock<T>(campaignId: number, fn: () => Promise<T>): Promise
   }
 }
 
-// Initial campaign workspaces store (starts empty per strict requirement - zero demo campaigns)
-const initialWorkspaces: CampaignWorkspaceData[] = [];
+// Load initial workspaces from disk file if available
+function loadWorkspacesFromDisk(): CampaignWorkspaceData[] {
+  try {
+    if (fs.existsSync(CAMPAIGNS_STORE_FILE)) {
+      const data = fs.readFileSync(CAMPAIGNS_STORE_FILE, "utf-8");
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err: any) {
+    console.error("[WORKSPACES DISK LOAD ERROR]", err.message);
+  }
+  return [];
+}
 
-let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(initialWorkspaces.map((c) => [c.id, c]));
+let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(loadWorkspacesFromDisk().map((c) => [c.id, c]));
 
 export function loadAllWorkspaces(): CampaignWorkspaceData[] {
+  if (workspacesCache.size === 0) {
+    const loaded = loadWorkspacesFromDisk();
+    if (loaded.length > 0) {
+      workspacesCache = new Map(loaded.map((c) => [c.id, c]));
+    }
+  }
   return Array.from(workspacesCache.values());
 }
 
 export function saveAllWorkspaces(list: CampaignWorkspaceData[]) {
   workspacesCache = new Map(list.map((c) => [c.id, c]));
+  try {
+    fs.writeFileSync(CAMPAIGNS_STORE_FILE, JSON.stringify(list, null, 2));
+  } catch (err: any) {
+    console.error("[WORKSPACES DISK SAVE ERROR]", err.message);
+  }
 }
 
 export function getWorkspaceById(campaignId: number): CampaignWorkspaceData | null {
