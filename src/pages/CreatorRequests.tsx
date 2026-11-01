@@ -362,34 +362,11 @@ export default function CreatorRequests() {
                       <CheckCircle2 className="h-6 w-6" />
                     </div>
                     <h3 className="text-base font-semibold text-foreground">No Pending Brand Deals</h3>
-                    <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4">
+                    <p className="text-xs text-muted-foreground max-w-sm mt-1">
                       {historyDeals.length > 0
                         ? `You have ${historyDeals.length} completed campaigns safely recorded in Completed & History.`
                         : "All campaigns you have reserved or submitted are in your active workspaces."}
                     </p>
-                    <div className="flex items-center gap-2 flex-wrap justify-center">
-                      {historyDeals.length > 0 && (
-                        <Button
-                          onClick={() => setMainTab("history")}
-                          className="font-semibold text-xs rounded-xl h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
-                        >
-                          <History className="h-3.5 w-3.5 mr-1.5" />
-                          View Completed & History ({historyDeals.length})
-                        </Button>
-                      )}
-                      <Link href="/my-campaigns">
-                        <Button variant="outline" className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer">
-                          Go to My Workspaces
-                        </Button>
-                      </Link>
-                      <Button
-                        variant="outline"
-                        onClick={() => setMainTab("rate-card")}
-                        className="font-semibold text-xs rounded-xl h-9 px-4 cursor-pointer"
-                      >
-                        Set My Rate Card
-                      </Button>
-                    </div>
                   </CardContent>
                 </Card>
               ) : (
