@@ -98,9 +98,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
   const [selected, setSelected] = useState<Map<number, CreatorCard>>(new Map());
 
-  // Changing deliverable resets selection
+  // Reset selection
   const resetSelection = () => { setSelected(new Map()); setBill(null); };
-  const setDeliverable = (x: DeliverableType) => { set("deliverable", x); if (selected.size) resetSelection(); };
+  const setDeliverable = (x: DeliverableType) => {
+    set("deliverable", x);
+    // Keep selected creators! Their prices will be updated in the bill preview for the new deliverable.
+  };
   const remove = (id: number) => setSelected((p) => { const m = new Map(p); m.delete(id); return m; });
 
   // Bill always comes from the server.
@@ -187,7 +190,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
   const problems: string[][] = [
     [
-      creatorIds.length === 0 && "Select at least one creator",
+      creatorIds.length === 0 && "Select at least one creator from the list",
     ].filter(Boolean) as string[],
     [
       !d.title.trim() && "Add a campaign title",
@@ -196,10 +199,32 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       !d.deadline && "Pick a deadline",
     ].filter(Boolean) as string[],
     [!d.captionNote.trim() && "Add a caption note with the disclosure"].filter(Boolean) as string[],
-    [!bill && "Waiting for the bill", bill && bill.shortfall > 0 && "Wallet balance is lower than the total"].filter(Boolean) as string[],
+    [
+      creatorIds.length === 0 && "Select at least one creator from Step 1",
+      billLoading && "Calculating bill...",
+      !bill && creatorIds.length > 0 && !billLoading && "Unable to calculate bill",
+      bill && bill.shortfall > 0 && `Wallet balance is lower than total (${inr(bill.shortfall)} shortfall)`,
+    ].filter(Boolean) as string[],
   ];
   const stepOk = problems[step].length === 0;
   const today = new Date().toISOString().slice(0, 10);
+
+  const handleStepClick = (targetStep: number) => {
+    if (targetStep === step) return;
+    if (targetStep < step) {
+      setStep(targetStep);
+      return;
+    }
+    // Check if earlier steps have problems
+    for (let i = 0; i < targetStep; i++) {
+      if (problems[i].length > 0) {
+        toast.error(`Please complete "${STEPS[i]}" first: ${problems[i][0]}`);
+        setStep(i);
+        return;
+      }
+    }
+    setStep(targetStep);
+  };
 
   const perCreator = new Map(bill?.lines.map((l) => [l.creatorId, l]) ?? []);
 
@@ -209,21 +234,24 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       <div className="flex items-center justify-between gap-3">
         {onBack && <Button variant="ghost" size="sm" onClick={onBack}> Back</Button>}
         <ol className="flex flex-1 min-w-0 items-center justify-center gap-2 sm:gap-4 overflow-x-auto" aria-label="Progress">
-          {STEPS.map((s, i) => (
-            <li key={s} className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setStep(i)}
-                className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition"
-              >
-                <span className={cn("h-7 w-7 rounded-full text-xs font-semibold flex items-center justify-center border",
-                  i < step ? "bg-primary text-primary-foreground border-primary" : i === step ? "border-primary text-primary bg-primary/10" : "text-muted-foreground")}>
-                  {i < step ? "✓" : i + 1}
-                </span>
-                <span className={cn("text-sm hidden md:inline font-medium", i === step ? "font-semibold text-primary" : "text-muted-foreground")}>{s}</span>
-              </button>
-            </li>
-          ))}
+          {STEPS.map((s, i) => {
+            const isStepDone = problems[i].length === 0 && (i < step || (i === 3 && step === 3 && selected.size > 0 && !!bill && bill.shortfall <= 0));
+            return (
+              <li key={s} className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleStepClick(i)}
+                  className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition"
+                >
+                  <span className={cn("h-7 w-7 rounded-full text-xs font-semibold flex items-center justify-center border transition-colors",
+                    isStepDone ? "bg-primary text-primary-foreground border-primary" : i === step ? "border-primary text-primary bg-primary/10" : "text-muted-foreground border-border")}>
+                    {isStepDone ? "✓" : i + 1}
+                  </span>
+                  <span className={cn("text-sm hidden md:inline font-medium", i === step ? "font-semibold text-primary" : "text-muted-foreground")}>{s}</span>
+                </button>
+              </li>
+            );
+          })}
         </ol>
         <div className="w-16 hidden sm:block" />
       </div>
@@ -713,32 +741,56 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                <span>{notice.text}</span>
             </div>
           )}
-          <div className="rounded-xl border overflow-x-auto">
-            <table className="w-full text-sm min-w-[480px]">
-              <thead className="bg-muted/40 text-xs text-muted-foreground"><tr>
-                <th className="text-left p-3 font-medium">Creator</th><th className="text-right p-3 font-medium">Price</th><th className="text-right p-3 font-medium">Mingree fee</th><th className="text-right p-3 font-medium">You pay</th>
-              </tr></thead>
-              <tbody className="divide-y">
-                {[...selected.values()].map((c) => {
-                  const l = perCreator.get(c.id);
-                  return (
-                    <tr key={c.id}>
-                      <td className="p-3">@{c.username}</td>
-                      <td className="p-3 text-right tabular-nums">{inr(l?.price ?? c.price)}</td>
-                      <td className="p-3 text-right tabular-nums">{l ? inr(l.feeArtist) : "—"}</td>
-                      <td className="p-3 text-right tabular-nums font-medium">{l ? inr(l.artistCost) : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <BillCard bill={bill} loading={billLoading} error={billErr} count={selected.size} />
-          {bill && bill.shortfall > 0 && (
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm">
-              <span>You need {inr(bill.shortfall)} more in your wallet.</span>
-              {onAddMoney && <Button size="sm" onClick={onAddMoney}> Add money</Button>}
+
+          {selected.size === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-amber-500/30 p-8 text-center bg-amber-500/5 space-y-3">
+              <div className="w-12 h-12 rounded-full bg-amber-500/10 text-amber-600 flex items-center justify-center mx-auto text-xl">
+                ⚠️
+              </div>
+              <h3 className="font-bold text-base text-foreground">No Creators Selected</h3>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                You must select at least one creator from Step 1 before calculating the bill and launching your campaign.
+              </p>
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  onClick={() => setStep(0)}
+                  className="rounded-xl font-semibold cursor-pointer"
+                >
+                  ← Go to Step 1 &amp; Pick Creators
+                </Button>
+              </div>
             </div>
+          ) : (
+            <>
+              <div className="rounded-xl border overflow-x-auto">
+                <table className="w-full text-sm min-w-[480px]">
+                  <thead className="bg-muted/40 text-xs text-muted-foreground"><tr>
+                    <th className="text-left p-3 font-medium">Creator</th><th className="text-right p-3 font-medium">Price</th><th className="text-right p-3 font-medium">Mingree fee</th><th className="text-right p-3 font-medium">You pay</th>
+                  </tr></thead>
+                  <tbody className="divide-y">
+                    {[...selected.values()].map((c) => {
+                      const l = perCreator.get(c.id);
+                      return (
+                        <tr key={c.id}>
+                          <td className="p-3 font-medium">@{c.username}</td>
+                          <td className="p-3 text-right tabular-nums">{inr(l?.price ?? c.price)}</td>
+                          <td className="p-3 text-right tabular-nums">{l ? inr(l.feeArtist) : "—"}</td>
+                          <td className="p-3 text-right tabular-nums font-medium">{l ? inr(l.artistCost) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <BillCard bill={bill} loading={billLoading} error={billErr} count={selected.size} />
+              {bill && bill.shortfall > 0 && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-primary/40 bg-primary/5 p-3 text-sm">
+                  <span>You need {inr(bill.shortfall)} more in your wallet.</span>
+                  {onAddMoney && <Button size="sm" onClick={onAddMoney}> Add money</Button>}
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
@@ -749,9 +801,20 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         <div className="flex items-center gap-3">
           {!stepOk && <span className="text-xs text-muted-foreground hidden sm:inline">{problems[step][0]}</span>}
           {step < 3 ? (
-            <Button disabled={!stepOk} onClick={() => setStep((s) => s + 1)}>Next </Button>
+            <Button
+              disabled={!stepOk}
+              onClick={() => {
+                if (problems[step].length > 0) {
+                  toast.error(problems[step][0]);
+                  return;
+                }
+                setStep((s) => s + 1);
+              }}
+            >
+              Next
+            </Button>
           ) : (
-            <Button disabled={!stepOk || submitting || billLoading} onClick={launch}>
+            <Button disabled={!stepOk || submitting || billLoading || selected.size === 0} onClick={launch}>
               {submitting ? "Launching..." : "Launch campaign"}{bill ? ` · ${inr(bill.total)}` : ""}
             </Button>
           )}

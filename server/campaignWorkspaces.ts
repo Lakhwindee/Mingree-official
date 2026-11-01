@@ -189,20 +189,142 @@ async function acquireLock<T>(campaignId: number, fn: () => Promise<T>): Promise
   }
 }
 
+export function getInitialSeedWorkspaces(): CampaignWorkspaceData[] {
+  return [
+    {
+      id: 1,
+      sponsorId: 2,
+      title: "New Song / Brand Promo Campaign",
+      brand: "Brand Partner",
+      brandLogo: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+      description: "Promote brand audio / product on Instagram Reels across top creator channels.",
+      genre: "Music & Lifestyle",
+      language: "Hindi & English",
+      contentTypes: ["Reel"],
+      promotionStyle: "Lyrics / Page promotion",
+      audioUrl: "https://instagram.com/reels/sample",
+      referenceVideoUrl: "",
+      productAssets: [],
+      payAmount: 1200,
+      totalBudget: 1290,
+      escrowHeld: 0,
+      committedPayouts: 0,
+      releasedPayouts: 1200,
+      totalSlots: 1,
+      reservedSlots: 1,
+      remainingSlots: 0,
+      bookingModel: "instant",
+      minFollowers: 1000,
+      minMedianViews: 1000,
+      targetCountries: ["India"],
+      targetCities: ["All"],
+      requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
+      requiredTags: ["#MingreePromotions"],
+      requiredMentions: ["@brandpartner"],
+      disclosureInstructions: "#ad | Paid Partnership",
+      minDurationSecs: 15,
+      deadline: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
+      status: "completed",
+      createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+      updatedAt: new Date().toISOString(),
+      briefVersions: [
+        {
+          version: 1,
+          timestamp: new Date(Date.now() - 3 * 86400000).toISOString(),
+          updatedBy: 2,
+          changesSummary: "Campaign initial creation",
+          diffs: [],
+          briefSnapshot: {
+            title: "New Song / Brand Promo Campaign",
+            description: "Promote brand audio / product on Instagram Reels across top creator channels.",
+            requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
+            requiredTags: ["#MingreePromotions"],
+            requiredMentions: ["@brandpartner"],
+            disclosureInstructions: "#ad | Paid Partnership",
+            audioUrl: "https://instagram.com/reels/sample",
+            deadline: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
+          },
+        },
+      ],
+      participants: [
+        {
+          id: 1,
+          campaignId: 1,
+          creatorId: 1,
+          creatorName: "Judge Saab",
+          creatorHandle: "@ijudgesaab",
+          creatorAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          creatorFollowers: 15400,
+          creatorMedianViews: 8200,
+          status: "approved",
+          payoutAmount: 1200,
+          reservedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+          expiresAt: new Date(Date.now() + 11 * 86400000).toISOString(),
+          briefAcknowledgedVersion: 1,
+          submission: {
+            postUrl: "https://www.instagram.com/reel/sample123/",
+            audioConfirmed: true,
+            submittedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+            viewsCount: 14200,
+            likesCount: 980,
+            commentsCount: 65,
+            liveVerified: true,
+          },
+          revisions: [],
+          draftSubmission: null,
+          draftStatus: "none",
+        },
+      ],
+      messages: [
+        {
+          id: Date.now() - 200000,
+          campaignId: 1,
+          senderId: 2,
+          senderName: "Brand Partner",
+          senderRole: "sponsor",
+          senderAvatar: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+          recipientId: null,
+          content: "Welcome to the campaign workspace! Selected creators have been invited to reserve their ad slot.",
+          isAnnouncement: true,
+          createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
+          readBy: [2, 1],
+        },
+        {
+          id: Date.now() - 100000,
+          campaignId: 1,
+          senderId: 2,
+          senderName: "Brand Partner",
+          senderRole: "sponsor",
+          senderAvatar: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+          recipientId: 1,
+          content: "✅ Reel APPROVED! ₹1,200 has been released directly to Judge Saab's wallet balance. Great job!",
+          isAnnouncement: false,
+          createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
+          readBy: [2, 1],
+        },
+      ],
+    },
+  ];
+}
+
 // Load initial workspaces from disk file if available
 function loadWorkspacesFromDisk(): CampaignWorkspaceData[] {
   try {
     if (fs.existsSync(CAMPAIGNS_STORE_FILE)) {
       const data = fs.readFileSync(CAMPAIGNS_STORE_FILE, "utf-8");
       const parsed = JSON.parse(data);
-      if (Array.isArray(parsed)) {
+      if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed;
       }
     }
   } catch (err: any) {
     console.error("[WORKSPACES DISK LOAD ERROR]", err.message);
   }
-  return [];
+  const seed = getInitialSeedWorkspaces();
+  try {
+    fs.writeFileSync(CAMPAIGNS_STORE_FILE, JSON.stringify(seed, null, 2));
+  } catch {}
+  return seed;
 }
 
 let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(loadWorkspacesFromDisk().map((c) => [c.id, c]));
@@ -773,10 +895,14 @@ export function getMarketplaceCampaigns(filters?: {
 // Brand Campaign Cards Summary
 export function getBrandCampaignCards(sponsorId: number) {
   const all = loadAllWorkspaces();
-  const matched = all.filter((c) => Number(c.sponsorId) === Number(sponsorId));
-  const brandCampaigns = matched.length > 0 ? matched : all;
+  // Return all campaigns sorted newest first so no campaigns ever disappear when a new one is created!
+  const sorted = [...all].sort((a, b) => {
+    const timeA = new Date(a.createdAt || 0).getTime();
+    const timeB = new Date(b.createdAt || 0).getTime();
+    return timeB - timeA || Number(b.id) - Number(a.id);
+  });
 
-  return brandCampaigns.map((c) => {
+  return sorted.map((c) => {
     const pendingCreatorsCount = (c.participants || []).filter((p) => p.status === "pending").length;
     const pendingApplications = (c.participants || []).filter((p) => p.status === "applied").length;
     const awaitingReview = (c.participants || []).filter((p) => p.status === "content_submitted").length;

@@ -3151,8 +3151,9 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
     });
   }
 
+  await ensureWorkspacesLoaded();
   const allWorkspaces = loadAllWorkspaces();
-  const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map((c) => c.id || 0)) + 1 : 1;
+  const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map((c) => Number(c.id) || 0)) + 1 : 1;
 
   // 2. Move budget into escrow_held and write ledger entries
   await lockEscrow(sponsorId, totalBudget, { refType: "campaign_launch", refId: String(newId) });

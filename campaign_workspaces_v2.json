@@ -1,0 +1,135 @@
+[
+  {
+    "id": 1,
+    "sponsorId": 2,
+    "title": "New Song / Brand Promo Campaign",
+    "brand": "Brand Partner",
+    "brandLogo": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+    "description": "Promote brand audio / product on Instagram Reels across top creator channels.",
+    "genre": "Music & Lifestyle",
+    "language": "Hindi & English",
+    "contentTypes": [
+      "Reel"
+    ],
+    "promotionStyle": "Lyrics / Page promotion",
+    "audioUrl": "https://instagram.com/reels/sample",
+    "referenceVideoUrl": "",
+    "productAssets": [],
+    "payAmount": 1200,
+    "totalBudget": 1290,
+    "escrowHeld": 0,
+    "committedPayouts": 0,
+    "releasedPayouts": 1200,
+    "totalSlots": 1,
+    "reservedSlots": 1,
+    "remainingSlots": 0,
+    "bookingModel": "instant",
+    "minFollowers": 1000,
+    "minMedianViews": 1000,
+    "targetCountries": [
+      "India"
+    ],
+    "targetCities": [
+      "All"
+    ],
+    "requiredCaptionNote": "Promote brand audio / product on Instagram Reels across top creator channels.",
+    "requiredTags": [
+      "#MingreePromotions"
+    ],
+    "requiredMentions": [
+      "@brandpartner"
+    ],
+    "disclosureInstructions": "#ad | Paid Partnership",
+    "minDurationSecs": 15,
+    "deadline": "2026-11-08",
+    "status": "completed",
+    "createdAt": "2026-10-29T11:13:56.183Z",
+    "updatedAt": "2026-11-01T11:13:56.183Z",
+    "briefVersions": [
+      {
+        "version": 1,
+        "timestamp": "2026-10-29T11:13:56.183Z",
+        "updatedBy": 2,
+        "changesSummary": "Campaign initial creation",
+        "diffs": [],
+        "briefSnapshot": {
+          "title": "New Song / Brand Promo Campaign",
+          "description": "Promote brand audio / product on Instagram Reels across top creator channels.",
+          "requiredCaptionNote": "Promote brand audio / product on Instagram Reels across top creator channels.",
+          "requiredTags": [
+            "#MingreePromotions"
+          ],
+          "requiredMentions": [
+            "@brandpartner"
+          ],
+          "disclosureInstructions": "#ad | Paid Partnership",
+          "audioUrl": "https://instagram.com/reels/sample",
+          "deadline": "2026-11-08"
+        }
+      }
+    ],
+    "participants": [
+      {
+        "id": 1,
+        "campaignId": 1,
+        "creatorId": 1,
+        "creatorName": "Judge Saab",
+        "creatorHandle": "@ijudgesaab",
+        "creatorAvatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+        "creatorFollowers": 15400,
+        "creatorMedianViews": 8200,
+        "status": "approved",
+        "payoutAmount": 1200,
+        "reservedAt": "2026-10-29T11:13:56.183Z",
+        "expiresAt": "2026-11-12T11:13:56.183Z",
+        "briefAcknowledgedVersion": 1,
+        "submission": {
+          "postUrl": "https://www.instagram.com/reel/sample123/",
+          "audioConfirmed": true,
+          "submittedAt": "2026-10-31T11:13:56.183Z",
+          "viewsCount": 14200,
+          "likesCount": 980,
+          "commentsCount": 65,
+          "liveVerified": true
+        },
+        "revisions": [],
+        "draftSubmission": null,
+        "draftStatus": "none"
+      }
+    ],
+    "messages": [
+      {
+        "id": 1793531436183,
+        "campaignId": 1,
+        "senderId": 2,
+        "senderName": "Brand Partner",
+        "senderRole": "sponsor",
+        "senderAvatar": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+        "recipientId": null,
+        "content": "Welcome to the campaign workspace! Selected creators have been invited to reserve their ad slot.",
+        "isAnnouncement": true,
+        "createdAt": "2026-10-29T11:13:56.183Z",
+        "readBy": [
+          2,
+          1
+        ]
+      },
+      {
+        "id": 1793531536183,
+        "campaignId": 1,
+        "senderId": 2,
+        "senderName": "Brand Partner",
+        "senderRole": "sponsor",
+        "senderAvatar": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+        "recipientId": 1,
+        "content": "✅ Reel APPROVED! ₹1,200 has been released directly to Judge Saab's wallet balance. Great job!",
+        "isAnnouncement": false,
+        "createdAt": "2026-10-31T11:13:56.183Z",
+        "readBy": [
+          2,
+          1
+        ]
+      }
+    ]
+  }
+]

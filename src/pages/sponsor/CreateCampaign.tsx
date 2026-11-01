@@ -388,6 +388,7 @@ export default function CreateCampaign() {
       
       queryClient.invalidateQueries({ queryKey: ["sponsorCampaigns"] });
       queryClient.invalidateQueries({ queryKey: ["sponsorCampaignCards"] });
+      queryClient.invalidateQueries({ queryKey: ["brandCampaignCards"] });
       queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
       queryClient.invalidateQueries({ queryKey: ["campaigns"] });
       toast.success(`Campaign created successfully!`);
