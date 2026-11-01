@@ -79,8 +79,9 @@ export default function CampaignWorkspace() {
   const historyParticipants = allParticipants.filter(
     (p) => p.status === "approved" || p.status === "completed"
   );
+  const currentTab = activeParticipants.length === 0 ? "history" : creatorTab;
   const displayedParticipants =
-    creatorTab === "active" ? activeParticipants : historyParticipants;
+    currentTab === "active" ? activeParticipants : historyParticipants;
 
   const reviewSubmissionMutation = useMutation({
     mutationFn: (data: {
@@ -240,9 +241,11 @@ export default function CampaignWorkspace() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
-              Active: {activeParticipants.length}
-            </span>
+            {activeParticipants.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                Active: {activeParticipants.length}
+              </span>
+            )}
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
               Completed: {historyParticipants.length}
             </span>
@@ -254,20 +257,22 @@ export default function CampaignWorkspace() {
           <Card className="bg-card border-border shadow-xs overflow-hidden rounded-2xl">
             <CardHeader className="p-4 border-b border-border bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2 flex-wrap">
+                {activeParticipants.length > 0 && (
+                  <Button
+                    variant={currentTab === "active" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setCreatorTab("active");
+                      setSelectedCreatorId(null);
+                    }}
+                    className="text-xs font-bold rounded-xl h-8 px-3.5 cursor-pointer"
+                  >
+                    <Users className="h-3.5 w-3.5 mr-1.5" />
+                    Active Creators ({activeParticipants.length})
+                  </Button>
+                )}
                 <Button
-                  variant={creatorTab === "active" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => {
-                    setCreatorTab("active");
-                    setSelectedCreatorId(null);
-                  }}
-                  className="text-xs font-bold rounded-xl h-8 px-3.5 cursor-pointer"
-                >
-                  <Users className="h-3.5 w-3.5 mr-1.5" />
-                  Active Creators ({activeParticipants.length})
-                </Button>
-                <Button
-                  variant={creatorTab === "history" ? "default" : "outline"}
+                  variant={currentTab === "history" || activeParticipants.length === 0 ? "default" : "outline"}
                   size="sm"
                   onClick={() => {
                     setCreatorTab("history");
@@ -275,7 +280,7 @@ export default function CampaignWorkspace() {
                   }}
                   className={cn(
                     "text-xs font-bold rounded-xl h-8 px-3.5 cursor-pointer",
-                    creatorTab === "history"
+                    currentTab === "history" || activeParticipants.length === 0
                       ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                       : "text-emerald-700 dark:text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/10"
                   )}
@@ -285,7 +290,7 @@ export default function CampaignWorkspace() {
                 </Button>
               </div>
               <span className="text-xs text-muted-foreground">
-                {creatorTab === "active"
+                {currentTab === "active"
                   ? "Pending & in-progress creators"
                   : "Approved reels & payout receipts"}
               </span>
@@ -293,7 +298,7 @@ export default function CampaignWorkspace() {
 
             <CardContent className="p-0">
               {displayedParticipants.length === 0 ? (
-                creatorTab === "active" ? (
+                currentTab === "active" ? (
                   <div className="p-10 text-center space-y-3">
                     <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
                       <CheckCircle2 className="h-6 w-6" />
