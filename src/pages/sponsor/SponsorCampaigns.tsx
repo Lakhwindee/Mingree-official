@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import { SponsorSidebar } from "@/components/SponsorSidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,9 +7,11 @@ import { api, formatINR, type BrandCampaignCard } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Link, useLocation } from "wouter";
+import { Layers, History, CheckCircle2, FolderCheck } from "lucide-react";
 
 export default function SponsorCampaigns() {
   const [, setLocation] = useLocation();
+  const [filterTab, setFilterTab] = useState<"active" | "history" | "all">("active");
 
   const { data: sponsor } = useQuery({
     queryKey: ["currentSponsor"],
@@ -24,6 +27,19 @@ export default function SponsorCampaigns() {
     enabled: !!sponsor,
     refetchInterval: 4000,
   });
+
+  const isCampaignCompleted = (c: BrandCampaignCard) => {
+    return c.status === "completed" || (c.totalSlots > 0 && c.approvedCount >= c.totalSlots);
+  };
+
+  const activeCards = useMemo(() => cards.filter((c) => !isCampaignCompleted(c)), [cards]);
+  const completedCards = useMemo(() => cards.filter((c) => isCampaignCompleted(c)), [cards]);
+
+  const displayedCards = useMemo(() => {
+    if (filterTab === "active") return activeCards;
+    if (filterTab === "history") return completedCards;
+    return cards;
+  }, [filterTab, activeCards, completedCards, cards]);
 
   return (
     <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-background text-foreground">
@@ -47,6 +63,67 @@ export default function SponsorCampaigns() {
         </div>
 
         <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-6">
+          {/* Workspace Tabs: Active vs Completed & History */}
+          {!isLoading && cards.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-border/80 pb-3">
+              <button
+                type="button"
+                onClick={() => setFilterTab("active")}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                  filterTab === "active"
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+              >
+                <Layers className="h-4 w-4" />
+                <span>Active Workspaces</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    filterTab === "active"
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-muted-foreground/15 text-muted-foreground"
+                  }`}
+                >
+                  {activeCards.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterTab("history")}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                  filterTab === "history"
+                    ? "bg-emerald-600 text-white shadow-xs"
+                    : "bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted"
+                }`}
+              >
+                <History className="h-4 w-4" />
+                <span>Completed & History</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    filterTab === "history"
+                      ? "bg-white/20 text-white"
+                      : "bg-muted-foreground/15 text-muted-foreground"
+                  }`}
+                >
+                  {completedCards.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFilterTab("all")}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                  filterTab === "all"
+                    ? "bg-foreground/10 text-foreground border border-border"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <span>All ({cards.length})</span>
+              </button>
+            </div>
+          )}
+
           {isLoading ? (
             <div className="text-center py-24">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent mx-auto" />
@@ -64,10 +141,55 @@ export default function SponsorCampaigns() {
                 </Button>
               </Link>
             </Card>
+          ) : displayedCards.length === 0 ? (
+            filterTab === "active" ? (
+              <Card className="border-border bg-card p-10 text-center space-y-4 rounded-2xl shadow-2xs">
+                <div className="h-12 w-12 rounded-full bg-emerald-500/10 text-emerald-600 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-foreground">Active Workspaces Clean</h3>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  All your campaign spots have been completed and approved! Finished campaign folders have been moved into the <strong>Completed & History</strong> tab.
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setFilterTab("history")}
+                    className="font-semibold text-xs rounded-xl cursor-pointer"
+                  >
+                    <History className="h-3.5 w-3.5 mr-1.5" />
+                    View Completed & History ({completedCards.length})
+                  </Button>
+                  <Link href="/sponsor/create-campaign">
+                    <Button className="font-semibold text-xs rounded-xl cursor-pointer">
+                      Create New Campaign
+                    </Button>
+                  </Link>
+                </div>
+              </Card>
+            ) : (
+              <Card className="border-border bg-card p-10 text-center space-y-4 rounded-2xl shadow-2xs">
+                <div className="h-12 w-12 rounded-full bg-muted text-muted-foreground flex items-center justify-center mx-auto">
+                  <History className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold text-foreground">No Completed Campaigns Yet</h3>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  Once creators submit their Reels and you approve them, finished campaign folders will automatically appear here in History.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => setFilterTab("active")}
+                  className="font-semibold text-xs rounded-xl cursor-pointer"
+                >
+                  Back to Active Workspaces
+                </Button>
+              </Card>
+            )
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {cards.map((c) => {
+              {displayedCards.map((c) => {
                 const fillPercent = c.totalSlots > 0 ? Math.round((c.reservedSlots / c.totalSlots) * 100) : 0;
+                const isCompleted = isCampaignCompleted(c);
 
                 return (
                   <motion.div
@@ -198,10 +320,14 @@ export default function SponsorCampaigns() {
 
                         <Button
                           size="sm"
-                          variant="secondary"
-                          className="group-hover:bg-primary group-hover:text-primary-foreground text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                          variant={isCompleted ? "outline" : "secondary"}
+                          className={
+                            isCompleted
+                              ? "text-xs font-semibold rounded-xl text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20 transition-all cursor-pointer"
+                              : "group-hover:bg-primary group-hover:text-primary-foreground text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                          }
                         >
-                          Open Workspace
+                          {isCompleted ? "Open History & Workspace" : "Open Workspace"}
                         </Button>
                       </CardFooter>
                     </Card>

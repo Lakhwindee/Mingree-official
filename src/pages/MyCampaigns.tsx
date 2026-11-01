@@ -15,7 +15,7 @@ import { motion } from "framer-motion";
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "wouter";
 import { toast } from "sonner";
-import { CheckCircle2, Clock, ExternalLink } from "lucide-react";
+import { CheckCircle2, Clock, ExternalLink, History } from "lucide-react";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = (_props?: any) => null;
@@ -79,7 +79,7 @@ export default function MyCampaigns() {
   });
   const [selectedReservation, setSelectedReservation] = useState<(ApiReservation & { campaign: ApiCampaign }) | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>("active");
 
   const { data: user } = useQuery({
     queryKey: ["currentUser"],
@@ -111,12 +111,26 @@ export default function MyCampaigns() {
     });
   }, [reservations, isUserPro]);
 
+  const isCompletedRes = (r: ApiReservation) =>
+    r.status === 'approved' || (r.status as string) === 'completed';
+
   const filteredReservations = useMemo(() => {
-    if (statusFilter === "all") return activeReservations;
+    if (statusFilter === "active") {
+      return activeReservations.filter((r) => !isCompletedRes(r));
+    }
+    if (statusFilter === "history" || statusFilter === "completed" || statusFilter === "done") {
+      return activeReservations.filter(isCompletedRes);
+    }
     if (statusFilter === "submitted") {
       return activeReservations.filter((r: ApiReservation) => r.status === 'submitted' || (r.status as string) === 'content_submitted');
     }
-    return activeReservations.filter((r: ApiReservation) => r.status === statusFilter);
+    if (statusFilter === "reserved") {
+      return activeReservations.filter((r: ApiReservation) => r.status === 'reserved');
+    }
+    if (statusFilter === "pending") {
+      return activeReservations.filter((r: ApiReservation) => r.status === 'pending');
+    }
+    return activeReservations;
   }, [activeReservations, statusFilter]);
 
   const acceptInvitationMutation = useMutation({
@@ -223,11 +237,12 @@ export default function MyCampaigns() {
 
   const counts = useMemo(() => {
     return {
-      all: activeReservations.length,
+      total: activeReservations.length,
+      active: activeReservations.filter((r) => !isCompletedRes(r)).length,
       pending: activeReservations.filter((r: ApiReservation) => r.status === 'pending').length,
       reserved: activeReservations.filter((r: ApiReservation) => r.status === 'reserved').length,
       submitted: activeReservations.filter((r: ApiReservation) => r.status === 'submitted' || (r.status as string) === 'content_submitted').length,
-      approved: activeReservations.filter((r: ApiReservation) => r.status === 'approved').length,
+      completed: activeReservations.filter(isCompletedRes).length,
     };
   }, [activeReservations]);
 
@@ -244,8 +259,13 @@ export default function MyCampaigns() {
               <div className="flex items-center gap-2.5">
                 <h1 className="text-2xl font-bold tracking-tight text-foreground">My Workspaces</h1>
                 <span className="text-xs font-semibold px-2.5 py-0.5 rounded bg-muted text-foreground">
-                  {counts.all} Active
+                  {counts.active} Active Deals
                 </span>
+                {counts.completed > 0 && (
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    {counts.completed} in History
+                  </span>
+                )}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Manage your invited brand deals, claimed slots, active countdown timers, and Reel submissions.
@@ -254,18 +274,18 @@ export default function MyCampaigns() {
             {user && <NotificationDropdown userId={user.id} />}
           </div>
 
-          {/* Quick Filter Pill Buttons */}
+          {/* Quick Filter Pill Buttons with History / Done Tab */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
             <button
               type="button"
-              onClick={() => setStatusFilter("all")}
+              onClick={() => setStatusFilter("active")}
               className={`px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 cursor-pointer ${
-                statusFilter === "all"
+                statusFilter === "active"
                   ? "bg-primary text-primary-foreground shadow-xs"
                   : "bg-muted text-muted-foreground hover:text-foreground"
               }`}
             >
-              All ({counts.all})
+              Active ({counts.active})
             </button>
             {counts.pending > 0 && (
               <button
@@ -304,14 +324,26 @@ export default function MyCampaigns() {
             </button>
             <button
               type="button"
-              onClick={() => setStatusFilter("approved")}
-              className={`px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 cursor-pointer ${
-                statusFilter === "approved"
-                  ? "bg-primary text-primary-foreground shadow-xs"
-                  : "bg-muted text-muted-foreground hover:text-foreground"
+              onClick={() => setStatusFilter("history")}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 cursor-pointer ${
+                statusFilter === "history" || statusFilter === "completed"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20"
               }`}
             >
-              Approved ({counts.approved})
+              <History className="h-3.5 w-3.5" />
+              <span>History / Done ({counts.completed})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter("all")}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition-all shrink-0 cursor-pointer ${
+                statusFilter === "all"
+                  ? "bg-foreground/15 text-foreground border border-border shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              All ({counts.total})
             </button>
           </div>
 
@@ -333,9 +365,53 @@ export default function MyCampaigns() {
               </Link>
             </motion.div>
           ) : filteredReservations.length === 0 ? (
-            <div className="py-14 text-center text-muted-foreground text-xs sm:text-sm">
-              No campaigns found for the "{statusFilter}" filter.
-            </div>
+            statusFilter === "active" && counts.completed > 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 p-8 sm:p-12 text-center bg-card/50">
+                <div className="h-12 w-12 rounded-full bg-emerald-500/10 text-emerald-600 flex items-center justify-center mb-3">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold">Active Workspaces Clean</h3>
+                <p className="mb-4 mt-1 text-xs sm:text-sm text-muted-foreground max-w-sm">
+                  You have no pending tasks right now. All your campaign spots have been completed and moved to your History!
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setStatusFilter("history")}
+                    className="rounded-xl text-xs sm:text-sm cursor-pointer"
+                  >
+                    <History className="h-4 w-4 mr-1.5 text-emerald-600" />
+                    View History / Done ({counts.completed})
+                  </Button>
+                  <Link href="/campaigns">
+                    <Button className="rounded-xl text-xs sm:text-sm shadow-xs cursor-pointer">
+                      Explore New Campaigns
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            ) : statusFilter === "history" ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 p-8 sm:p-12 text-center bg-card/50">
+                <div className="h-12 w-12 rounded-full bg-muted text-muted-foreground flex items-center justify-center mb-3">
+                  <History className="h-6 w-6" />
+                </div>
+                <h3 className="text-lg font-bold">No Completed Campaigns Yet</h3>
+                <p className="mb-4 mt-1 text-xs sm:text-sm text-muted-foreground max-w-sm">
+                  Once brand partners approve your submitted Instagram Reels, your completed deals will be archived here in History.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => setStatusFilter("active")}
+                  className="rounded-xl text-xs sm:text-sm cursor-pointer"
+                >
+                  Back to Active Workspaces
+                </Button>
+              </div>
+            ) : (
+              <div className="py-14 text-center text-muted-foreground text-xs sm:text-sm">
+                No campaigns found for the "{statusFilter}" filter.
+              </div>
+            )
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
               {filteredReservations.map((reservation: ApiReservation & { campaign: ApiCampaign }, index: number) => {
