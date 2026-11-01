@@ -56,6 +56,8 @@ export interface CreatorSearchResult {
 export interface BillLine {
   creatorId: number;
   price: number;
+  basePrice?: number;
+  isCustomOffer?: boolean;
   feeArtist: number;
   gstInFee: number;
   artistCost: number;
@@ -94,6 +96,7 @@ export interface CampaignDetails {
 export interface SubmitPayload {
   details: CampaignDetails;
   creatorIds: number[];
+  customRates?: Record<number, number>;
   billId: string;
 }
 
@@ -107,6 +110,10 @@ export type SubmitResult =
 export interface ManualCampaignApi {
   listCities(): Promise<City[]>;
   searchCreators(p: CreatorSearchParams): Promise<CreatorSearchResult>;
-  previewBill(input: { deliverable: DeliverableType; creatorIds: number[] }): Promise<Bill>;
+  previewBill(input: {
+    deliverable: DeliverableType;
+    creatorIds: number[];
+    customRates?: Record<number, number>;
+  }): Promise<Bill>;
   submit(p: SubmitPayload): Promise<SubmitResult>;
 }

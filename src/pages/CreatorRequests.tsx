@@ -218,6 +218,34 @@ export default function CreatorRequests() {
     },
   });
 
+  const quickNegotiateMutation = useMutation({
+    mutationFn: (params: {
+      campaignId: number;
+      action: "accept" | "decline" | "counter_offer";
+      amount: number;
+    }) =>
+      api.negotiateCampaignPrice(params.campaignId, {
+        creatorId: Number(user?.id || 1),
+        creatorName: user?.name,
+        creatorHandle: user?.handle || user?.instagramUsername,
+        viewerRole: "creator",
+        action: params.action,
+        amount: params.amount,
+      }),
+    onSuccess: (data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["creatorWorkspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", vars.campaignId] });
+      if (vars.action === "accept") {
+        toast.success(`Deal rate approved & locked at ${formatINR(vars.amount)}!`);
+      } else if (vars.action === "decline") {
+        toast.info("Rate offer declined.");
+      }
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to update negotiation");
+    },
+  });
+
   const handleDownloadBriefAndAssets = (deal: any) => {
     if (!deal) return;
 
@@ -462,6 +490,67 @@ export default function CreatorRequests() {
                               </span>
                             </div>
                           </div>
+
+                          {/* Brand Rate Offer Banner for Creator */}
+                          {ws.negotiationStatus === "brand_offered" && (
+                            <div className="p-3 rounded-xl bg-primary/10 border border-primary/25 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
+                                  <span>⚡ Brand Proposed Offer Rate:</span>
+                                  <span className="font-extrabold text-foreground tabular-nums text-xs">
+                                    {formatINR(ws.payAmount)}
+                                  </span>
+                                </span>
+                                {ws.basePayAmount && ws.basePayAmount > ws.payAmount && (
+                                  <span className="text-[10px] text-muted-foreground line-through tabular-nums">
+                                    Base: {formatINR(ws.basePayAmount)}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-muted-foreground leading-snug">
+                                {ws.brand} has sent you a custom offer. You can approve this rate, make a counter-offer, or decline.
+                              </p>
+                              <div className="flex items-center gap-2 pt-0.5">
+                                <Button
+                                  size="sm"
+                                  disabled={quickNegotiateMutation.isPending}
+                                  onClick={() =>
+                                    quickNegotiateMutation.mutate({
+                                      campaignId: ws.campaignId,
+                                      action: "accept",
+                                      amount: ws.payAmount,
+                                    })
+                                  }
+                                  className="h-8 flex-1 font-bold text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-2xs"
+                                >
+                                  ✓ Approve {formatINR(ws.payAmount)}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setNegotiatingCampaignId(ws.campaignId)}
+                                  className="h-8 px-3 font-bold text-xs rounded-lg border-primary/40 text-primary hover:bg-primary/10 cursor-pointer"
+                                >
+                                  💬 Counter
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={quickNegotiateMutation.isPending}
+                                  onClick={() =>
+                                    quickNegotiateMutation.mutate({
+                                      campaignId: ws.campaignId,
+                                      action: "decline",
+                                      amount: ws.payAmount,
+                                    })
+                                  }
+                                  className="h-8 px-2.5 font-semibold text-xs rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                                >
+                                  ✕ Reject
+                                </Button>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Action Buttons: Files & Submit Reel (Rate Chat is completely hidden once rate is fixed / deal done) */}
                           <div className="flex items-center gap-2">

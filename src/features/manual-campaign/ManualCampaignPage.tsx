@@ -97,14 +97,59 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const set = <K extends keyof CampaignDetails>(k: K, v: CampaignDetails[K]) => setD((p) => ({ ...p, [k]: v }));
 
   const [selected, setSelected] = useState<Map<number, CreatorCard>>(new Map());
+  const [customRates, setCustomRates] = useState<Record<number, number>>({});
+  const [editingRateCreatorId, setEditingRateCreatorId] = useState<number | null>(null);
+  const [customRateInput, setCustomRateInput] = useState<string>("");
 
   // Reset selection
-  const resetSelection = () => { setSelected(new Map()); setBill(null); };
+  const resetSelection = () => {
+    setSelected(new Map());
+    setCustomRates({});
+    setEditingRateCreatorId(null);
+    setBill(null);
+  };
   const setDeliverable = (x: DeliverableType) => {
     set("deliverable", x);
     // Keep selected creators! Their prices will be updated in the bill preview for the new deliverable.
   };
-  const remove = (id: number) => setSelected((p) => { const m = new Map(p); m.delete(id); return m; });
+  const remove = (id: number) => {
+    setSelected((p) => { const m = new Map(p); m.delete(id); return m; });
+    setCustomRates((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    if (editingRateCreatorId === id) setEditingRateCreatorId(null);
+  };
+
+  const openRateDialog = (creator: CreatorCard) => {
+    setEditingRateCreatorId(creator.id);
+    setCustomRateInput(customRates[creator.id] ? String(customRates[creator.id]) : String(creator.price));
+  };
+
+  const applyCustomRate = (creator: CreatorCard, amount: number) => {
+    const clean = Math.max(100, Math.round(amount));
+    setCustomRates((prev) => ({ ...prev, [creator.id]: clean }));
+    // If not yet selected, also add the creator
+    if (!selected.has(creator.id)) {
+      setSelected((prev) => new Map(prev).set(creator.id, creator));
+    }
+    setEditingRateCreatorId(null);
+    toast.success(`Proposed rate ₹${clean.toLocaleString("en-IN")} set for @${creator.username}`);
+  };
+
+  const resetCustomRate = (creatorId: number) => {
+    setCustomRates((prev) => {
+      const next = { ...prev };
+      delete next[creatorId];
+      return next;
+    });
+    if (editingRateCreatorId === creatorId) {
+      setEditingRateCreatorId(null);
+    }
+    toast.info("Rate reset to creator's standard rate");
+  };
 
   // Bill always comes from the server.
   const [bill, setBill] = useState<Bill | null>(null);
@@ -114,10 +159,16 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const refreshBill = useCallback(async () => {
     if (!creatorIds.length) { setBill(null); return; }
     setBillLoading(true); setBillErr(null);
-    try { setBill(await api.previewBill({ deliverable: d.deliverable, creatorIds })); }
+    try {
+      setBill(await api.previewBill({
+        deliverable: d.deliverable,
+        creatorIds,
+        customRates: Object.keys(customRates).length > 0 ? customRates : undefined,
+      }));
+    }
     catch (e: any) { setBillErr(e?.message || "Could not calculate the bill"); setBill(null); }
     finally { setBillLoading(false); }
-  }, [api, creatorIds, d.deliverable]);
+  }, [api, creatorIds, d.deliverable, customRates]);
   useEffect(() => { const t = setTimeout(refreshBill, 250); return () => clearTimeout(t); }, [refreshBill]);
 
   // Live direct creator search state
@@ -178,7 +229,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
     if (!bill) return;
     setSubmitting(true); setNotice(null);
     try {
-      const r = await api.submit({ details: d, creatorIds, billId: bill.billId });
+      const r = await api.submit({
+        details: d,
+        creatorIds,
+        customRates: Object.keys(customRates).length > 0 ? customRates : undefined,
+        billId: bill.billId,
+      });
       if (r.ok === true) return onCreated((r as { ok: true; campaignId: number }).campaignId);
       const f = r as Exclude<SubmitResult, { ok: true }>;
       if (f.reason === "bill_changed") { setBill(f.bill); setNotice({ kind: "warn", text: "A creator's rate changed. Check the new total below and press Launch again to confirm." }); }
@@ -440,11 +496,42 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         <div className="text-right">
-                          <div className="text-sm font-bold tabular-nums text-foreground">{inr(c.price)}</div>
-                          <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                          {customRates[c.id] ? (
+                            <div>
+                              <div className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                                {inr(customRates[c.id])}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground line-through tabular-nums">
+                                {inr(c.price)}
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="text-sm font-bold tabular-nums text-foreground">{inr(c.price)}</div>
+                              <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                            </div>
+                          )}
                         </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openRateDialog(c);
+                          }}
+                          className={cn(
+                            "h-8 px-2.5 text-xs font-semibold rounded-xl transition-all",
+                            customRates[c.id]
+                              ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                          title="Offer custom rate"
+                        >
+                          {customRates[c.id] ? "✏️ Offer" : "💬 Custom Rate"}
+                        </Button>
                         <Button
                           type="button"
                           size="sm"
@@ -599,25 +686,152 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       </div>
                     </div>
 
-                    <div className="mt-3 pt-2.5 border-t flex items-center justify-between gap-2">
-                      <div>
-                        <div className="font-bold text-sm tabular-nums text-foreground">{inr(c.price)}</div>
-                        <div className="text-[10px] text-muted-foreground">per {d.deliverable === "collab_post" ? "collab" : d.deliverable}</div>
+                    {/* Rate and Custom Negotiation Offer Button */}
+                    <div className="mt-3 pt-2.5 border-t space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          {customRates[c.id] ? (
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-extrabold text-sm tabular-nums text-emerald-600 dark:text-emerald-400">
+                                  {inr(customRates[c.id])}
+                                </span>
+                                <span className="text-[10px] font-semibold line-through text-muted-foreground tabular-nums">
+                                  {inr(c.price)}
+                                </span>
+                              </div>
+                              <div className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                <span>⚡ Your Offer Rate</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="font-bold text-sm tabular-nums text-foreground">{inr(c.price)}</div>
+                              <div className="text-[10px] text-muted-foreground">per {d.deliverable === "collab_post" ? "collab" : d.deliverable}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Offer / Negotiate Rate Button */}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (editingRateCreatorId === c.id) {
+                                setEditingRateCreatorId(null);
+                              } else {
+                                openRateDialog(c);
+                              }
+                            }}
+                            className={cn(
+                              "h-8 px-2.5 text-xs font-semibold rounded-lg transition-all",
+                              customRates[c.id]
+                                ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20"
+                                : "border-muted-foreground/30 text-foreground hover:bg-muted"
+                            )}
+                            title="Set your custom offered rate for this creator"
+                          >
+                            {customRates[c.id] ? "✏️ Offer" : "💬 Custom Rate"}
+                          </Button>
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={isChosen ? "default" : "outline"}
+                            onClick={() => toggleCreator(c)}
+                            className={cn(
+                              "h-8 px-3 text-xs font-semibold rounded-lg transition-all",
+                              isChosen
+                                ? "bg-primary text-primary-foreground shadow-xs"
+                                : "border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+                            )}
+                          >
+                            {isChosen ? "✓ Added" : "+ Add"}
+                          </Button>
+                        </div>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={isChosen ? "default" : "outline"}
-                        onClick={() => toggleCreator(c)}
-                        className={cn(
-                          "h-8 px-3 text-xs font-semibold rounded-lg transition-all",
-                          isChosen
-                            ? "bg-primary text-primary-foreground shadow-xs"
-                            : "border-primary text-primary hover:bg-primary hover:text-primary-foreground"
-                        )}
-                      >
-                        {isChosen ? "✓ Added" : "+ Add"}
-                      </Button>
+
+                      {/* Inline Custom Rate Offer Input Box */}
+                      {editingRateCreatorId === c.id && (
+                        <div className="rounded-xl border border-primary/40 bg-primary/5 p-3 space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-foreground">Propose Offer for @{c.username}</span>
+                            <span className="text-[10px] text-muted-foreground">Standard: {inr(c.price)}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="relative flex-1">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-bold text-muted-foreground">₹</span>
+                              <Input
+                                type="number"
+                                min={100}
+                                value={customRateInput}
+                                onChange={(e) => setCustomRateInput(e.target.value)}
+                                placeholder={String(c.price)}
+                                className="h-8 pl-6 pr-2 text-xs font-bold bg-background rounded-lg"
+                                autoFocus
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    const val = Number(customRateInput);
+                                    if (val > 0) applyCustomRate(c, val);
+                                  }
+                                }}
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                const val = Number(customRateInput);
+                                if (val > 0) applyCustomRate(c, val);
+                                else toast.error("Enter a valid offer amount in ₹");
+                              }}
+                              className="h-8 px-3 text-xs font-bold rounded-lg bg-primary text-primary-foreground shadow-2xs"
+                            >
+                              Apply
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setEditingRateCreatorId(null)}
+                              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                            >
+                              ✕
+                            </Button>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] text-muted-foreground font-medium">Quick:</span>
+                            {[
+                              { label: "-10%", amt: Math.round(c.price * 0.9) },
+                              { label: "-20%", amt: Math.round(c.price * 0.8) },
+                              { label: "₹1,000", amt: 1000 },
+                              { label: "₹1,500", amt: 1500 },
+                            ].filter((preset, idx, arr) => preset.amt > 0 && arr.findIndex(x => x.amt === preset.amt) === idx).map((preset) => (
+                              <button
+                                key={preset.label}
+                                type="button"
+                                onClick={() => setCustomRateInput(String(preset.amt))}
+                                className="text-[10px] px-2 py-0.5 rounded-md border border-border bg-background hover:bg-muted font-medium transition cursor-pointer"
+                              >
+                                {preset.label} ({inr(preset.amt)})
+                              </button>
+                            ))}
+                            {customRates[c.id] && (
+                              <button
+                                type="button"
+                                onClick={() => resetCustomRate(c.id)}
+                                className="text-[10px] px-2 py-0.5 rounded-md text-destructive hover:bg-destructive/10 font-medium transition cursor-pointer ml-auto"
+                              >
+                                Reset to Base
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -672,15 +886,46 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             Registered
                           </span>
                         )}
+                        {customRates[c.id] && (
+                          <span className="text-[9px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded-full">
+                            Custom Offer
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground truncate">
                         {c.displayName} · {compact(c.followers)} followers {c.city?.name ? `· ${c.city.name}` : ""}
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-sm font-bold tabular-nums">{inr(c.price)}</div>
-                      <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                      {customRates[c.id] ? (
+                        <div>
+                          <div className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                            {inr(customRates[c.id])}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground line-through tabular-nums">
+                            Base {inr(c.price)}
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="text-sm font-bold tabular-nums">{inr(c.price)}</div>
+                          <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                        </div>
+                      )}
                     </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => openRateDialog(c)}
+                      className={cn(
+                        "h-8 px-2 text-xs rounded-lg transition",
+                        customRates[c.id] ? "text-emerald-600 font-bold hover:bg-emerald-500/10" : "text-muted-foreground hover:text-foreground"
+                      )}
+                      title="Propose / edit offer rate"
+                    >
+                      {customRates[c.id] ? "✏️ Edit" : "💬 Offer"}
+                    </Button>
                     <button
                       type="button"
                       aria-label={`Remove ${c.username}`}
@@ -771,10 +1016,34 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   <tbody className="divide-y">
                     {[...selected.values()].map((c) => {
                       const l = perCreator.get(c.id);
+                      const hasCustom = Boolean(customRates[c.id]);
+                      const linePrice = l?.price ?? (hasCustom ? customRates[c.id] : c.price);
                       return (
                         <tr key={c.id}>
-                          <td className="p-3 font-medium">@{c.username}</td>
-                          <td className="p-3 text-right tabular-nums">{inr(l?.price ?? c.price)}</td>
+                          <td className="p-3 font-medium">
+                            <div className="flex items-center gap-2">
+                              <span>@{c.username}</span>
+                              {hasCustom && (
+                                <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                                  Custom Offer (Negotiating)
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right tabular-nums">
+                            {hasCustom ? (
+                              <div>
+                                <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                                  {inr(linePrice)}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground line-through ml-1.5">
+                                  {inr(c.price)}
+                                </span>
+                              </div>
+                            ) : (
+                              inr(linePrice)
+                            )}
+                          </td>
                           <td className="p-3 text-right tabular-nums">{l ? inr(l.feeArtist) : "—"}</td>
                           <td className="p-3 text-right tabular-nums font-medium">{l ? inr(l.artistCost) : "—"}</td>
                         </tr>

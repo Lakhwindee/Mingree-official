@@ -6625,7 +6625,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
 
 app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   try {
-    const { deliverable, creatorIds } = req.body;
+    const { deliverable, creatorIds, customRates } = req.body;
     if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
       return res.status(400).json({ error: "Select at least one creator" });
     }
@@ -6694,14 +6694,21 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
           else tierKey = "nano";
         }
       }
-      const basePrice = tierPrices[tierKey] || 1200;
-      const price = Math.round(basePrice * multiplier);
+      const basePrice = Math.round((tierPrices[tierKey] || 1200) * multiplier);
+      let price = basePrice;
+      let isCustomOffer = false;
+      if (customRates && typeof customRates[id] === "number" && customRates[id] > 0) {
+        price = Math.round(customRates[id]);
+        isCustomOffer = price !== basePrice;
+      }
       const feeArtist = Math.round(price * 0.075 * 100) / 100;
       const gstInFee = Math.round(feeArtist * 0.18 * 100) / 100;
       const artistCost = price + feeArtist;
       return {
         creatorId: id,
         price,
+        basePrice,
+        isCustomOffer,
         feeArtist,
         gstInFee,
         artistCost,
@@ -6721,6 +6728,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
     const billTokenData = {
       sponsorId,
       creatorIds,
+      customRates: customRates || null,
       deliverable,
       subtotal,
       total,
@@ -6747,7 +6755,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
 app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const sponsorId = req.user!.id;
   try {
-    const { details, creatorIds, billId } = req.body;
+    const { details, creatorIds, customRates, billId } = req.body;
     if (!billId || !Array.isArray(creatorIds) || creatorIds.length === 0) {
       return res.status(400).json({ error: "Invalid submission data" });
     }
@@ -6787,6 +6795,23 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     const allWorkspaces = loadAllWorkspaces();
     const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map(w => w.id || 0)) + 1 : 1;
 
+    const tierPrices: Record<string, number> = {
+      nano: 1200,
+      micro: 2800,
+      mid: 6500,
+      upper_mid: 15000,
+      macro: 32000,
+      large: 65000,
+      mega: 125000,
+      elite: 250000,
+    };
+    let multiplier = 1.0;
+    const reqDeliv = (details?.deliverable || "reel").toLowerCase();
+    if (reqDeliv === "story") multiplier = 0.5;
+    else if (reqDeliv === "collab_post") multiplier = 1.4;
+
+    const offerMessages: any[] = [];
+
     // Build hydrated creator participant objects
     const hydratedParticipants = await Promise.all(creatorIds.map(async (cid: number) => {
       let memoryUser = registeredUsers.find((u) => u.id === cid);
@@ -6795,11 +6820,23 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
       let creatorAvatar = memoryUser?.avatar;
       let creatorFollowers = memoryUser?.instagramFollowers || memoryUser?.followers;
       let creatorMedianViews = memoryUser?.medianViews;
+      let tierKey = "nano";
+
+      if (memoryUser) {
+        const rawTier = (memoryUser.tier || "").toLowerCase().trim();
+        if (rawTier === "micro" || rawTier === "small") tierKey = "micro";
+        else if (rawTier === "mid") tierKey = "mid";
+        else if (rawTier.includes("upper")) tierKey = "upper_mid";
+        else if (rawTier === "macro") tierKey = "macro";
+        else if (rawTier === "large") tierKey = "large";
+        else if (rawTier === "mega") tierKey = "mega";
+        else if (rawTier === "elite") tierKey = "elite";
+      }
 
       if (isDatabaseConfigured) {
         try {
           const dbRes = await pool.query(
-            `SELECT u.id, u.name, u.email, u.handle, u.avatar, u.avatar_url, cp.username as instagram_username, cp.followers, cp.median_views, cp.avatar_url as cp_avatar_url
+            `SELECT u.id, u.name, u.email, u.handle, u.avatar, u.avatar_url, cp.username as instagram_username, cp.followers, cp.median_views, cp.avatar_url as cp_avatar_url, cp.tier_label
              FROM users u
              LEFT JOIN creator_profiles cp ON cp.user_id = u.id
              WHERE u.id = $1`,
@@ -6812,8 +6849,48 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
             creatorAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
             creatorFollowers = Number(row.followers || creatorFollowers || 10000);
             creatorMedianViews = Number(row.median_views || creatorMedianViews || 4000);
+            if (row.tier_label) {
+              const tl = row.tier_label.toLowerCase();
+              if (tl.includes("micro")) tierKey = "micro";
+              else if (tl.includes("mid")) tierKey = "mid";
+              else if (tl.includes("upper")) tierKey = "upper_mid";
+              else if (tl.includes("macro")) tierKey = "macro";
+              else if (tl.includes("large")) tierKey = "large";
+              else if (tl.includes("mega")) tierKey = "mega";
+              else if (tl.includes("elite")) tierKey = "elite";
+            }
           }
         } catch {}
+      }
+
+      const baseRate = Math.round((tierPrices[tierKey] || 1200) * multiplier);
+      const effectiveCustom = (customRates && typeof customRates[cid] === "number" && customRates[cid] > 0)
+        ? Math.round(customRates[cid])
+        : null;
+      const isOffer = effectiveCustom !== null && effectiveCustom !== baseRate;
+      const perCreatorPayout = effectiveCustom !== null ? effectiveCustom : baseRate;
+
+      if (isOffer) {
+        offerMessages.push({
+          id: Date.now() + cid,
+          campaignId: newId,
+          senderId: sponsorId,
+          senderName: req.user!.companyName || req.user!.name,
+          senderRole: "sponsor" as const,
+          senderAvatar: req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+          recipientId: cid,
+          content: `💰 Brand Rate Offer: ₹${perCreatorPayout.toLocaleString("en-IN")} (Creator Standard Rate: ₹${baseRate.toLocaleString("en-IN")})`,
+          negotiationOffer: {
+            action: "offer" as const,
+            amount: perCreatorPayout,
+            proposedBy: "sponsor" as const,
+            participantId: cid,
+            creatorId: cid,
+          },
+          isAnnouncement: false,
+          createdAt: new Date().toISOString(),
+          readBy: [sponsorId],
+        });
       }
 
       return {
@@ -6826,7 +6903,11 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
         creatorFollowers: creatorFollowers || 10000,
         creatorMedianViews: creatorMedianViews || 4000,
         status: "pending" as const,
-        payoutAmount: billData.subtotal / (creatorIds.length || 1),
+        payoutAmount: perCreatorPayout,
+        baseRate,
+        lastOfferedPrice: perCreatorPayout,
+        lastOfferBy: "sponsor" as const,
+        negotiationStatus: isOffer ? ("brand_offered" as const) : ("initial" as const),
         reservedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
         briefAcknowledgedVersion: 1,
@@ -6906,19 +6987,22 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
         }
       }],
       participants: hydratedParticipants,
-      messages: [{
-        id: Date.now(),
-        campaignId: newId,
-        senderId: sponsorId,
-        senderName: req.user!.name,
-        senderRole: "sponsor" as const,
-        senderAvatar: req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-        recipientId: null,
-        content: `Welcome to the campaign workspace! Selected creators have been invited to reserve their ad slots.`,
-        isAnnouncement: true,
-        createdAt: new Date().toISOString(),
-        readBy: [sponsorId],
-      }],
+      messages: [
+        {
+          id: Date.now(),
+          campaignId: newId,
+          senderId: sponsorId,
+          senderName: req.user!.name,
+          senderRole: "sponsor" as const,
+          senderAvatar: req.user!.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
+          recipientId: null,
+          content: `Welcome to the campaign workspace! Selected creators have been invited with agreed/proposed ad slot rates.`,
+          isAnnouncement: true,
+          createdAt: new Date().toISOString(),
+          readBy: [sponsorId],
+        },
+        ...offerMessages,
+      ],
     };
 
     await saveSingleWorkspace(newWorkspace as any);

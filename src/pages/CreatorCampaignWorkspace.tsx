@@ -375,6 +375,63 @@ export default function CreatorCampaignWorkspace() {
       </header>
 
       <main className="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
+        {/* BRAND RATE OFFER BANNER FOR CREATOR */}
+        {participant.negotiationStatus === "brand_offered" && (
+          <div className="p-4 md:p-5 rounded-xl bg-primary/10 border border-primary/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider">
+                  ⚡ Brand Proposed Offer Rate
+                </span>
+                <span className="text-xs text-muted-foreground">Standard Base: {formatINR(participant.baseRate || 1200)}</span>
+              </div>
+              <h3 className="text-sm font-bold text-foreground">
+                {workspace.brand} proposed a deal rate of{" "}
+                <span className="text-emerald-600 font-extrabold text-base">{formatINR(participant.lastOfferedPrice || payoutAmount)}</span>
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                You can approve this offer to lock your payout, counter-offer with your own rate, or decline.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                onClick={() =>
+                  negotiatePriceMutation.mutate({
+                    creatorId: participant.creatorId || user?.id || 1,
+                    action: "accept",
+                    amount: participant.lastOfferedPrice || payoutAmount,
+                  })
+                }
+                disabled={negotiatePriceMutation.isPending}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-4 rounded-xl shadow-xs cursor-pointer"
+              >
+                ✓ Approve {formatINR(participant.lastOfferedPrice || payoutAmount)}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setIsRateChatOpen(true)}
+                className="font-bold text-xs h-9 px-3.5 rounded-xl border-primary/40 text-primary hover:bg-primary/10 cursor-pointer"
+              >
+                💬 Counter / Negotiate
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  negotiatePriceMutation.mutate({
+                    creatorId: participant.creatorId || user?.id || 1,
+                    action: "decline",
+                    amount: participant.lastOfferedPrice || payoutAmount,
+                  })
+                }
+                disabled={negotiatePriceMutation.isPending}
+                className="font-semibold text-xs h-9 px-3 rounded-xl text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+              >
+                ✕ Reject
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* INVITATION ACCEPTANCE BANNER FOR PENDING CREATORS */}
         {participantStatus === "pending" && (
           <div className="p-4 md:p-5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
