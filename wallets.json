@@ -16,8 +16,8 @@
   },
   "4": {
     "userId": 4,
-    "balance": 55000,
-    "escrowHeld": 55000
+    "balance": 100000,
+    "escrowHeld": 0
   },
   "99": {
     "userId": 99,

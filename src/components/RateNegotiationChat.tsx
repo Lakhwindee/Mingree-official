@@ -4,7 +4,7 @@ import { api, formatINR } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, IndianRupee, Send, Lock } from "lucide-react";
+import { CheckCircle2, IndianRupee, Send, Lock, Clock, Check } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -190,6 +190,7 @@ export function RateNegotiationChat({
       queryClient.invalidateQueries({ queryKey: ["campaignWorkspace", campaignId] });
       queryClient.invalidateQueries({ queryKey: ["brandCampaignCards"] });
       setRateInput("");
+      setSelectedRateToAccept(null);
       if (vars.action === "accept") {
         toast.success(`Rate locked at ${formatINR(vars.amount)}!`);
       } else {
@@ -201,17 +202,48 @@ export function RateNegotiationChat({
     },
   });
 
-  // Determine the rate that the current viewer can immediately accept/lock
-  const incomingOfferToAccept = (() => {
-    if (isLocked) return null;
-    if (viewerRole === "creator") {
-      return activeBrandRate;
-    } else {
-      if (effNegotiationStatus === "creator_countered" || effLastOfferBy === "creator") {
-        return latestRate;
+  // Track if user explicitly clicked and selected a rate from chat to accept directly
+  const [selectedRateToAccept, setSelectedRateToAccept] = useState<{
+    rate: number;
+    label: string;
+    bubbleId: string;
+  } | null>(null);
+
+  // Determine who made the latest rate offer
+  const latestRateMsg = rateMessages.length > 0 ? rateMessages[rateMessages.length - 1] : null;
+  const lastOfferSide: "sponsor" | "creator" = (() => {
+    if (latestRateMsg) {
+      if (latestRateMsg.negotiationOffer?.proposedBy) {
+        return latestRateMsg.negotiationOffer.proposedBy;
       }
-      return activeBrandRate;
+      return latestRateMsg.senderRole === "sponsor" ? "sponsor" : "creator";
     }
+    if (effLastOfferBy) return effLastOfferBy;
+    if (effNegotiationStatus === "brand_offered") return "sponsor";
+    if (effNegotiationStatus === "creator_countered") return "creator";
+    return "creator";
+  })();
+
+  // If the last offer was made by this user, they must wait for the other party (button is faded by default)
+  const isWaitingForOtherParty = !isLocked && lastOfferSide === viewerRole;
+
+  // Determine the effective rate ready to accept:
+  // 1. If user clicked & selected any creator rate bubble, that selected rate is ready to accept!
+  // 2. If the other party made the latest quote, that incoming quote is ready to accept.
+  // 3. Otherwise, if user sent the quote and hasn't clicked a rate bubble, accept is disabled (faded).
+  const effectiveAcceptRate = (() => {
+    if (isLocked) return null;
+    if (selectedRateToAccept) {
+      return selectedRateToAccept.rate;
+    }
+    if (!isWaitingForOtherParty) {
+      if (viewerRole === "creator") {
+        return activeBrandRate;
+      } else {
+        return latestRate || maxCreatorRate;
+      }
+    }
+    return null;
   })();
 
   const handleSendRate = (e?: React.FormEvent) => {
@@ -227,6 +259,7 @@ export function RateNegotiationChat({
       );
       return;
     }
+    setSelectedRateToAccept(null);
     negotiateMutation.mutate({
       action: viewerRole === "sponsor" ? "offer" : "counter_offer",
       amount: numericRate,
@@ -317,49 +350,97 @@ export function RateNegotiationChat({
       {/* 2. Middle Chat Stream (Strictly Rate Bubbles from Both Sides, <= Creator Rate) */}
       <div className="p-4 space-y-3 min-h-[220px] max-h-[300px] overflow-y-auto bg-muted/10 flex flex-col">
         {/* Initial Creator / Brand Rate Bubble */}
-        <div
-          className={cn(
-            "flex flex-col max-w-[82%]",
-            viewerRole === "sponsor" ? "self-end items-end" : "self-start items-start"
-          )}
-        >
-          <span className="text-[10px] font-semibold text-muted-foreground mb-1 px-1">
-            {viewerRole === "sponsor" ? "Creator Base Rate" : `${brandName} (Initial Rate)`}
-          </span>
-          <div
-            className={cn(
-              "px-4 py-2.5 rounded-2xl border text-xs shadow-2xs flex items-center gap-3",
-              viewerRole === "sponsor"
-                ? "bg-primary/10 border-primary/25 text-foreground rounded-br-sm"
-                : "bg-card border-border text-foreground rounded-bl-sm"
-            )}
-          >
-            <div>
-              <span className="text-[10px] uppercase font-bold text-muted-foreground block">
-                Max Creator Rate
-              </span>
-              <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {formatINR(maxCreatorRate)}
-              </span>
-            </div>
-            {viewerRole === "creator" && rateMessages.length === 0 && !isLocked && (
-              <Button
-                size="sm"
-                disabled={negotiateMutation.isPending}
-                onClick={() =>
-                  negotiateMutation.mutate({
-                    action: "accept",
-                    amount: activeBrandRate,
-                  })
-                }
-                className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold ml-1"
+        {(() => {
+          const isBaseSelected = selectedRateToAccept?.bubbleId === "base_rate";
+          const isBaseFromOther = viewerRole === "sponsor"; // Base rate belongs to creator
+          return (
+            <div
+              className={cn(
+                "flex flex-col max-w-[82%]",
+                viewerRole === "sponsor" ? "self-start items-start" : "self-end items-end"
+              )}
+            >
+              <div className="flex items-center gap-1.5 mb-1 px-1">
+                <span className="text-[10px] font-semibold text-muted-foreground">
+                  {viewerRole === "sponsor" ? `${creatorName} (Creator Base Rate)` : "Your Base Rate"}
+                </span>
+                {isBaseSelected && (
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-500 text-white px-2 py-0.2 rounded-full shadow-2xs animate-in zoom-in-95">
+                    <Check className="h-2.5 w-2.5" />
+                    Selected to Accept
+                  </span>
+                )}
+              </div>
+
+              <div
+                onClick={() => {
+                  if (isLocked) return;
+                  if (isBaseFromOther) {
+                    setSelectedRateToAccept((prev) =>
+                      prev?.bubbleId === "base_rate"
+                        ? null
+                        : { rate: maxCreatorRate, label: "Creator Base Rate", bubbleId: "base_rate" }
+                    );
+                  }
+                }}
+                className={cn(
+                  "px-4 py-2.5 rounded-2xl border text-xs shadow-2xs flex flex-col gap-1.5 transition-all",
+                  isBaseFromOther && !isLocked ? "cursor-pointer hover:shadow-sm" : "",
+                  isBaseSelected
+                    ? "bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/30 text-foreground rounded-bl-sm"
+                    : viewerRole === "sponsor"
+                    ? "bg-card border-border hover:border-emerald-500/40 text-foreground rounded-bl-sm"
+                    : "bg-primary/10 border-primary/25 text-foreground rounded-br-sm"
+                )}
               >
-                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                Accept
-              </Button>
-            )}
-          </div>
-        </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                      Max Creator Rate
+                    </span>
+                    <span className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      {formatINR(maxCreatorRate)}
+                    </span>
+                  </div>
+
+                  {viewerRole === "creator" && rateMessages.length === 0 && !isLocked && (
+                    <Button
+                      size="sm"
+                      disabled={negotiateMutation.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        negotiateMutation.mutate({
+                          action: "accept",
+                          amount: activeBrandRate,
+                        });
+                      }}
+                      className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold ml-1"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                      Accept
+                    </Button>
+                  )}
+                </div>
+
+                {/* Click-to-select indicator for Sponsor */}
+                {isBaseFromOther && !isLocked && (
+                  <div className="pt-1 border-t border-border/50 flex items-center justify-between text-[10px]">
+                    {isBaseSelected ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Selected! Click "Accept {formatINR(maxCreatorRate)}" below to close deal.
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground font-medium flex items-center gap-1 hover:text-emerald-600">
+                        <span className="font-semibold text-primary">👆 Click bubble</span> to select &amp; accept {formatINR(maxCreatorRate)}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Subsequent 2-Way Rate Bubbles */}
         {rateMessages.map((msg: any, idx: number) => {
@@ -381,6 +462,8 @@ export function RateNegotiationChat({
           const bubbleAmount = Math.min(maxCreatorRate, rawBubbleAmount);
 
           const isLatestMessage = idx === rateMessages.length - 1;
+          const bubbleKey = `msg_${msg.id || idx}`;
+          const isMsgSelected = selectedRateToAccept?.bubbleId === bubbleKey;
 
           if (isAcceptMsg) {
             return (
@@ -401,67 +484,137 @@ export function RateNegotiationChat({
                 isMine ? "self-end items-end" : "self-start items-start"
               )}
             >
-              <span className="text-[10px] font-semibold text-muted-foreground mb-1 px-1">
-                {isMine ? "You" : msgSide === "sponsor" ? brandName : creatorName} •{" "}
-                {msg.createdAt
-                  ? new Date(msg.createdAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "Just now"}
-              </span>
+              <div className="flex items-center gap-1.5 mb-1 px-1">
+                <span className="text-[10px] font-semibold text-muted-foreground">
+                  {isMine ? "You" : msgSide === "sponsor" ? brandName : creatorName} •{" "}
+                  {msg.createdAt
+                    ? new Date(msg.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "Just now"}
+                </span>
+                {isMsgSelected && (
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold bg-emerald-500 text-white px-2 py-0.2 rounded-full shadow-2xs animate-in zoom-in-95">
+                    <Check className="h-2.5 w-2.5" />
+                    Selected to Accept
+                  </span>
+                )}
+              </div>
 
               <div
+                onClick={() => {
+                  if (isLocked || isMine || isDeclineMsg) return;
+                  setSelectedRateToAccept((prev) =>
+                    prev?.bubbleId === bubbleKey
+                      ? null
+                      : {
+                          rate: bubbleAmount,
+                          label: msgSide === "creator" ? `${creatorName} Offer` : "Brand Offer",
+                          bubbleId: bubbleKey,
+                        }
+                  );
+                }}
                 className={cn(
-                  "px-4 py-2.5 rounded-2xl border text-xs shadow-2xs flex items-center gap-3",
-                  isDeclineMsg
+                  "px-4 py-2.5 rounded-2xl border text-xs shadow-2xs flex flex-col gap-1.5 transition-all",
+                  !isMine && !isLocked && !isDeclineMsg ? "cursor-pointer hover:shadow-sm" : "",
+                  isMsgSelected
+                    ? "bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/30 text-foreground rounded-bl-sm"
+                    : isDeclineMsg
                     ? "bg-destructive/10 border-destructive/30 text-destructive"
                     : isMine
                     ? "bg-primary text-primary-foreground border-primary rounded-br-sm"
-                    : "bg-card border-border text-foreground rounded-bl-sm"
+                    : "bg-card border-border hover:border-emerald-500/40 text-foreground rounded-bl-sm"
                 )}
               >
-                <div>
-                  <span
-                    className={cn(
-                      "text-[10px] uppercase font-bold block",
-                      isMine && !isDeclineMsg
-                        ? "text-primary-foreground/80"
-                        : "text-muted-foreground"
-                    )}
-                  >
-                    {isDeclineMsg
-                      ? "Declined — Standing Rate"
-                      : msgSide === "sponsor"
-                      ? "Brand Rate Offer"
-                      : "Creator Counter Rate"}
-                  </span>
-                  <span className="text-base font-extrabold tabular-nums">
-                    {formatINR(bubbleAmount)}
-                  </span>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <span
+                      className={cn(
+                        "text-[10px] uppercase font-bold block",
+                        isMine && !isDeclineMsg
+                          ? "text-primary-foreground/80"
+                          : "text-muted-foreground"
+                      )}
+                    >
+                      {isDeclineMsg
+                        ? "Declined — Standing Rate"
+                        : msgSide === "sponsor"
+                        ? "Brand Rate Offer"
+                        : "Creator Counter Rate"}
+                    </span>
+                    <span className="text-base font-extrabold tabular-nums">
+                      {formatINR(bubbleAmount)}
+                    </span>
+                  </div>
+
+                  {/* Inline Accept Button on Latest Incoming Offer from Other Side */}
+                  {!isMine && !isDeclineMsg && isLatestMessage && !isLocked && (
+                    <Button
+                      size="sm"
+                      disabled={negotiateMutation.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        negotiateMutation.mutate({
+                          action: "accept",
+                          amount: bubbleAmount,
+                        });
+                      }}
+                      className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold ml-1 shrink-0"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
+                      Accept {formatINR(bubbleAmount)}
+                    </Button>
+                  )}
                 </div>
 
-                {/* Inline Accept Button on Latest Incoming Offer from Other Side */}
-                {!isMine && !isDeclineMsg && isLatestMessage && !isLocked && (
-                  <Button
-                    size="sm"
-                    disabled={negotiateMutation.isPending}
-                    onClick={() =>
-                      negotiateMutation.mutate({
-                        action: "accept",
-                        amount: bubbleAmount,
-                      })
-                    }
-                    className="h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold ml-1 shrink-0"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                    Accept {formatINR(bubbleAmount)}
-                  </Button>
+                {/* Click-to-select indicator for incoming bubble from other party */}
+                {!isMine && !isDeclineMsg && !isLocked && (
+                  <div className="pt-1 border-t border-border/50 flex items-center justify-between text-[10px]">
+                    {isMsgSelected ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Selected! Click "Accept {formatINR(bubbleAmount)}" below to close deal.
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground font-medium flex items-center gap-1 hover:text-emerald-600">
+                        <span className="font-semibold text-primary">👆 Click bubble</span> to select &amp; accept {formatINR(bubbleAmount)}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
           );
         })}
+
+        {/* Status Notice: Waiting for reply OR Rate Selected */}
+        {isWaitingForOtherParty && !selectedRateToAccept && !isLocked && (
+          <div className="mx-auto my-1 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-800 dark:text-amber-300 flex items-center gap-2 max-w-[95%] shadow-2xs animate-in fade-in">
+            <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <span>
+              Quote sent! Waiting for {viewerRole === "sponsor" ? `${creatorName}'s` : "Brand's"} reply. If they haven't replied, <strong>click their rate bubble above</strong> to select &amp; accept directly.
+            </span>
+          </div>
+        )}
+
+        {selectedRateToAccept && !isLocked && (
+          <div className="mx-auto my-1 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center justify-between gap-2 max-w-[95%] shadow-2xs animate-in fade-in">
+            <div className="flex items-center gap-1.5">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <span>
+                Selected: <strong>{selectedRateToAccept.label} ({formatINR(selectedRateToAccept.rate)})</strong> — Click bottom <strong>Accept {formatINR(selectedRateToAccept.rate)}</strong> to close deal.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedRateToAccept(null)}
+              className="text-[10px] font-semibold text-muted-foreground hover:text-destructive underline cursor-pointer ml-1 shrink-0"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         <div ref={chatEndRef} />
       </div>
@@ -541,22 +694,37 @@ export function RateNegotiationChat({
               {negotiateMutation.isPending ? "Sending..." : "Send ₹"}
             </Button>
 
-            {incomingOfferToAccept !== null && (
+            {/* Accept Button: Active when selected or incoming offer ready; FADED when waiting for other party */}
+            {effectiveAcceptRate !== null ? (
               <Button
                 type="button"
                 disabled={negotiateMutation.isPending}
                 onClick={() =>
                   negotiateMutation.mutate({
                     action: "accept",
-                    amount: incomingOfferToAccept,
+                    amount: effectiveAcceptRate,
                   })
                 }
-                className="h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 cursor-pointer"
+                className="h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shrink-0 cursor-pointer shadow-xs transition-all animate-in fade-in"
               >
-                <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                Accept {formatINR(incomingOfferToAccept)}
+                <CheckCircle2 className="h-4 w-4 mr-1.5" />
+                {negotiateMutation.isPending
+                  ? "Accepting..."
+                  : `Accept ${formatINR(effectiveAcceptRate)}`}
               </Button>
-            )}
+            ) : isWaitingForOtherParty ? (
+              <Button
+                type="button"
+                disabled={true}
+                className="h-10 px-3.5 rounded-xl bg-muted/60 text-muted-foreground/60 border border-border/40 text-xs font-semibold shrink-0 cursor-not-allowed opacity-40 select-none transition-all"
+                title={`Waiting for ${
+                  viewerRole === "sponsor" ? "creator" : "brand"
+                }'s reply. To accept their quote now, click on their rate bubble above.`}
+              >
+                <Clock className="h-3.5 w-3.5 mr-1.5 text-muted-foreground/50" />
+                Waiting for {viewerRole === "sponsor" ? "Creator" : "Brand"}...
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : (

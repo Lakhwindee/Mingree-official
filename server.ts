@@ -46,6 +46,8 @@ import {
   lockEscrow,
   releaseEscrow,
   refundEscrow,
+  adjustNegotiatedEscrow,
+  getUserTransactionsList,
   createPaymentOrder,
   processOrderPaymentSuccess,
   verifyCashfreeSignature,
@@ -1377,23 +1379,47 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 // GET /api/users/current & GET /api/auth/me
-app.get(["/api/users/current", "/api/auth/me"], requireAuth, (req: AuthRequest, res) => {
-  return res.json(sanitizeUser(req.user));
+app.get(["/api/users/current", "/api/auth/me"], requireAuth, async (req: AuthRequest, res) => {
+  const safe = sanitizeUser(req.user);
+  if (safe && req.user) {
+    try {
+      const wallet = await getOrCreateWallet(req.user.id);
+      safe.balance = wallet.balance.toFixed(2);
+      safe.escrowHeld = wallet.escrowHeld.toFixed(2);
+    } catch {}
+  }
+  return res.json(safe);
 });
 
 // GET /api/sponsors/current
-app.get("/api/sponsors/current", requireAuth, (req: AuthRequest, res) => {
-  return res.json(sanitizeUser(req.user));
+app.get("/api/sponsors/current", requireAuth, async (req: AuthRequest, res) => {
+  const safe = sanitizeUser(req.user);
+  if (safe && req.user) {
+    try {
+      const wallet = await getOrCreateWallet(req.user.id);
+      safe.balance = wallet.balance.toFixed(2);
+      safe.escrowHeld = wallet.escrowHeld.toFixed(2);
+    } catch {}
+  }
+  return res.json(safe);
 });
 
 // GET /api/sponsors/:id
-app.get("/api/sponsors/:id", requireAuth, (req: AuthRequest, res) => {
+app.get("/api/sponsors/:id", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user.id !== targetId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
   const targetUser = registeredUsers.find((u) => u.id === targetId) || req.user;
-  return res.json(sanitizeUser(targetUser));
+  const safe = sanitizeUser(targetUser);
+  if (safe) {
+    try {
+      const wallet = await getOrCreateWallet(targetId);
+      safe.balance = wallet.balance.toFixed(2);
+      safe.escrowHeld = wallet.escrowHeld.toFixed(2);
+    } catch {}
+  }
+  return res.json(safe);
 });
 
 // GET /api/users/:id
@@ -3137,7 +3163,10 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
   const totalSlots = Number(data.totalSlots || data.totalSpots || tierTotalSlots || 1);
   const payPerSlot = Number(data.fixedPrice || (Number(data.payAmount) > 0 ? data.payAmount : 0) || tierAvgPay || 500);
   const computedSubtotal = tierSubtotal > 0 ? tierSubtotal : payPerSlot * totalSlots;
-  const totalBudget = parseFloat(data.budget || data.totalBudget || String(Math.round(computedSubtotal * 1.075)) || String(computedSubtotal));
+  const platformFee = Math.round(computedSubtotal * 0.075 * 100) / 100;
+  const gstOnFee = Math.round(platformFee * 0.18 * 100) / 100;
+  const calculatedTotalBudget = Math.round((computedSubtotal + platformFee + gstOnFee) * 100) / 100;
+  const totalBudget = parseFloat(data.budget || data.totalBudget || String(calculatedTotalBudget));
 
   if (isNaN(totalBudget) || totalBudget <= 0) {
     return res.status(400).json({ error: "Campaign budget must be greater than zero" });
@@ -3147,7 +3176,7 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
   const wallet = await getOrCreateWallet(sponsorId);
   if (wallet.balance < totalBudget) {
     return res.status(402).json({
-      error: `Insufficient wallet balance to launch campaign. Campaign budget: ₹${totalBudget.toFixed(2)}, Available wallet balance: ₹${wallet.balance.toFixed(2)}. Please top up your wallet first.`
+      error: `Insufficient wallet balance to launch campaign. Campaign budget: ₹${totalBudget.toFixed(2)} (Subtotal: ₹${computedSubtotal}, 7.5% Platform fee: ₹${platformFee}, 18% GST: ₹${gstOnFee}), Available wallet balance: ₹${wallet.balance.toFixed(2)}. Please top up your wallet first.`
     });
   }
 
@@ -3156,7 +3185,11 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
   const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map((c) => Number(c.id) || 0)) + 1 : 1;
 
   // 2. Move budget into escrow_held and write ledger entries
-  await lockEscrow(sponsorId, totalBudget, { refType: "campaign_launch", refId: String(newId) });
+  await lockEscrow(sponsorId, totalBudget, { 
+    refType: "campaign_launch", 
+    refId: String(newId),
+    description: `Campaign #${newId} Escrow Locked (Subtotal: ₹${computedSubtotal}, Fee: ₹${platformFee}, GST 18%: ₹${gstOnFee})`
+  });
 
   // 3. Disclosure instruction enforcement (#ad or Paid partnership)
   const rawCaption = (data.requiredCaptionNote || data.captionNote || "").trim();
@@ -6010,6 +6043,16 @@ app.get(["/api/sponsors/:id/wallet", "/api/users/:id/wallet"], requireAuth, asyn
     if (err?.status === 503) return res.status(503).json({ error: "Database unavailable" });
     res.status(500).json({ error: err.message || "Failed to load wallet" });
   }
+});
+
+// GET /api/users/:id/transactions & /api/transactions
+app.get(["/api/users/:id/transactions", "/api/transactions"], requireAuth, async (req: AuthRequest, res) => {
+  const targetId = Number(req.params.id || req.user!.id);
+  if (req.user!.id !== targetId && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Access denied" });
+  }
+  const txs = getUserTransactionsList(targetId);
+  return res.json(txs);
 });
 
 // Admin Manual Wallet Credit

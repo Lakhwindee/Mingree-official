@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { lockEscrow, releaseEscrow, refundEscrow, getOrCreateWallet } from "./walletAndPayments";
+import { lockEscrow, releaseEscrow, refundEscrow, getOrCreateWallet, adjustNegotiatedEscrow } from "./walletAndPayments";
 import { pool, isDatabaseConfigured } from "./db";
 
 const DATA_DIR = process.env.VERCEL ? "/tmp" : process.cwd();
@@ -1641,10 +1641,15 @@ export async function reviewReelSubmission(params: {
       }
 
       const payout = participant.payoutAmount || campaign.payAmount;
+      const fee = Math.round(payout * 0.075 * 100) / 100;
+      const gstOnFee = Math.round(fee * 0.18 * 100) / 100;
+      const totalSponsorDeduction = Math.round((payout + fee + gstOnFee) * 100) / 100;
+
       try {
         await releaseEscrow(actualSponsorId, participant.creatorId, payout, {
           refType: "campaign_reel_approved",
           refId: `camp_${campaign.id}_part_${participant.id}`,
+          breakdown: { fee, gstOnFee, totalSponsorCost: totalSponsorDeduction },
         });
       } catch (err: any) {
         console.error("Escrow release error:", err);
@@ -1652,7 +1657,7 @@ export async function reviewReelSubmission(params: {
 
       campaign.releasedPayouts += payout;
       campaign.committedPayouts = Math.max(0, campaign.committedPayouts - payout);
-      campaign.escrowHeld = Math.max(0, campaign.escrowHeld - payout);
+      campaign.escrowHeld = Math.max(0, campaign.escrowHeld - totalSponsorDeduction);
 
       // Check if all approved
       const allApproved = campaign.participants.length >= campaign.totalSlots &&
@@ -1670,7 +1675,7 @@ export async function reviewReelSubmission(params: {
         senderRole: "sponsor",
         senderAvatar: campaign.brandLogo,
         recipientId: participant.creatorId, // also posted in 1:1
-        content: `✅ Reel APPROVED! ₹${payout.toLocaleString()} has been released directly to ${participant.creatorName}'s wallet balance. Great job!`,
+        content: `✅ Reel APPROVED! ₹${payout.toLocaleString("en-IN")} has been credited directly to ${participant.creatorName}'s wallet balance. (Tax Breakdown: Net Payout ₹${payout}, Mingree Fee ₹${fee.toFixed(2)}, GST 18% ₹${gstOnFee.toFixed(2)} settled).`,
         isAnnouncement: false,
         createdAt: new Date().toISOString(),
         readBy: [params.sponsorId],
@@ -2132,15 +2137,36 @@ export async function negotiateCampaignPrice(params: {
             maxCreatorRate
         )
       );
+      const prevPayout = participant.payoutAmount || maxCreatorRate;
       participant.payoutAmount = agreedAmount;
       participant.lastOfferedPrice = agreedAmount;
       participant.negotiationStatus = "accepted";
+      participant.status = "reserved";
       if (campaign.participants.length <= 1) {
         campaign.payAmount = agreedAmount;
       }
+
+      // Automatically adjust sponsor's escrow and wallet balance with 7.5% platform fee & 18% GST
+      try {
+        const adj = await adjustNegotiatedEscrow(campaign.sponsorId, prevPayout, agreedAmount, {
+          campaignId: campaign.id,
+          participantId: participant.id,
+        });
+        if (adj.diff > 0) {
+          campaign.escrowHeld = Math.max(0, Math.round((campaign.escrowHeld - adj.diff) * 100) / 100);
+          campaign.totalBudget = Math.max(0, Math.round((campaign.totalBudget - adj.diff) * 100) / 100);
+        } else if (adj.diff < 0) {
+          campaign.escrowHeld = Math.round((campaign.escrowHeld + Math.abs(adj.diff)) * 100) / 100;
+          campaign.totalBudget = Math.round((campaign.totalBudget + Math.abs(adj.diff)) * 100) / 100;
+        }
+      } catch (err: any) {
+        console.error("[NEGOTIATION ESCROW ADJUST ERROR]", err.message);
+      }
+
+      const totalDealCost = Math.round((agreedAmount + (agreedAmount * 0.075 * 1.18)) * 100) / 100;
       msgContent = isSponsorSide
-        ? `✅ Brand Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}`
-        : `✅ Creator Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}`;
+        ? `🤝 Brand Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}. Deal locked! (Total escrow: ₹${totalDealCost.toFixed(2)} with GST)`
+        : `🤝 Creator Accepted Rate: ₹${agreedAmount.toLocaleString("en-IN")}. Deal locked! (Total escrow: ₹${totalDealCost.toFixed(2)} with GST)`;
     } else if (params.action === "decline") {
       participant.negotiationStatus = isSponsorSide ? "brand_offered" : "declined";
       const standingAmount = Math.min(maxCreatorRate, participant.payoutAmount || maxCreatorRate);
