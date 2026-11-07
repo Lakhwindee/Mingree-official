@@ -251,14 +251,6 @@ export function PhoneOtpLogin({ role = "creator", onSuccess, className = "" }: P
               </>
             )}
           </Button>
-
-          {/* Test number assistance tip */}
-          <div className="rounded-lg bg-muted/40 p-2.5 border border-border/60 text-[11px] text-muted-foreground flex items-start gap-2">
-            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <span>
-              <strong>Verified Firebase SMS Auth:</strong> Test numbers configured in Firebase Console (e.g., <code className="bg-muted px-1 rounded font-mono">+91 9999999999</code> with OTP <code className="bg-muted px-1 rounded font-mono">123456</code>) verify instantly.
-            </span>
-          </div>
         </form>
       ) : (
         <form onSubmit={handleVerifyOtp} className="space-y-4">

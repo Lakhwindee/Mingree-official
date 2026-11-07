@@ -8,18 +8,10 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 
-import { PhoneOtpLogin } from "@/components/auth/PhoneOtpLogin";
-import { Smartphone, Mail } from "lucide-react";
-
-// Dummy icon fallbacks for removed icons
-const __DummyIcon = () => null;
-const Home = __DummyIcon;
-
 export default function SponsorLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { login } = useAuth();
-  const [authMethod, setAuthMethod] = useState<"phone" | "email">("phone");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -134,88 +126,54 @@ export default function SponsorLogin() {
             </CardDescription>
           </CardHeader>
           <CardContent className="px-6 pb-6 space-y-4">
-            {/* Auth Method Switcher */}
-            <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/60">
-              <button
-                type="button"
-                onClick={() => setAuthMethod("phone")}
-                className={`flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  authMethod === "phone"
-                    ? "bg-background text-foreground shadow-xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid="tab-sponsor-phone"
-              >
-                <Smartphone className="w-3.5 h-3.5" />
-                <span>Phone SMS OTP</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthMethod("email")}
-                className={`flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                  authMethod === "email"
-                    ? "bg-background text-foreground shadow-xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid="tab-sponsor-email"
-              >
-                <Mail className="w-3.5 h-3.5" />
-                <span>Email & Password</span>
-              </button>
-            </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="email" className="text-xs font-semibold text-foreground">Business Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="text-xs h-9"
+                  required
+                  data-testid="input-email"
+                />
+              </div>
 
-            {authMethod === "phone" ? (
-              <PhoneOtpLogin role="sponsor" />
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="email" className="text-xs font-semibold text-foreground">Business Email</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="password" className="text-xs font-semibold text-foreground">Password</Label>
+                <div className="relative">
                   <Input
-                    id="email"
-                    type="email"
-                    placeholder="you@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="text-xs h-9"
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="text-xs h-9 pr-14"
                     required
-                    data-testid="input-email"
+                    data-testid="input-password"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                    data-testid="button-toggle-password"
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
                 </div>
+              </div>
 
-                <div className="space-y-1.5">
-                  <Label htmlFor="password" className="text-xs font-semibold text-foreground">Password</Label>
-                  <div className="relative">
-                    <Input
-                      id="password"
-                      type={showPassword ? "text" : "password"}
-                      placeholder="Enter your password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="text-xs h-9 pr-14"
-                      required
-                      data-testid="input-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
-                      data-testid="button-toggle-password"
-                    >
-                      {showPassword ? "Hide" : "Show"}
-                    </button>
-                  </div>
-                </div>
-
-                <Button
-                  type="submit"
-                  className="w-full text-xs font-semibold h-9"
-                  disabled={isLoading || isSuccess}
-                  data-testid="button-login"
-                >
-                  {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Sign In"}
-                </Button>
-              </form>
-            )}
+              <Button
+                type="submit"
+                className="w-full text-xs font-semibold h-9 cursor-pointer"
+                disabled={isLoading || isSuccess}
+                data-testid="button-login"
+              >
+                {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Sign In"}
+              </Button>
+            </form>
 
             <div className="mt-5 text-center border-t border-border pt-4 space-y-1">
               <p className="text-xs text-muted-foreground">
