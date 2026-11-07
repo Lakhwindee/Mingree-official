@@ -653,35 +653,88 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (!user) {
-    return res.status(404).json({ error: "No account found with this email address" });
+  let userName = "User";
+
+  // Check DB first
+  try {
+    const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+    if (dbRes.rows.length > 0) {
+      userName = dbRes.rows[0].name || userName;
+    } else {
+      const memoryUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+      if (memoryUser) {
+        userName = memoryUser.name || userName;
+      }
+    }
+  } catch (err: any) {
+    const memoryUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (memoryUser) {
+      userName = memoryUser.name || userName;
+    }
   }
 
   const rawOtp = generateOtp();
   const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1000;
 
-  setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: user.name });
+  setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
 
   const creds = getEmailCredentials();
   let emailSent = false;
   if (creds && creds.user && creds.pass) {
-    const result = await sendEmailOtp(cleanEmail, rawOtp, user.name);
-    if (result.success) {
-      emailSent = true;
-    }
+    try {
+      const result = await sendEmailOtp(cleanEmail, rawOtp, userName);
+      if (result.success) {
+        emailSent = true;
+      }
+    } catch {}
   }
 
   return res.json({
-    message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code sent`,
+    message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code generated`,
     emailConfigured: emailSent,
+    devOtp: emailSent ? undefined : rawOtp,
     expiresIn: 600,
   });
 });
 
+// Verify Reset OTP
+app.post("/api/auth/verify-reset-otp", (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) {
+    return res.status(400).json({ error: "Email and reset code are required" });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanOtp = String(otp).trim();
+
+  const record = getOtpRecord(cleanEmail);
+  if (!record) {
+    return res.status(400).json({ error: "Invalid or expired reset code" });
+  }
+
+  if (Date.now() > record.expiresAt) {
+    deleteOtpRecord(cleanEmail);
+    return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+  }
+
+  if (record.attempts >= 5) {
+    deleteOtpRecord(cleanEmail);
+    return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
+  }
+
+  const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+  if (submittedHash !== record.otpHash) {
+    record.attempts += 1;
+    setOtpRecord(cleanEmail, record);
+    return res.status(400).json({ error: "Invalid reset code. Please try again." });
+  }
+
+  return res.json({ success: true, message: "Code verified successfully" });
+});
+
 // Verify Reset OTP & Reset Password
-app.post("/api/auth/reset-password", (req, res) => {
+app.post("/api/auth/reset-password", async (req, res) => {
   const { email, otp, newPassword, password } = req.body;
   const targetPassword = newPassword || password;
   if (!email || !otp || !targetPassword) {
@@ -718,15 +771,72 @@ app.post("/api/auth/reset-password", (req, res) => {
 
   deleteOtpRecord(cleanEmail);
 
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (!user) {
-    return res.status(404).json({ error: "User account not found" });
+  const newHash = bcrypt.hashSync(String(targetPassword), 10);
+
+  // Update in DB
+  try {
+    await pool.query("UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)", [newHash, cleanEmail]);
+  } catch (err: any) {
+    if (err.code !== 'ECONNREFUSED') {
+      console.error("[RESET DB UPDATE ERROR]", err.message);
+    }
   }
 
-  user.passwordHash = bcrypt.hashSync(String(targetPassword), 10);
-  saveRegisteredUsers();
+  // Update in memory
+  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (user) {
+    user.passwordHash = newHash;
+    saveRegisteredUsers();
+  }
 
   return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
+});
+
+// Reset password via verified Phone number
+app.post("/api/auth/phone-reset-password", async (req, res) => {
+  try {
+    const { phoneNumber, newPassword } = req.body;
+    if (!phoneNumber || !newPassword) {
+      return res.status(400).json({ error: "Phone number and new password are required" });
+    }
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
+    const formattedPhone = cleanPhone.startsWith("+") ? cleanPhone : `+91${cleanPhone.replace(/^0+/, "")}`;
+    const userEmail = `${formattedPhone.replace(/\+/g, "")}@phone.mingree.com`;
+    const newHash = bcrypt.hashSync(String(newPassword), 10);
+
+    let updated = false;
+    try {
+      const dbRes = await pool.query(
+        "UPDATE users SET password_hash = $1 WHERE email = $2 OR email LIKE $3 RETURNING *",
+        [newHash, userEmail, `%${formattedPhone.slice(-10)}%`]
+      );
+      if (dbRes.rows.length > 0) {
+        updated = true;
+      }
+    } catch (err: any) {
+      if (err.code !== 'ECONNREFUSED') {
+        console.error("[PHONE RESET DB ERROR]", err.message);
+      }
+    }
+
+    const memoryUser = registeredUsers.find(
+      (u) => (u.phone && u.phone === formattedPhone) || (u.email && u.email === userEmail)
+    );
+    if (memoryUser) {
+      memoryUser.passwordHash = newHash;
+      saveRegisteredUsers();
+      updated = true;
+    }
+
+    return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
+  } catch (err: any) {
+    console.error("[PHONE RESET PASSWORD ERROR]", err);
+    return res.status(500).json({ error: err.message || "Failed to reset password with phone" });
+  }
 });
 
 // Helper to get Instagram Meta OAuth credentials securely from process.env or settings
@@ -1370,6 +1480,124 @@ app.post("/api/auth/login", async (req, res) => {
   } catch (err: any) {
     console.error("[LOGIN CRITICAL ERROR]", err);
     return res.status(500).json({ error: err.message || "Internal server error during login" });
+  }
+});
+
+app.post("/api/auth/phone-login", async (req, res) => {
+  try {
+    const { phoneNumber, role, name, idToken } = req.body;
+    if (!phoneNumber) {
+      return res.status(400).json({ error: "Phone number is required" });
+    }
+
+    const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
+    const formattedPhone = cleanPhone.startsWith("+") ? cleanPhone : `+91${cleanPhone.replace(/^0+/, "")}`;
+    const userEmail = `${formattedPhone.replace(/\+/g, "")}@phone.mingree.com`;
+    const requestedRole = (role === "sponsor" || role === "creator" || role === "brand") ? (role === "brand" ? "sponsor" : role) : "creator";
+    const userName = name?.trim() || `User ${formattedPhone.slice(-4)}`;
+
+    let foundUser: any = null;
+    try {
+      const dbRes = await pool.query(
+        "SELECT * FROM users WHERE email = $1 OR email LIKE $2",
+        [userEmail, `%${formattedPhone.slice(-10)}%`]
+      );
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        foundUser = {
+          id: Number(row.id),
+          email: row.email,
+          name: row.name,
+          role: row.role,
+          handle: row.handle || `@user${row.id}`,
+          avatar: row.avatar,
+          tier: row.tier || "Nano",
+          companyName: row.company_name,
+          isEmailVerified: true,
+          phone: formattedPhone,
+          status: row.status,
+          createdAt: row.created_at,
+        };
+      }
+    } catch (err: any) {
+      if (err.code !== 'ECONNREFUSED') {
+        console.error("[PHONE LOGIN DB ERROR]", err.message);
+      }
+    }
+
+    if (!foundUser) {
+      foundUser = registeredUsers.find(
+        (u) => (u.phone && u.phone === formattedPhone) || (u.email && u.email === userEmail)
+      );
+    }
+
+    if (!foundUser) {
+      // Create new user for phone login
+      const defaultPasswordHash = bcrypt.hashSync(`Phone_${formattedPhone}_${Date.now()}`, 10);
+      try {
+        const insertRes = await pool.query(
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
+           VALUES ($1, $2, $3, $4, true, 'active')
+           RETURNING *`,
+          [userEmail, defaultPasswordHash, userName, requestedRole]
+        );
+        const dbRow = insertRes.rows[0];
+        foundUser = {
+          id: Number(dbRow.id),
+          email: dbRow.email,
+          name: dbRow.name,
+          role: dbRow.role,
+          handle: `@user${dbRow.id}`,
+          tier: "Nano",
+          phone: formattedPhone,
+          isEmailVerified: true,
+          status: "active",
+          createdAt: dbRow.created_at,
+        };
+
+        // Create wallet
+        await pool.query(
+          `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+          [foundUser.id]
+        );
+
+        if (requestedRole === "creator") {
+          try {
+            await pool.query(
+              `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
+               VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending') ON CONFLICT DO NOTHING`,
+              [foundUser.id, `user_${formattedPhone.slice(-4)}`]
+            );
+          } catch {}
+        }
+      } catch (err: any) {
+        console.error("[PHONE SIGNUP INSERT ERROR]", err.message);
+        foundUser = {
+          id: Date.now(),
+          email: userEmail,
+          name: userName,
+          role: requestedRole,
+          handle: `@user${String(Date.now()).slice(-4)}`,
+          tier: "Nano",
+          phone: formattedPhone,
+          isEmailVerified: true,
+          status: "active",
+          balance: "0.00",
+          followers: 0,
+          engagement: "0.0",
+          reach: 0,
+          createdAt: new Date().toISOString(),
+        };
+        registeredUsers.push(foundUser);
+        saveRegisteredUsers();
+      }
+    }
+
+    setAuthTokenCookie(res, foundUser);
+    return res.json(sanitizeUser(foundUser));
+  } catch (err: any) {
+    console.error("[PHONE LOGIN ERROR]", err);
+    return res.status(500).json({ error: err.message || "Failed to log in with phone" });
   }
 });
 

@@ -9,6 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { queryClient } from "@/lib/queryClient";
 import { getCitiesByCountry } from "@shared/cities";
 import { useAuth } from "@/lib/auth-context";
+import { PhoneOtpLogin } from "@/components/auth/PhoneOtpLogin";
+import { Smartphone, Mail } from "lucide-react";
 
 const COUNTRIES = [
   { code: "IN", name: "India" }
@@ -51,6 +53,7 @@ export default function Signup() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { login } = useAuth();
+  const [authMode, setAuthMode] = useState<"phone" | "form">("phone");
   const [step, setStep] = useState<"form" | "otp">("form");
   const [role, setRole] = useState<UserRole>("creator");
   const [name, setName] = useState("");
@@ -360,28 +363,58 @@ export default function Signup() {
             </CardDescription>
           </CardHeader>
           
-          <CardContent className="px-6 pb-6">
+          <CardContent className="px-6 pb-6 space-y-4">
             {step === "form" && (
               <div className="space-y-3">
+                {/* Auth Mode Toggle */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/60">
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode("phone")}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      authMode === "phone"
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid="tab-signup-phone"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Phone SMS OTP</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode("form")}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      authMode === "form"
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    data-testid="tab-signup-email"
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Email & Details</span>
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setRole("creator")}
-                    className={`p-2 rounded border text-xs font-medium transition-colors ${
+                    className={`p-2 rounded border text-xs font-medium transition-colors cursor-pointer ${
                       role === "creator"
-                        ? "bg-foreground text-background border-foreground"
+                        ? "bg-foreground text-background border-foreground font-bold"
                         : "bg-muted text-muted-foreground border-border hover:text-foreground"
                     }`}
                     data-testid="button-role-creator"
                   >
-                    Creator
+                    Creator Account
                   </button>
                   <button
                     type="button"
                     onClick={() => setRole("sponsor")}
-                    className={`p-2 rounded border text-xs font-medium transition-colors ${
+                    className={`p-2 rounded border text-xs font-medium transition-colors cursor-pointer ${
                       role === "sponsor"
-                        ? "bg-foreground text-background border-foreground"
+                        ? "bg-foreground text-background border-foreground font-bold"
                         : "bg-muted text-muted-foreground border-border hover:text-foreground"
                     }`}
                     data-testid="button-role-sponsor"
@@ -390,16 +423,33 @@ export default function Signup() {
                   </button>
                 </div>
 
-                <div>
-                  <Input
-                    type="text"
-                    placeholder={role === "sponsor" ? "Contact Person Name" : "Full Name"}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="text-xs h-9"
-                    data-testid="input-name"
-                  />
-                </div>
+                {authMode === "phone" ? (
+                  <div className="pt-1">
+                    <PhoneOtpLogin role={role} />
+                    <div className="border-t border-border pt-3 mt-3">
+                      <p className="text-center text-muted-foreground text-xs">
+                        Have an account?{" "}
+                        <button
+                          onClick={() => setLocation(role === "sponsor" ? "/sponsor/login" : "/login")}
+                          className="text-foreground font-semibold hover:underline cursor-pointer"
+                        >
+                          Log in
+                        </button>
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <Input
+                        type="text"
+                        placeholder={role === "sponsor" ? "Contact Person Name" : "Full Name"}
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="text-xs h-9"
+                        data-testid="input-name"
+                      />
+                    </div>
 
                 {role === "sponsor" && (
                   <div>
@@ -572,18 +622,20 @@ export default function Signup() {
                   By signing up, you agree to our Terms of Service
                 </p>
 
-                <div className="border-t border-border pt-3 mt-3">
-                  <p className="text-center text-muted-foreground text-xs">
-                    Have an account?{" "}
-                    <button
-                      onClick={() => setLocation("/login")}
-                      className="text-foreground font-semibold hover:underline"
-                      data-testid="link-login"
-                    >
-                      Log in
-                    </button>
-                  </p>
-                </div>
+                    <div className="border-t border-border pt-3 mt-3">
+                      <p className="text-center text-muted-foreground text-xs">
+                        Have an account?{" "}
+                        <button
+                          onClick={() => setLocation("/login")}
+                          className="text-foreground font-semibold hover:underline"
+                          data-testid="link-login"
+                        >
+                          Log in
+                        </button>
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

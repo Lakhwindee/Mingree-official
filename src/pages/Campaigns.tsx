@@ -730,45 +730,44 @@ export default function Campaigns() {
             setHasDownloadedAsset(false);
           }
         }}>
-          <DialogContent className="max-w-xl max-h-[92vh] p-0 overflow-hidden rounded-2xl border-border shadow-2xl">
+          <DialogContent className="w-[94vw] max-w-xl max-h-[92vh] p-0 overflow-hidden rounded-2xl border-border shadow-2xl">
             {selectedGroup && activeTargetCampaign && (
-              <div className="flex flex-col max-h-[92vh]">
+              <div className="flex flex-col w-full max-w-full min-w-0 max-h-[92vh] overflow-hidden">
                 {/* Modal Header (Pure Typographic Precision) */}
-                <div className="p-4 sm:p-5 border-b border-border/80 bg-card shrink-0">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-muted-foreground tracking-wide uppercase">
+                <div className="p-4 sm:p-5 pr-14 border-b border-border/80 bg-card shrink-0 relative min-w-0">
+                  <div className="flex items-center justify-between gap-3 mb-2 min-w-0">
+                    <span className="text-xs font-semibold text-muted-foreground tracking-wide uppercase truncate">
                       {selectedGroup.brand}
                     </span>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       {isTargetReserved ? (
-                        <span className="bg-emerald-600 text-white font-semibold text-xs py-0.5 px-2.5 rounded">
+                        <span className="bg-emerald-600 text-white font-semibold text-xs py-0.5 px-2.5 rounded shrink-0">
                           Reserved
                         </span>
                       ) : isTargetLocked ? (
-                        <span className="bg-muted text-muted-foreground font-medium text-xs py-0.5 px-2 rounded border border-border">
+                        <span className="bg-muted text-muted-foreground font-medium text-xs py-0.5 px-2 rounded border border-border shrink-0">
                           Locked
                         </span>
                       ) : (
-                        <span className="bg-muted text-foreground font-semibold text-xs py-0.5 px-2 rounded border border-border/60">
+                        <span className="bg-muted text-foreground font-semibold text-xs py-0.5 px-2 rounded border border-border/60 shrink-0">
                           Eligible
                         </span>
                       )}
                     </div>
                   </div>
 
-                  <div>
-                    <DialogTitle className="text-base sm:text-lg font-bold text-foreground leading-tight">
+                  <div className="min-w-0">
+                    <DialogTitle className="text-base sm:text-lg font-bold text-foreground leading-tight truncate">
                       {selectedGroup.title}
                     </DialogTitle>
-                    <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                    <DialogDescription className="text-xs text-muted-foreground mt-0.5 truncate">
                       Campaign by <span className="font-medium text-foreground">{selectedGroup.brand}</span>
                     </DialogDescription>
                   </div>
                 </div>
 
-                {/* Modal Body Scroll Area */}
-                <ScrollArea className="flex-1 px-4 sm:px-6 py-4 overflow-y-auto">
-                  <div className="space-y-4">
+                {/* Modal Body Scroll Container */}
+                <div className="flex-1 w-full min-w-0 overflow-y-auto px-4 sm:px-6 py-4 space-y-4 max-h-[calc(92vh-140px)]">
                     
                     {/* Key Metrics Grid */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
@@ -909,13 +908,13 @@ export default function Campaigns() {
                       const songTrack = (activeTargetCampaign as any).songUrl || (activeTargetCampaign as any).audioUrl || selectedGroup.songUrl || selectedGroup.audioUrl;
                       if (!songTrack) return null;
                       return (
-                        <div className="space-y-1.5 rounded-xl border border-border/80 bg-card p-3">
+                        <div className="space-y-1.5 rounded-xl border border-border/80 bg-card p-3 min-w-0">
                           <h4 className="text-xs font-semibold text-foreground uppercase tracking-wider">
                             Official Track / Audio Link
                           </h4>
                           <p className="text-xs text-muted-foreground">Sponsor requires using this official audio for the Reel/Video:</p>
-                          <div className="flex items-center gap-2 mt-1.5 bg-muted/50 p-2 rounded-lg border border-border/50">
-                            <span className="text-xs font-mono text-foreground truncate flex-1">{songTrack}</span>
+                          <div className="flex items-center gap-2 mt-1.5 bg-muted/50 p-2 rounded-lg border border-border/50 min-w-0">
+                            <span className="text-xs font-mono text-foreground truncate flex-1 min-w-0">{songTrack}</span>
                             <Button
                               size="sm"
                               variant="outline"
@@ -1133,24 +1132,20 @@ export default function Campaigns() {
                     <div className="text-xs text-muted-foreground bg-muted/40 p-3 rounded-xl border border-border/60">
                       <span>Once reserved, you have <strong>48 hours</strong> to publish and submit link proof.</span>
                     </div>
-
                   </div>
-                </ScrollArea>
-
-
 
                 {/* Modal Footer Actions */}
-                <div className="p-3.5 sm:p-4 border-t border-border/80 bg-card flex flex-col gap-2 shrink-0">
+                <div className="p-3.5 sm:p-4 border-t border-border/80 bg-card flex flex-col gap-2 shrink-0 w-full min-w-0">
                   {!hasDownloadedAsset && !isTargetReserved && !isTargetLocked && (
                     <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-medium border border-amber-500/20 text-center">
                       <span>Mandatory Step: Click <strong>"Download Required File"</strong> above to unlock the Reserve button.</span>
                     </div>
                   )}
 
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 w-full min-w-0">
                     {isTargetReserved ? (
                       <Button
-                        className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold h-10 shadow-xs"
+                        className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold h-10 shadow-xs min-w-0 truncate"
                         onClick={() => {
                           setSelectedGroup(null);
                           navigate("/my-campaigns");
@@ -1162,13 +1157,13 @@ export default function Campaigns() {
                       <Button
                         disabled
                         variant="secondary"
-                        className="flex-1 rounded-xl opacity-60 cursor-not-allowed text-xs sm:text-sm font-semibold h-10"
+                        className="flex-1 rounded-xl opacity-60 cursor-not-allowed text-xs sm:text-sm font-semibold h-10 min-w-0 truncate"
                       >
                         Requires {activeTargetCampaign.tier}+ Followers
                       </Button>
                     ) : (
                       <Button
-                        className="flex-1 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs sm:text-sm font-semibold h-10 shadow-xs cursor-pointer"
+                        className="flex-1 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 text-xs sm:text-sm font-semibold h-10 shadow-xs cursor-pointer min-w-0 truncate"
                         disabled={reserveMutation.isPending || activeTargetCampaign.spotsRemaining <= 0 || !canReserveActiveTarget}
                         onClick={() => reserveMutation.mutate({ campaignId: activeTargetCampaign.id })}
                         data-testid="button-modal-reserve-action"
@@ -1187,7 +1182,7 @@ export default function Campaigns() {
 
                     <Button 
                       variant="outline" 
-                      className="rounded-xl h-10 px-4 text-xs font-semibold"
+                      className="rounded-xl h-10 px-4 text-xs font-semibold shrink-0 cursor-pointer"
                       onClick={() => {
                         setSelectedGroup(null);
                         setSelectedTierCampaign(null);

@@ -555,31 +555,33 @@ export default function MyCampaigns() {
           setSelectedReservation(null);
         }
       }}>
-        <DialogContent className="max-w-lg max-h-[92vh] p-0 overflow-hidden rounded-2xl border-border shadow-2xl">
+        <DialogContent className="w-[94vw] max-w-lg max-h-[92vh] p-0 overflow-hidden rounded-2xl border-border shadow-2xl">
           {selectedReservation && selectedReservation.campaign && (
-            <div className="flex flex-col max-h-[92vh]">
+            <div className="flex flex-col w-full max-w-full min-w-0 max-h-[92vh] overflow-hidden">
               {/* Modal Header */}
-              <div className="p-4 sm:p-5 border-b border-border/80 bg-card shrink-0">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              <div className="p-4 sm:p-5 pr-14 border-b border-border/80 bg-card shrink-0 relative min-w-0">
+                <div className="flex items-center justify-between gap-3 mb-2 min-w-0">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate">
                     {selectedReservation.campaign.brand}
                   </span>
-                  {getStatusBadge(selectedReservation.status)}
+                  <div className="shrink-0">
+                    {getStatusBadge(selectedReservation.status)}
+                  </div>
                 </div>
 
-                <div>
-                  <DialogTitle className="text-base sm:text-lg font-bold text-foreground leading-tight">
+                <div className="min-w-0">
+                  <DialogTitle className="text-base sm:text-lg font-bold text-foreground leading-tight truncate">
                     {selectedReservation.campaign.title}
                   </DialogTitle>
-                  <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                  <DialogDescription className="text-xs text-muted-foreground mt-0.5 truncate">
                     Tier: {selectedReservation.campaign.tier || "Tier 1"} &bull; Deliverable: {selectedReservation.campaign.type || "Reel"}
                   </DialogDescription>
                 </div>
               </div>
 
               {/* Modal Scroll Content */}
-              <ScrollArea className="flex-1 px-4 sm:px-6 py-4 overflow-y-auto">
-                <div className="space-y-4">
+              <ScrollArea className="flex-1 w-full min-w-0 overflow-y-auto">
+                <div className="px-4 sm:px-6 py-4 space-y-4 w-full min-w-0 max-w-full box-border">
                   
                   {/* Reward & Expiry Row */}
                   <div className="grid grid-cols-2 gap-2.5">

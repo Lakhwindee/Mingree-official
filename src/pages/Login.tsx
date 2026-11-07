@@ -8,10 +8,14 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 
+import { PhoneOtpLogin } from "@/components/auth/PhoneOtpLogin";
+import { Smartphone, Mail } from "lucide-react";
+
 export default function Login() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { login } = useAuth();
+  const [authMethod, setAuthMethod] = useState<"phone" | "email">("phone");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -117,64 +121,98 @@ export default function Login() {
           </CardHeader>
 
           <CardContent className="px-6 pb-8 space-y-4">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="email" className="text-xs font-semibold text-foreground">Email Address</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-10 text-xs"
-                  required
-                  data-testid="input-email"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password" className="text-xs font-semibold text-foreground">Password</Label>
-                  <button
-                    type="button"
-                    onClick={() => setLocation("/forgot-password")}
-                    className="text-xs text-muted-foreground hover:text-foreground font-medium"
-                    data-testid="link-forgot-password"
-                  >
-                    Forgot Password?
-                  </button>
-                </div>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="h-10 text-xs pr-14"
-                    required
-                    data-testid="input-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
-                    data-testid="button-toggle-password"
-                  >
-                    {showPassword ? "Hide" : "Show"}
-                  </button>
-                </div>
-              </div>
-
-              <Button
-                type="submit"
-                className="w-full h-10 text-xs font-semibold"
-                disabled={isLoading || isSuccess}
-                data-testid="button-login"
+            {/* Auth Method Switcher */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-xl border border-border/60">
+              <button
+                type="button"
+                onClick={() => setAuthMethod("phone")}
+                className={`flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  authMethod === "phone"
+                    ? "bg-background text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                data-testid="tab-login-phone"
               >
-                {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Log In"}
-              </Button>
-            </form>
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Phone SMS OTP</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMethod("email")}
+                className={`flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  authMethod === "email"
+                    ? "bg-background text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                data-testid="tab-login-email"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span>Email & Password</span>
+              </button>
+            </div>
+
+            {authMethod === "phone" ? (
+              <PhoneOtpLogin role="creator" />
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="email" className="text-xs font-semibold text-foreground">Email Address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="h-10 text-xs"
+                    required
+                    data-testid="input-email"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password" className="text-xs font-semibold text-foreground">Password</Label>
+                    <button
+                      type="button"
+                      onClick={() => setLocation("/forgot-password")}
+                      className="text-xs text-muted-foreground hover:text-foreground font-medium"
+                      data-testid="link-forgot-password"
+                    >
+                      Forgot Password?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="h-10 text-xs pr-14"
+                      required
+                      data-testid="input-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+                      data-testid="button-toggle-password"
+                    >
+                      {showPassword ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full h-10 text-xs font-semibold"
+                  disabled={isLoading || isSuccess}
+                  data-testid="button-login"
+                >
+                  {isSuccess ? "Redirecting..." : isLoading ? "Signing in..." : "Log In"}
+                </Button>
+              </form>
+            )}
 
             <div className="pt-4 text-center border-t border-border">
               <p className="text-muted-foreground text-xs">

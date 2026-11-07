@@ -68,23 +68,22 @@ export function CampaignDetailsModal({ campaign, isOpen, onClose, onReserve, isR
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] p-0">
-        <DialogHeader className="p-6 pb-0">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <DialogTitle className="text-xl font-bold">{campaign.title}</DialogTitle>
-              <DialogDescription className="text-sm mt-1">
+      <DialogContent className="w-[94vw] max-w-2xl max-h-[90vh] p-0 overflow-hidden rounded-2xl">
+        <DialogHeader className="p-6 pb-0 pr-14">
+          <div className="flex items-start justify-between gap-4 min-w-0">
+            <div className="flex-1 min-w-0">
+              <DialogTitle className="text-xl font-bold truncate">{campaign.title}</DialogTitle>
+              <DialogDescription className="text-sm mt-1 truncate">
                 by <span className="font-semibold text-foreground">{campaign.brand}</span>
               </DialogDescription>
             </div>
-            <Badge variant="outline" className="text-xs">
+            <Badge variant="outline" className="text-xs shrink-0">
               {campaign.tier}
             </Badge>
           </div>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[60vh] px-6">
-          <div className="space-y-6 py-4">
+        <div className="max-h-[60vh] w-full min-w-0 overflow-y-auto py-4 px-6 space-y-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {isProductCampaign ? (
                 <div className="rounded-lg bg-muted/40 border border-border p-3.5 text-center">
@@ -233,8 +232,7 @@ export function CampaignDetailsModal({ campaign, isOpen, onClose, onReserve, isR
             <div className="text-xs text-muted-foreground rounded-lg bg-muted/40 border border-border p-3">
               You have 48 hours to submit your work after reserving
             </div>
-          </div>
-        </ScrollArea>
+        </div>
 
         <div className="p-4 sm:p-6 pt-3 border-t">
           {requiresDownload && !hasDownloaded && (
