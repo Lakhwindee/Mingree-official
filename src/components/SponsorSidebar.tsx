@@ -161,7 +161,7 @@ export function SponsorSidebar() {
       )}
 
       {/* Desktop Sidebar */}
-      <aside className="hidden h-screen w-64 flex-col border-r border-border bg-sidebar px-4 py-6 md:flex">
+      <aside className="hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-sidebar px-4 py-6 md:flex sticky top-0">
         <div className="mb-8 flex items-center justify-between px-2">
           <Link href="/sponsor">
             <span className="text-xl font-bold tracking-tight text-foreground cursor-pointer">Mingree</span>

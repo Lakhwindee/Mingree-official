@@ -7,9 +7,9 @@ export default function CreateCampaignSelect() {
   const [, navigate] = useLocation();
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <SponsorSidebar />
-      <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
+      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pt-14 md:pt-0 pb-20 md:pb-6">
         <div className="mx-auto max-w-4xl p-6 sm:p-10 space-y-8">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">Create Campaign</h1>

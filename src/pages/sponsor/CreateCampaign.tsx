@@ -412,9 +412,9 @@ export default function CreateCampaign() {
   const campaignMode = 'fixed';
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <SponsorSidebar />
-      <main className="flex-1 overflow-y-auto pb-20 md:pb-6">
+      <main className="flex-1 w-full max-w-full min-w-0 overflow-x-hidden overflow-y-auto pt-14 md:pt-0 pb-20 md:pb-6">
         <div className="mx-auto max-w-3xl p-6">
           <div className="mb-8 flex items-center gap-4">
             <Button variant="ghost" onClick={() => navigate("/sponsor/create-campaign")}>&larr; Back</Button>

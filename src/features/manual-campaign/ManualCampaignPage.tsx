@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { compact, inr } from "./tiers";
 import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
+import { ArrowLeft } from "lucide-react";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -27,7 +28,13 @@ const STYLES: { id: CampaignDetails["promotionStyle"]; label: string; text: stri
   { id: "face_on_camera", label: "Face on camera", text: "Creator appears in the video" },
   { id: "direct_share", label: "Direct share", text: "Creator shares the file you provide" },
 ];
-const STEPS = ["Creator Selection", "Campaign Details", "Promotion Content", "Review & Launch"];
+const STEP_CONFIG = [
+  { full: "Creator Selection", short: "Creators" },
+  { full: "Campaign Details", short: "Details" },
+  { full: "Promotion Content", short: "Content" },
+  { full: "Review & Launch", short: "Review" },
+];
+const STEPS = STEP_CONFIG.map((s) => s.full);
 const DISCLOSURE = "Add #ad or the Instagram “Paid partnership” label.";
 
 const emptyDetails: CampaignDetails = {
@@ -287,29 +294,66 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   return (
     <div className="w-full max-w-5xl mx-auto p-4 sm:p-6 space-y-6 [&_section]:min-w-0 overflow-x-hidden">
       {/* Stepper */}
-      <div className="flex items-center justify-between gap-3">
-        {onBack && <Button variant="ghost" size="sm" onClick={onBack}> Back</Button>}
-        <ol className="flex flex-1 min-w-0 items-center justify-center gap-2 sm:gap-4 overflow-x-auto" aria-label="Progress">
-          {STEPS.map((s, i) => {
+      <div className="flex items-center justify-between gap-2 sm:gap-4 pb-3 border-b border-border/70 flex-wrap sm:flex-nowrap">
+        {onBack && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onBack}
+            className="shrink-0 h-8 px-2.5 text-xs font-semibold rounded-lg gap-1.5 cursor-pointer bg-background hover:bg-muted"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            <span>Back</span>
+          </Button>
+        )}
+
+        <ol className="flex flex-1 min-w-0 items-center justify-center gap-1.5 sm:gap-3 overflow-x-auto no-scrollbar py-0.5" aria-label="Progress">
+          {STEP_CONFIG.map((s, i) => {
             const isStepDone = problems[i].length === 0 && (i < step || (i === 3 && step === 3 && selected.size > 0 && !!bill && bill.shortfall <= 0));
+            const isCurrent = i === step;
             return (
-              <li key={s} className="flex items-center gap-2 shrink-0">
+              <li key={s.full} className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={() => handleStepClick(i)}
-                  className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition"
+                  className="flex items-center gap-1.5 cursor-pointer hover:opacity-90 transition rounded-full focus:outline-none"
                 >
-                  <span className={cn("h-7 w-7 rounded-full text-xs font-semibold flex items-center justify-center border transition-colors",
-                    isStepDone ? "bg-primary text-primary-foreground border-primary" : i === step ? "border-primary text-primary bg-primary/10" : "text-muted-foreground border-border")}>
+                  <span
+                    className={cn(
+                      "h-6 w-6 sm:h-7 sm:w-7 rounded-full text-xs font-bold flex items-center justify-center border transition-all shrink-0",
+                      isStepDone
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : isCurrent
+                        ? "border-primary text-primary bg-primary/10 ring-2 ring-primary/20"
+                        : "text-muted-foreground border-border bg-muted/40"
+                    )}
+                  >
                     {isStepDone ? "✓" : i + 1}
                   </span>
-                  <span className={cn("text-sm hidden md:inline font-medium", i === step ? "font-semibold text-primary" : "text-muted-foreground")}>{s}</span>
+                  <span
+                    className={cn(
+                      "text-xs sm:text-sm font-medium whitespace-nowrap",
+                      isCurrent
+                        ? "font-bold text-primary inline"
+                        : "text-muted-foreground hidden lg:inline"
+                    )}
+                  >
+                    {isCurrent ? s.full : s.short}
+                  </span>
                 </button>
+                {i < STEP_CONFIG.length - 1 && (
+                  <span className="text-border/80 text-xs hidden sm:inline select-none">&rarr;</span>
+                )}
               </li>
             );
           })}
         </ol>
-        <div className="w-16 hidden sm:block" />
+
+        <div className="shrink-0 hidden sm:flex items-center">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-full border border-border/60">
+            Step {step + 1} of 4
+          </span>
+        </div>
       </div>
 
       {/* Step 2: Campaign Details */}
@@ -559,23 +603,28 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
           {/* Creators Drawer / Live Results for Direct Search */}
           <div className="space-y-3 rounded-2xl border bg-muted/10 p-4 sm:p-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-              <h3 className="font-semibold text-sm flex items-center gap-2">
-                <span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <h3 className="font-bold text-sm text-foreground">
                   {globalSearchQ.trim()
                     ? `Matching Creators for “${globalSearchQ.trim()}”`
-                    : "Available Creators (Ranked by High Reach & Views)"}
+                    : "Available Creators"}
+                </h3>
+                <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-full bg-muted border border-border/60 shrink-0">
+                  {searchResults.length} {searchResults.length === 1 ? "creator" : "creators"}
                 </span>
-                <span className="text-xs text-muted-foreground font-normal">
-                  ({searchResults.length} {searchResults.length === 1 ? "creator" : "creators"})
-                </span>
-              </h3>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground hidden sm:inline">Sort:</span>
+                {!globalSearchQ.trim() && (
+                  <span className="text-[11px] font-medium text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md shrink-0">
+                    Ranked by Reach &amp; Views
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs text-muted-foreground font-medium hidden sm:inline">Sort:</span>
                 <select
                   value={activeSort}
                   onChange={(e) => setActiveSort(e.target.value as any)}
-                  className="h-8 rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none"
+                  className="h-8 rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none max-w-full cursor-pointer"
                   aria-label="Sort creators"
                 >
                   <option value="relevance">⭐ Top Reach &amp; Views (Default)</option>
@@ -613,7 +662,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             )}
 
             {/* Grid of Creators */}
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 max-h-[490px] overflow-y-auto p-1">
+            <div className="grid gap-3.5 grid-cols-1 min-[920px]:grid-cols-2 xl:grid-cols-3 max-h-[500px] overflow-y-auto p-1">
               {searchResults.map((c) => {
                 const isChosen = selected.has(c.id);
                 const reachVal = c.reach || Math.round(c.followers * 2.2);
@@ -1065,13 +1114,25 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       )}
 
       {/* Footer nav */}
-      <div className="flex items-center justify-between gap-3">
-        <Button variant="outline" disabled={step === 0} onClick={() => setStep((s) => s - 1)}> Previous</Button>
-        <div className="flex items-center gap-3">
-          {!stepOk && <span className="text-xs text-muted-foreground hidden sm:inline">{problems[step][0]}</span>}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+        <Button
+          variant="outline"
+          disabled={step === 0}
+          onClick={() => setStep((s) => s - 1)}
+          className="shrink-0 h-9 px-4 text-xs font-semibold rounded-xl cursor-pointer"
+        >
+          Previous
+        </Button>
+        <div className="flex items-center justify-between sm:justify-end gap-3 flex-wrap">
+          {!stepOk && (
+            <span className="text-xs text-muted-foreground font-medium text-left sm:text-right max-w-xs">
+              {problems[step][0]}
+            </span>
+          )}
           {step < 3 ? (
             <Button
               disabled={!stepOk}
+              className="shrink-0 h-9 px-5 text-xs font-semibold rounded-xl cursor-pointer"
               onClick={() => {
                 if (problems[step].length > 0) {
                   toast.error(problems[step][0]);
@@ -1083,8 +1144,13 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               Next
             </Button>
           ) : (
-            <Button disabled={!stepOk || submitting || billLoading || selected.size === 0} onClick={launch}>
-              {submitting ? "Launching..." : "Launch campaign"}{bill ? ` · ${inr(bill.total)}` : ""}
+            <Button
+              disabled={!stepOk || submitting || billLoading || selected.size === 0}
+              onClick={launch}
+              className="shrink-0 h-9 px-5 text-xs font-semibold rounded-xl cursor-pointer"
+            >
+              {submitting ? "Launching..." : "Launch campaign"}
+              {bill ? ` · ${inr(bill.total)}` : ""}
             </Button>
           )}
         </div>
