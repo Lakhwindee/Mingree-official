@@ -74,6 +74,7 @@ export default function Signup() {
   const [website, setWebsite] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
   const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
   const [resendTimer, setResendTimer] = useState(0);
@@ -120,6 +121,7 @@ export default function Signup() {
     }
 
     setIsLoading(true);
+    setErrorMessage(null);
     try {
       const response = await fetch("/api/auth/send-otp", {
         method: "POST",
@@ -153,9 +155,11 @@ export default function Signup() {
       setStep("otp");
       setResendTimer(60);
     } catch (error: any) {
+      const msg = error.message || "Failed to send verification code. Please try again.";
+      setErrorMessage(msg);
       toast({
         title: "Error Sending Code",
-        description: error.message || "Failed to send verification code. Please try again.",
+        description: msg,
         variant: "destructive",
       });
     } finally {
@@ -285,6 +289,12 @@ export default function Signup() {
           </CardHeader>
           
           <CardContent className="px-6 pb-6 space-y-4">
+            {errorMessage && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-xs text-destructive font-medium flex items-center justify-between">
+                <span>{errorMessage}</span>
+                <button type="button" onClick={() => setErrorMessage(null)} className="text-destructive/70 hover:text-destructive text-sm font-bold ml-2">×</button>
+              </div>
+            )}
             {step === "form" && (
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-2">
@@ -487,7 +497,7 @@ export default function Signup() {
                   type="button"
                   onClick={sendOtp}
                   className="w-full text-xs font-semibold h-9"
-                  disabled={isLoading || !name || !email || !password || !city || (role === "sponsor" && !companyName)}
+                  disabled={isLoading || !name || !email || !password || (role === "sponsor" && !companyName)}
                   data-testid="button-signup"
                 >
                   {isLoading ? "Please wait..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
