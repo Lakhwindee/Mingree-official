@@ -270,7 +270,7 @@ function App() {
                 position="top-center" 
                 duration={2000}
                 toastOptions={{
-                  className: "backdrop-blur-md bg-background/80 dark:bg-zinc-950/80 border border-border/80 shadow-lg rounded-xl text-foreground font-medium",
+                  className: "backdrop-blur-xl bg-white/40 dark:bg-black/40 border border-white/30 dark:border-white/10 shadow-2xl rounded-2xl text-foreground font-medium",
                 }}
               />
               {showSplash && (
