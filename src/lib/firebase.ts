@@ -99,6 +99,13 @@ export function setupRecaptcha(containerId: string = "recaptcha-container", size
     try {
       window.recaptchaVerifier.clear();
     } catch {}
+    window.recaptchaVerifier = undefined;
+  }
+
+  // Clear container DOM element if element exists
+  const container = document.getElementById(containerId);
+  if (container) {
+    container.innerHTML = "";
   }
 
   const verifier = new RecaptchaVerifier(firebaseAuth, containerId, {

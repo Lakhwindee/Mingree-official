@@ -88,10 +88,12 @@ export default function Signup() {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
 
-    if (!cleanEmail || !cleanName || !password) {
+    const cleanPhone = phone.replace(/[^0-9]/g, "");
+
+    if (!cleanEmail || !cleanName || !password || cleanPhone.length < 10) {
       toast({
         title: "Missing Information",
-        description: "Please fill all required fields.",
+        description: "Please fill all required fields, including a valid 10-digit phone number.",
         variant: "destructive",
       });
       return;
@@ -432,10 +434,11 @@ export default function Signup() {
                   <Input
                     type="text"
                     inputMode="tel"
-                    placeholder="Phone Number"
+                    placeholder="Phone Number *"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="text-xs h-9"
+                    required
                     data-testid="input-phone"
                   />
                 </div>

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { toast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { mockCampaigns } from './mock-data';
 
 export type SubmissionStatus = 'available' | 'reserved' | 'submitted' | 'approved' | 'rejected' | 'paid';
@@ -75,8 +75,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const updateUser = (data: Partial<UserProfile>) => {
     setUser(prev => ({ ...prev, ...data }));
-    toast({
-      title: "Profile Updated",
+    toast("Profile Updated", {
       description: "Your changes have been saved successfully.",
     });
   };
@@ -93,8 +92,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
     }));
 
-    toast({
-      title: "Campaign Reserved! 🎉",
+    toast("Campaign Reserved! 🎉", {
       description: `You have 48 hours to submit your content for ${title}.`,
     });
   };
@@ -110,8 +108,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
     }));
 
-    toast({
-      title: "Submission Received! 📤",
+    toast("Submission Received! 📤", {
       description: "Your content is now under review by the admin team.",
     });
     
@@ -155,18 +152,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       earnings: `$${(prev.balance + net).toLocaleString()}`
     }));
 
-    toast({
-      title: "Submission Approved! 💰",
+    toast("Submission Approved! 💰", {
       description: `$${net} has been added to your wallet (Tax withheld: $${tax})`,
     });
   };
 
   const withdrawFunds = (amount: number) => {
     if (amount > user.balance) {
-      toast({
-        title: "Insufficient Funds",
+      toast.error("Insufficient Funds", {
         description: "You cannot withdraw more than your available balance.",
-        variant: "destructive"
       });
       return;
     }
@@ -190,8 +184,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       earnings: `$${(prev.balance - amount).toLocaleString()}`
     }));
 
-    toast({
-      title: "Withdrawal Initiated 🏦",
+    toast("Withdrawal Initiated 🏦", {
       description: `$${amount} is being processed to your bank account via Stripe.`,
     });
   };
