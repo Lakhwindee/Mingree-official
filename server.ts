@@ -1183,6 +1183,25 @@ const defaultAccounts = [
     tier: "Admin",
     isEmailVerified: true,
   },
+  {
+    id: 1,
+    email: "manindersinghjudge@gmail.com",
+    name: "Judge Saab",
+    role: "creator",
+    handle: "@ijudgesaab",
+    instagramUsername: "ijudgesaab",
+    instagramProfileUrl: "https://instagram.com/ijudgesaab",
+    instagramFollowers: 68800,
+    followers: 68800,
+    medianViews: 30900,
+    reach: 151300,
+    engagementRate: 4.8,
+    isInstagramVerified: true,
+    instagramVerificationStatus: "verified",
+    tier: "Mid",
+    city: "Mumbai",
+    isEmailVerified: true,
+  },
 ];
 
 let registeredUsers: any[] = [...defaultAccounts];
@@ -6753,10 +6772,23 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : null);
       const engRate = u.engagementRate ? Number(u.engagementRate) : (followers > 0 ? 4.8 : null);
 
+      const rawName = (u.name && u.name.trim() && u.name !== "Mingree Platform Treasury")
+        ? u.name.trim()
+        : (cleanHandle.toLowerCase() === "ijudgesaab" || (u.email && u.email.toLowerCase().includes("judge")))
+          ? "Judge Saab"
+          : (u.displayName && !u.displayName.startsWith("@"))
+            ? u.displayName.trim()
+            : (u.email ? u.email.split("@")[0] : cleanHandle);
+      const mingreeName = rawName || `@${cleanHandle}`;
+
       realCreatorCards.push({
         id: Number(u.id),
         username: cleanHandle,
-        displayName: `@${cleanHandle}`,
+        displayName: mingreeName,
+        accountName: mingreeName,
+        mingreeName: mingreeName,
+        mingreeHandle: u.handle || `@${cleanHandle}`,
+        userEmail: u.email || null,
         avatarUrl: avatarUrl,
         igVerifiedBadge: true,
         city: creatorCity,
@@ -6818,7 +6850,9 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       const qLower = (q as string).toLowerCase();
       items = items.filter((c) =>
         c.username.toLowerCase().includes(qLower) ||
-        c.displayName.toLowerCase().includes(qLower) ||
+        (c.accountName && c.accountName.toLowerCase().includes(qLower)) ||
+        (c.displayName && c.displayName.toLowerCase().includes(qLower)) ||
+        (c.mingreeHandle && c.mingreeHandle.toLowerCase().includes(qLower)) ||
         (c.city && c.city.name.toLowerCase().includes(qLower))
       );
     }

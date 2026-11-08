@@ -14,6 +14,10 @@ export interface CreatorCard {
   id: number;
   username: string;
   displayName: string;
+  accountName?: string | null;
+  mingreeName?: string | null;
+  mingreeHandle?: string | null;
+  userEmail?: string | null;
   avatarUrl?: string | null;
   igVerifiedBadge?: boolean;
   city: City;
