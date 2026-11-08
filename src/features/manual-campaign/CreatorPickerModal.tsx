@@ -16,13 +16,13 @@ const Save = __DummyIcon;
 const ENGAGEMENT = [0, 1, 3, 5];
 const NICHES = ["Music", "Fashion", "Lifestyle", "Dance", "Fitness", "Comedy", "Travel", "Food", "Tech", "Gaming"];
 const SORTS: { v: NonNullable<CreatorSearchParams["sort"]>; l: string }[] = [
-  { v: "relevance", l: "⭐ Top Reach & Views" },
-  { v: "reach_desc", l: "📡 Highest Reach" },
-  { v: "views_desc", l: "👁️ Most Reel Views" },
-  { v: "engagement_desc", l: "🔥 High Engagement" },
-  { v: "followers_desc", l: "👥 Most followers" },
-  { v: "price_asc", l: "💰 Price: low to high" },
-  { v: "price_desc", l: "💰 Price: high to low" },
+  { v: "relevance", l: "Top Reach & Views" },
+  { v: "reach_desc", l: "Highest Reach" },
+  { v: "views_desc", l: "Most Reel Views" },
+  { v: "engagement_desc", l: "High Engagement" },
+  { v: "followers_desc", l: "Most followers" },
+  { v: "price_asc", l: "Price: low to high" },
+  { v: "price_desc", l: "Price: high to low" },
 ];
 
 import { CreatorAvatar } from "@/components/CreatorAvatar";

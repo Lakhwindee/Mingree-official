@@ -630,13 +630,13 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   className="h-8 rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none max-w-full cursor-pointer"
                   aria-label="Sort creators"
                 >
-                  <option value="relevance">⭐ Top Reach &amp; Views (Default)</option>
-                  <option value="reach_desc">📡 Highest Reach</option>
-                  <option value="views_desc">👁️ Most Reel Views</option>
-                  <option value="engagement_desc">🔥 High Engagement</option>
-                  <option value="followers_desc">👥 Followers (High to Low)</option>
-                  <option value="price_asc">💰 Price: Low to High</option>
-                  <option value="price_desc">💰 Price: High to Low</option>
+                  <option value="relevance">Top Reach &amp; Views (Default)</option>
+                  <option value="reach_desc">Highest Reach</option>
+                  <option value="views_desc">Most Reel Views</option>
+                  <option value="engagement_desc">High Engagement</option>
+                  <option value="followers_desc">Followers (High to Low)</option>
+                  <option value="price_asc">Price: Low to High</option>
+                  <option value="price_desc">Price: High to Low</option>
                 </select>
                 {searchLoading && <span className="text-xs text-muted-foreground animate-pulse">Updating...</span>}
               </div>
