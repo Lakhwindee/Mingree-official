@@ -31,7 +31,7 @@ export function SponsorSidebar() {
     { href: "/sponsor", label: "Dashboard" },
     { href: "/sponsor/campaigns", label: "Workspaces" },
     { href: "/sponsor/create-campaign", label: "Create Campaign" },
-    { href: "/sponsor/wallet", label: "Escrow & Payouts" },
+    { href: "/sponsor/wallet", label: "Wallet" },
     { href: "/sponsor/settings", label: "Settings" },
     { href: "/about", label: "About" },
     { href: "/sponsor/support", label: "Help & Support" },
@@ -40,7 +40,7 @@ export function SponsorSidebar() {
   const getMobilePageTitle = (path: string) => {
     if (path.startsWith("/sponsor/create-campaign")) return "Create Campaign";
     if (path.startsWith("/sponsor/campaigns")) return "Workspaces";
-    if (path.startsWith("/sponsor/wallet")) return "Escrow & Payouts";
+    if (path.startsWith("/sponsor/wallet")) return "Wallet";
     if (path.startsWith("/sponsor/settings")) return "Brand Settings";
     if (path.startsWith("/sponsor/support")) return "Help & Support";
     if (path.startsWith("/about")) return "About Mingree";
