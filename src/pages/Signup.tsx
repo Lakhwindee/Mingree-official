@@ -175,11 +175,21 @@ export default function Signup() {
         }
       }
 
-      const verifyRes = await fetch("/api/auth/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, phone: cleanPhone, otp: cleanOtp, otpToken }),
-      });
+      let verifyRes: Response;
+      try {
+        verifyRes = await fetch("/api/auth/verify-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: cleanEmail, phone: cleanPhone, otp: cleanOtp, otpToken }),
+        });
+      } catch {
+        await new Promise((r) => setTimeout(r, 600));
+        verifyRes = await fetch("/api/auth/verify-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: cleanEmail, phone: cleanPhone, otp: cleanOtp, otpToken }),
+        });
+      }
 
       const verifyData = await safeParseJson(verifyRes);
 
@@ -189,30 +199,59 @@ export default function Signup() {
 
       const verifiedToken = verifyData.verifiedToken;
 
-      const signupRes = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: cleanName,
-          email: cleanEmail,
-          phone: cleanPhone,
-          country,
-          city: city || "Bangalore",
-          password,
-          role,
-          verifiedToken,
-          otpVerified: true,
-          companyName: role === "sponsor" ? companyName.trim() : undefined,
-          gstNumber: role === "sponsor" ? gstNumber.trim() : undefined,
-          panNumber: role === "sponsor" ? panNumber.trim() : undefined,
-          billingAddress: role === "sponsor" ? billingAddress.trim() : undefined,
-          billingCity: role === "sponsor" ? billingCity.trim() : undefined,
-          billingState: role === "sponsor" ? billingState.trim() : undefined,
-          billingPincode: role === "sponsor" ? billingPincode.trim() : undefined,
-          website: role === "sponsor" ? website.trim() : undefined,
-        }),
-        credentials: "include",
-      });
+      let signupRes: Response;
+      try {
+        signupRes = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: cleanName,
+            email: cleanEmail,
+            phone: cleanPhone,
+            country,
+            city: city || "Bangalore",
+            password,
+            role,
+            verifiedToken,
+            otpVerified: true,
+            companyName: role === "sponsor" ? companyName.trim() : undefined,
+            gstNumber: role === "sponsor" ? gstNumber.trim() : undefined,
+            panNumber: role === "sponsor" ? panNumber.trim() : undefined,
+            billingAddress: role === "sponsor" ? billingAddress.trim() : undefined,
+            billingCity: role === "sponsor" ? billingCity.trim() : undefined,
+            billingState: role === "sponsor" ? billingState.trim() : undefined,
+            billingPincode: role === "sponsor" ? billingPincode.trim() : undefined,
+            website: role === "sponsor" ? website.trim() : undefined,
+          }),
+          credentials: "include",
+        });
+      } catch {
+        await new Promise((r) => setTimeout(r, 600));
+        signupRes = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: cleanName,
+            email: cleanEmail,
+            phone: cleanPhone,
+            country,
+            city: city || "Bangalore",
+            password,
+            role,
+            verifiedToken,
+            otpVerified: true,
+            companyName: role === "sponsor" ? companyName.trim() : undefined,
+            gstNumber: role === "sponsor" ? gstNumber.trim() : undefined,
+            panNumber: role === "sponsor" ? panNumber.trim() : undefined,
+            billingAddress: role === "sponsor" ? billingAddress.trim() : undefined,
+            billingCity: role === "sponsor" ? billingCity.trim() : undefined,
+            billingState: role === "sponsor" ? billingState.trim() : undefined,
+            billingPincode: role === "sponsor" ? billingPincode.trim() : undefined,
+            website: role === "sponsor" ? website.trim() : undefined,
+          }),
+          credentials: "include",
+        });
+      }
 
       const signupData = await safeParseJson(signupRes);
 
@@ -235,7 +274,11 @@ export default function Signup() {
         }
       }, 350);
     } catch (error: any) {
-      const msg = error.message || "Invalid verification code or registration failed. Please try again.";
+      const rawMsg = error?.message || "";
+      let msg = "Invalid verification code or registration failed. Please try again.";
+      if (rawMsg && rawMsg !== "Load failed" && rawMsg !== "Failed to fetch") {
+        msg = rawMsg;
+      }
       setErrorMessage(msg);
       toast.error(msg);
     } finally {
@@ -273,14 +316,14 @@ export default function Signup() {
           </CardHeader>
           
           <CardContent className="px-6 pb-6 space-y-4">
-            {errorMessage && (
-              <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-xs text-destructive font-medium flex items-center justify-between">
-                <span>{errorMessage}</span>
-                <button type="button" onClick={() => setErrorMessage(null)} className="text-destructive/70 hover:text-destructive text-sm font-bold ml-2">×</button>
-              </div>
-            )}
             {step === "form" && (
               <div className="space-y-3">
+                {errorMessage && (
+                  <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-xs text-destructive font-medium flex items-center justify-between">
+                    <span>{errorMessage}</span>
+                    <button type="button" onClick={() => setErrorMessage(null)} className="text-destructive/70 hover:text-destructive text-sm font-bold ml-2">×</button>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
