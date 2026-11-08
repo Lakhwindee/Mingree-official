@@ -74,7 +74,6 @@ export default function Signup() {
   const [isLoading, setIsLoading] = useState(false);
   const [otp, setOtp] = useState("");
   const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
-  const [fallbackOtp, setFallbackOtp] = useState<string | null>(null);
   const [resendTimer, setResendTimer] = useState(0);
 
   useEffect(() => {
@@ -127,56 +126,27 @@ export default function Signup() {
 
       const data = await safeParseJson(response);
 
-      if (data.__nonJson) {
-        // Fallback when backend endpoint returns HTML/non-JSON on static deployment
-        const generatedCode = "123456";
-        setFallbackOtp(generatedCode);
-        setOtp(generatedCode);
-        toast({
-          title: "Verification Code Ready",
-          description: `Use verification code ${generatedCode} to complete your signup.`,
-        });
-        setStep("otp");
-        setResendTimer(60);
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to send verification code");
+      if (data.__nonJson || !response.ok) {
+        throw new Error(data.error || "Failed to send verification code to email.");
       }
 
       if (data.otpToken) {
         setOtpToken(data.otpToken);
       }
 
-      if (data.devOtp) {
-        setFallbackOtp(String(data.devOtp));
-        setOtp(String(data.devOtp));
-        toast({
-          title: "Verification Code Generated",
-          description: `Your verification code is ${data.devOtp} (auto-filled).`,
-        });
-      } else {
-        setFallbackOtp(null);
-        toast({
-          title: "Code Sent",
-          description: `Verification code sent to ${cleanEmail}`,
-        });
-      }
+      toast({
+        title: "Code Sent",
+        description: `Verification code sent to ${cleanEmail}`,
+      });
 
       setStep("otp");
       setResendTimer(60);
-    } catch (error) {
-      // Fallback verification so user is NEVER blocked by network/browser issues
-      const generatedCode = "123456";
-      setFallbackOtp(generatedCode);
-      setOtp(generatedCode);
+    } catch (error: any) {
       toast({
-        title: "Verification Code Ready",
-        description: `Use verification code ${generatedCode} to complete your signup.`,
+        title: "Error Sending Code",
+        description: error.message || "Failed to send verification code. Please try again.",
+        variant: "destructive",
       });
-      setStep("otp");
-      setResendTimer(60);
     } finally {
       setIsLoading(false);
     }
@@ -187,45 +157,6 @@ export default function Signup() {
     await sendOtp();
   };
 
-  const buildLocalUser = (cleanEmail: string, cleanName: string) => {
-    const handleBase = cleanEmail.split("@")[0].replace(/[^a-zA-Z0-9_]/g, "") || "user";
-    const newUser = {
-      id: Date.now(),
-      name: cleanName || handleBase,
-      email: cleanEmail,
-      handle: `@${handleBase}`,
-      role,
-      avatar:
-        role === "sponsor"
-          ? "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150"
-          : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-      tier: role === "sponsor" ? "Brand Partner" : "Nano",
-      companyName: role === "sponsor" ? (companyName.trim() || cleanName || "Brand Partner") : null,
-      followers: 0,
-      instagramFollowers: 0,
-      isInstagramVerified: false,
-      isEmailVerified: true,
-      balance: "0.00",
-      country: country || "IN",
-      city: city || "",
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      const existingRaw = localStorage.getItem("mingree_registered_users");
-      const existingList = existingRaw ? JSON.parse(existingRaw) : [];
-      const filtered = Array.isArray(existingList)
-        ? existingList.filter((u: any) => String(u.email || "").toLowerCase() !== cleanEmail)
-        : [];
-      filtered.push({ ...newUser, password });
-      localStorage.setItem("mingree_registered_users", JSON.stringify(filtered));
-    } catch {
-      // ignore storage errors
-    }
-
-    return newUser;
-  };
-
   const verifyAndSignup = async () => {
     const cleanOtp = otp.trim();
     const cleanEmail = email.trim().toLowerCase();
@@ -234,7 +165,7 @@ export default function Signup() {
     if (!cleanOtp || cleanOtp.length !== 6) {
       toast({
         title: "Invalid Code",
-        description: "Please enter the 6-digit code.",
+        description: "Please enter the 6-digit verification code.",
         variant: "destructive",
       });
       return;
@@ -242,8 +173,6 @@ export default function Signup() {
 
     setIsLoading(true);
     try {
-      let verifiedToken: string | undefined = undefined;
-
       const verifyRes = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -252,19 +181,11 @@ export default function Signup() {
 
       const verifyData = await safeParseJson(verifyRes);
 
-      if (verifyData.__nonJson) {
-        if (cleanOtp !== (fallbackOtp || "123456") && cleanOtp !== "123456") {
-          throw new Error("Invalid verification code. Please check the code.");
-        }
-      } else if (!verifyRes.ok) {
-        if (fallbackOtp && cleanOtp === fallbackOtp) {
-          // Verified via generated devOtp
-        } else {
-          throw new Error(verifyData.error || "Invalid verification code");
-        }
-      } else {
-        verifiedToken = verifyData.verifiedToken;
+      if (verifyData.__nonJson || !verifyRes.ok) {
+        throw new Error(verifyData.error || "Invalid verification code. Please check and try again.");
       }
+
+      const verifiedToken = verifyData.verifiedToken;
 
       const signupRes = await fetch("/api/auth/signup", {
         method: "POST",
@@ -293,7 +214,7 @@ export default function Signup() {
 
       const signupData = await safeParseJson(signupRes);
 
-      if (!signupRes.ok) {
+      if (!signupRes.ok || signupData.__nonJson) {
         throw new Error(signupData.error || "Failed to create account");
       }
       const finalUser = signupData;
@@ -312,22 +233,12 @@ export default function Signup() {
       } else {
         setLocation("/dashboard");
       }
-    } catch (error) {
-      const finalUser = buildLocalUser(cleanEmail, cleanName);
-      login(finalUser);
-      queryClient.setQueryData(["currentUser"], finalUser);
-      queryClient.invalidateQueries({ queryKey: ["currentUser"] });
-
+    } catch (error: any) {
       toast({
-        title: "Account Created",
-        description: "Welcome to Mingree!",
+        title: "Verification Failed",
+        description: error.message || "Invalid verification code or registration failed. Please try again.",
+        variant: "destructive",
       });
-
-      if (role === "sponsor") {
-        setLocation("/sponsor");
-      } else {
-        setLocation("/dashboard");
-      }
     } finally {
       setIsLoading(false);
     }
@@ -592,14 +503,6 @@ export default function Signup() {
 
             {step === "otp" && (
               <div className="space-y-4">
-                {fallbackOtp && (
-                  <div className="rounded-lg border border-border bg-muted/60 px-3 py-2 text-center">
-                    <p className="text-[11px] text-muted-foreground">
-                      Instant Verification Code: <span className="font-mono font-bold text-foreground">{fallbackOtp}</span>
-                    </p>
-                  </div>
-                )}
-
                 <div className="flex flex-col items-center gap-3">
                   <InputOTP 
                     maxLength={6} 
