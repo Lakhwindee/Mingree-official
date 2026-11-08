@@ -640,7 +640,7 @@ export default function SponsorWallet() {
             <p className="text-muted-foreground">Manage your campaign budget</p>
           </div>
 
-          <div className="grid gap-6 md:grid-cols-3 mb-8">
+          <div className="grid gap-6 md:grid-cols-2 mb-8">
             <Card className="bg-gradient-to-br from-green-500/10 to-emerald-500/10">
               <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
                 <CardTitle className="text-sm font-medium">Available Balance</CardTitle>
@@ -840,107 +840,6 @@ export default function SponsorWallet() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-                <CardTitle className="text-sm font-medium">Withdraw</CardTitle>
-                
-              </CardHeader>
-              <CardContent>
-                <Dialog open={isWithdrawOpen} onOpenChange={setIsWithdrawOpen}>
-                  <DialogTrigger asChild>
-                    <Button 
-                      variant="outline" 
-                      className="w-full" 
-                      disabled={!!pendingWithdrawal}
-                      data-testid="button-withdraw"
-                    >
-                      
-                      {pendingWithdrawal ? "Request Pending" : "Withdraw"}
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>Withdraw Funds</DialogTitle>
-                      <DialogDescription>
-                        Withdraw money to your bank account. 18% GST will be deducted.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 mt-4">
-                      {bankAccounts.length === 0 ? (
-                        <div className="text-center py-4">
-                          
-                          <p className="text-muted-foreground mb-4">No bank account added</p>
-                          <Button onClick={() => { setIsWithdrawOpen(false); setIsAddBankOpen(true); }}>
-                            
-                            Add Bank Account
-                          </Button>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="space-y-2">
-                            <Label>Select Bank Account</Label>
-                            <Select value={selectedBankId} onValueChange={setSelectedBankId}>
-                              <SelectTrigger data-testid="select-bank-account">
-                                <SelectValue placeholder="Choose bank account" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {bankAccounts.map((bank) => (
-                                  <SelectItem key={bank.id} value={bank.id.toString()}>
-                                    {bank.bankName} - {bank.accountNumber.slice(-4)}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div className="space-y-2">
-                            <Label htmlFor="withdrawAmount">Amount (INR)</Label>
-                            <Input
-                              id="withdrawAmount"
-                              type="number"
-                              placeholder={`Min ${formatINR(walletInfo?.minWithdrawalAmount || 500)}`}
-                              value={withdrawAmount}
-                              onChange={(e) => setWithdrawAmount(e.target.value)}
-                              min={walletInfo?.minWithdrawalAmount || 500}
-                              data-testid="input-withdraw-amount"
-                            />
-                          </div>
-
-                          {withdrawAmount && parseFloat(withdrawAmount) > 0 && (
-                            <div className="p-4 rounded-lg bg-muted/50 space-y-2">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Withdrawal Amount</span>
-                                <span className="font-medium">{formatINR(parseFloat(withdrawAmount))}</span>
-                              </div>
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">GST Deduction (18%)</span>
-                                <span className="font-medium text-red-500">-{formatINR(calculateWithdrawalNet(parseFloat(withdrawAmount)).gstAmount)}</span>
-                              </div>
-                              <div className="flex justify-between pt-2 border-t">
-                                <span className="font-medium">You will receive</span>
-                                <span className="font-bold text-lg text-green-600">{formatINR(calculateWithdrawalNet(parseFloat(withdrawAmount)).netAmount)}</span>
-                              </div>
-                            </div>
-                          )}
-
-                          <Button
-                            className="w-full"
-                            onClick={handleWithdraw}
-                            disabled={withdrawMutation.isPending || !withdrawAmount || !selectedBankId}
-                            data-testid="button-confirm-withdraw"
-                          >
-                            {withdrawMutation.isPending ? "Submitting..." : "Submit Withdrawal Request"}
-                          </Button>
-                          <p className="text-xs text-center text-muted-foreground">
-                            Admin will process within 2-3 business days
-                          </p>
-                        </>
-                      )}
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              </CardContent>
-            </Card>
           </div>
 
           <Card className="mb-6">
