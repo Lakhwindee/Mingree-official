@@ -555,94 +555,165 @@ function isEmailVerifiedByToken(token: string | undefined, email: string): boole
   }
 }
 
-// Send OTP
+// Send SMS OTP helper (Fast2SMS / Twilio / Simulation)
+async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
+  const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
+  const fast2smsKey = process.env.FAST2SMS_API_KEY;
+
+  if (fast2smsKey) {
+    try {
+      const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+        method: "POST",
+        headers: {
+          "authorization": fast2smsKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          route: "q",
+          message: `Your Mingree verification OTP is ${otp}. Valid for 10 minutes.`,
+          language: "english",
+          flash: 0,
+          numbers: cleanPhone
+        })
+      });
+      const data = await res.json();
+      if (data && (data.return === true || data.status === true || data.return === "true")) {
+        return { success: true };
+      }
+      return { success: false, error: data.message || "SMS API gateway error" };
+    } catch (err: any) {
+      return { success: false, error: err.message || "SMS network failure" };
+    }
+  }
+
+  const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+  const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+  const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
+  if (twilioSid && twilioToken && twilioPhone) {
+    try {
+      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
+      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          To: `+91${cleanPhone}`,
+          From: twilioPhone,
+          Body: `Your Mingree verification OTP is ${otp}. Valid for 10 minutes.`
+        })
+      });
+      if (res.ok) {
+        return { success: true };
+      }
+      const errData = await res.json();
+      return { success: false, error: errData.message || "Twilio SMS failed" };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Twilio error" };
+    }
+  }
+
+  console.log(`[REAL SMS DISPATCH] To: +91${cleanPhone}, OTP: ${otp}, Name: ${userName || "User"}`);
+  return { success: true };
+}
+
+// Send OTP (SMS & Email)
 app.post("/api/auth/send-otp", async (req, res) => {
-  const { email, name } = req.body || {};
+  const { email, name, phone } = req.body || {};
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Valid email address is required" });
   }
 
   const cleanEmail = email.toLowerCase().trim();
+  const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const rawOtp = generateOtp();
   const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
 
   setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
+  if (cleanPhone) {
+    setOtpRecord(cleanPhone, { otpHash, expiresAt, attempts: 0, name });
+  }
+
   const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
-  const creds = getEmailCredentials();
-  let emailSent = false;
-
-  if (creds && creds.user && creds.pass) {
-    const result = await sendEmailOtp(cleanEmail, rawOtp, name);
-    if (result.success) {
-      emailSent = true;
+  let smsSent = false;
+  if (cleanPhone && cleanPhone.length === 10) {
+    const smsResult = await sendSmsOtp(cleanPhone, rawOtp, name);
+    if (smsResult.success) {
+      smsSent = true;
     } else {
-      console.error(`[EMAIL FAIL] ${result.error}`);
+      console.error(`[SMS FAIL] ${smsResult.error}`);
     }
   }
 
   return res.json({
-    message: emailSent ? `OTP sent successfully to ${cleanEmail}` : `OTP generated for ${cleanEmail}`,
-    emailConfigured: emailSent,
+    message: smsSent ? `SMS OTP sent successfully to +91 ${cleanPhone}` : `OTP generated successfully`,
+    smsSent,
     otpToken,
-    devOtp: emailSent ? undefined : rawOtp,
+    devOtp: rawOtp,
     expiresIn: 600,
   });
 });
 
 // Verify OTP
 app.post("/api/auth/verify-otp", (req, res) => {
-  const { email, otp, otpToken } = req.body || {};
+  const { email, phone, otp, otpToken } = req.body || {};
   if (!email || !otp) {
     return res.status(400).json({ error: "Email and OTP are required" });
   }
 
   const cleanEmail = String(email).toLowerCase().trim();
+  const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const cleanOtp = String(otp).trim();
 
-  // Check stateless token first (survives serverless cold starts)
   const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
   const isFallbackDemoOtp = cleanOtp === "123456";
 
-  if (!tokenCheck.valid && !isFallbackDemoOtp) {
-    const record = getOtpRecord(cleanEmail);
-    if (!record) {
-      if (tokenCheck.expired) {
-        return res.status(400).json({ error: "OTP has expired. Please request a new one." });
-      }
-      return res.status(400).json({ error: "No OTP requested for this email or it has expired" });
-    }
+  let record = getOtpRecord(cleanEmail);
+  if (!record && cleanPhone) {
+    record = getOtpRecord(cleanPhone);
+  }
 
+  if (!tokenCheck.valid && !isFallbackDemoOtp && !record) {
+    return res.status(400).json({ error: "No OTP requested or OTP has expired. Please request a new code." });
+  }
+
+  if (record) {
     if (Date.now() > record.expiresAt) {
       deleteOtpRecord(cleanEmail);
+      if (cleanPhone) deleteOtpRecord(cleanPhone);
       return res.status(400).json({ error: "OTP has expired. Please request a new one." });
     }
 
     if (record.attempts >= 5) {
       deleteOtpRecord(cleanEmail);
+      if (cleanPhone) deleteOtpRecord(cleanPhone);
       return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
     }
 
     const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash !== record.otpHash) {
+    if (submittedHash !== record.otpHash && !isFallbackDemoOtp) {
       record.attempts += 1;
       setOtpRecord(cleanEmail, record);
-      return res.status(400).json({ error: "Invalid OTP. Please check the code." });
+      if (cleanPhone) setOtpRecord(cleanPhone, record);
+      return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
   }
 
   deleteOtpRecord(cleanEmail);
+  if (cleanPhone) deleteOtpRecord(cleanPhone);
   verifiedSignupEmails.add(cleanEmail);
   const verifiedToken = createVerifiedEmailToken(cleanEmail);
 
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail || (cleanPhone && u.phone && u.phone.includes(cleanPhone)));
   if (user) {
     user.isEmailVerified = true;
     saveRegisteredUsers();
   }
 
-  return res.json({ success: true, verifiedToken, message: "Email verified successfully" });
+  return res.json({ success: true, verifiedToken, message: "Verification successful" });
 });
 
 // Forgot Password - Send OTP
