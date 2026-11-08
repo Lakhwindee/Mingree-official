@@ -10,6 +10,7 @@ import { queryClient } from "@/lib/queryClient";
 import { getCitiesByCountry } from "@shared/cities";
 import { useAuth } from "@/lib/auth-context";
 import { ConfirmationResult } from "firebase/auth";
+import { setupRecaptcha, sendPhoneOtp, verifyPhoneOtpCode } from "@/lib/firebase";
 
 const COUNTRIES = [
   { code: "IN", name: "India" }
@@ -60,6 +61,7 @@ export default function Signup() {
   const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
   const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
   const [resendTimer, setResendTimer] = useState(0);
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
   useEffect(() => {
     if (resendTimer > 0) {
@@ -97,6 +99,18 @@ export default function Signup() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
+      const fullPhone = `+91${cleanPhone.slice(-10)}`;
+      let sentViaFirebase = false;
+
+      try {
+        const verifier = setupRecaptcha("signup-recaptcha-container", "invisible");
+        const fbResult = await sendPhoneOtp(fullPhone, verifier);
+        setConfirmationResult(fbResult);
+        sentViaFirebase = true;
+      } catch (fbErr: any) {
+        console.warn("[FIREBASE SIGNUP SMS FALLBACK TO SERVER]", fbErr?.message);
+      }
+
       const response = await fetch("/api/auth/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -106,7 +120,9 @@ export default function Signup() {
       const data = await safeParseJson(response);
 
       if (data.__nonJson || !response.ok) {
-        throw new Error(data.error || "Failed to send verification code.");
+        if (!sentViaFirebase) {
+          throw new Error(data.error || "Failed to send verification code.");
+        }
       }
 
       if (data.otpToken) {
@@ -151,6 +167,14 @@ export default function Signup() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
+      if (confirmationResult) {
+        try {
+          await verifyPhoneOtpCode(confirmationResult, cleanOtp);
+        } catch (fbVerifyErr: any) {
+          console.warn("[FIREBASE CONFIRMATION VERIFY FAILED, CHECKING BACKEND]", fbVerifyErr?.message);
+        }
+      }
+
       const verifyRes = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

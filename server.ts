@@ -558,11 +558,31 @@ function isEmailVerifiedByToken(token: string | undefined, email: string): boole
 // Send SMS OTP helper (Fast2SMS / Twilio / Simulation)
 async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
-  const fast2smsKey = process.env.FAST2SMS_API_KEY;
+  const fast2smsKey = process.env.FAST2SMS_API_KEY || "DDHm0bUKmxAQnxbQ2wcSXJQF76BpoUpbwgLlcv6KaqU7REOTF8EFWiYZ1TIjhMWaGSl7bzyBP2dFCvl6";
 
   if (fast2smsKey) {
     try {
-      const res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+      // Try Fast2SMS OTP route
+      let res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+        method: "POST",
+        headers: {
+          "authorization": fast2smsKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          variables_values: otp,
+          route: "otp",
+          numbers: cleanPhone
+        })
+      });
+      let data = await res.json();
+      if (data && (data.return === true || data.status === true || data.return === "true")) {
+        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
+        return { success: true };
+      }
+
+      // Fallback to Quick SMS route
+      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
         method: "POST",
         headers: {
           "authorization": fast2smsKey,
@@ -576,12 +596,16 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
           numbers: cleanPhone
         })
       });
-      const data = await res.json();
+      data = await res.json();
       if (data && (data.return === true || data.status === true || data.return === "true")) {
+        console.log(`[FAST2SMS QUICK SENT] To: +91${cleanPhone}`);
         return { success: true };
       }
+
+      console.warn("[FAST2SMS RESPONSE]", data?.message || data);
       return { success: false, error: data.message || "SMS API gateway error" };
     } catch (err: any) {
+      console.error("[FAST2SMS ERROR]", err.message);
       return { success: false, error: err.message || "SMS network failure" };
     }
   }
