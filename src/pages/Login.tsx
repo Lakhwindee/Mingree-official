@@ -17,6 +17,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // Purge stale local storage mock users to prevent client-side login bypasses
@@ -28,6 +29,7 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setErrorMessage(null);
     const cleanEmail = email.trim().toLowerCase();
 
     try {
@@ -80,6 +82,7 @@ export default function Login() {
         rawMsg.includes("expected pattern") || rawMsg.includes("SyntaxError") || rawMsg.includes("JSON")
           ? "Invalid email or password"
           : rawMsg;
+      setErrorMessage(safeMsg);
       toast({
         title: "Login Failed",
         description: safeMsg,
@@ -117,6 +120,12 @@ export default function Login() {
           </CardHeader>
 
           <CardContent className="px-6 pb-8 space-y-4">
+            {errorMessage && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-xs text-destructive font-medium flex items-center justify-between">
+                <span>{errorMessage}</span>
+                <button type="button" onClick={() => setErrorMessage(null)} className="text-destructive/70 hover:text-destructive text-sm font-bold ml-2">×</button>
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email" className="text-xs font-semibold text-foreground">Email Address</Label>
