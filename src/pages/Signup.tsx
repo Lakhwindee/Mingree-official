@@ -94,72 +94,55 @@ export default function Signup() {
     const cleanPhone = phone.replace(/[^0-9]/g, "");
 
     if (!cleanEmail || !cleanName || !password || cleanPhone.length < 10) {
-      toast({
-        title: "Missing Information",
-        description: "Please fill all required fields, including a valid 10-digit mobile number.",
-        variant: "destructive",
-      });
+      const msg = "Please fill all required fields, including a valid 10-digit mobile number.";
+      setErrorMessage(msg);
+      toast({ title: "Missing Information", description: msg, variant: "destructive" });
       return;
     }
 
     if (!cleanEmail.includes("@") || !cleanEmail.includes(".")) {
-      toast({
-        title: "Invalid Email",
-        description: "Please enter a valid email address.",
-        variant: "destructive",
-      });
+      const msg = "Please enter a valid email address.";
+      setErrorMessage(msg);
+      toast({ title: "Invalid Email", description: msg, variant: "destructive" });
       return;
     }
 
     if (password.length < 6) {
-      toast({
-        title: "Password Too Short",
-        description: "Password must be at least 6 characters.",
-        variant: "destructive",
-      });
+      const msg = "Password must be at least 6 characters.";
+      setErrorMessage(msg);
+      toast({ title: "Password Too Short", description: msg, variant: "destructive" });
       return;
     }
 
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const response = await fetch("/api/auth/send-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, name: cleanName, phone: cleanPhone }),
-      });
-
-      const data = await safeParseJson(response);
-
-      if (data.__nonJson || !response.ok) {
-        throw new Error(data.error || "Failed to send verification code.");
-      }
-
-      if (data.otpToken) {
-        setOtpToken(data.otpToken);
-      }
-
-      if (data.devOtp) {
-        setOtp(String(data.devOtp));
-        toast({
-          title: "Verification Code Generated",
-          description: `Your OTP code is ${data.devOtp} (auto-filled for test).`,
-        });
-      } else {
-        toast({
-          title: "OTP Sent",
-          description: `Verification code sent to mobile & email for ${cleanEmail}`,
-        });
-      }
-
+      const verifier = setupRecaptcha("signup-recaptcha-container", "invisible");
+      const fullPhone = `+91${cleanPhone.slice(-10)}`;
+      const result = await sendPhoneOtp(fullPhone, verifier);
+      setConfirmationResult(result);
       setStep("otp");
       setResendTimer(60);
-    } catch (error: any) {
-      const msg = error.message || "Failed to send verification code. Please try again.";
-      setErrorMessage(msg);
       toast({
-        title: "Error Sending Code",
-        description: msg,
+        title: "SMS OTP Sent!",
+        description: `6-digit SMS verification code sent to ${fullPhone}`,
+      });
+    } catch (error: any) {
+      console.error("[SIGNUP SMS OTP ERROR]", error);
+      let errorMsg = "Could not send SMS OTP. Please check your phone number.";
+      if (error?.code === "auth/invalid-phone-number") {
+        errorMsg = "The phone number is formatted incorrectly.";
+      } else if (error?.code === "auth/too-many-requests") {
+        errorMsg = "Too many attempts. Please try again later.";
+      } else if (error?.code === "auth/captcha-check-failed") {
+        errorMsg = "reCAPTCHA verification failed. Please try again.";
+      } else if (error?.message) {
+        errorMsg = error.message;
+      }
+      setErrorMessage(errorMsg);
+      toast({
+        title: "SMS Verification Failed",
+        description: errorMsg,
         variant: "destructive",
       });
     } finally {
@@ -177,30 +160,17 @@ export default function Signup() {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
 
-    if (!cleanOtp || cleanOtp.length !== 6) {
-      toast({
-        title: "Invalid Code",
-        description: "Please enter the complete 6-digit verification code.",
-        variant: "destructive",
-      });
+    if (!confirmationResult || !cleanOtp || cleanOtp.length !== 6) {
+      const msg = "Please enter the complete 6-digit SMS verification code.";
+      setErrorMessage(msg);
+      toast({ title: "Invalid Code", description: msg, variant: "destructive" });
       return;
     }
 
     setIsLoading(true);
+    setErrorMessage(null);
     try {
-      const verifyRes = await fetch("/api/auth/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, otpToken }),
-      });
-
-      const verifyData = await safeParseJson(verifyRes);
-
-      if (verifyData.__nonJson || !verifyRes.ok) {
-        throw new Error(verifyData.error || "Invalid verification code. Please check and try again.");
-      }
-
-      const verifiedToken = verifyData.verifiedToken;
+      const { user, idToken, phoneNumber: verifiedPhone } = await verifyPhoneOtpCode(confirmationResult, cleanOtp);
 
       const signupRes = await fetch("/api/auth/signup", {
         method: "POST",
@@ -208,12 +178,13 @@ export default function Signup() {
         body: JSON.stringify({
           name: cleanName,
           email: cleanEmail,
-          phone: phone.trim(),
+          phone: verifiedPhone || `+91${phone.replace(/[^0-9]/g, "").slice(-10)}`,
           country,
-          city,
+          city: city || "Bangalore",
           password,
           role,
-          verifiedToken,
+          idToken,
+          uid: user.uid,
           otpVerified: true,
           companyName: role === "sponsor" ? companyName.trim() : undefined,
           gstNumber: role === "sponsor" ? gstNumber.trim() : undefined,
@@ -249,9 +220,19 @@ export default function Signup() {
         setLocation("/dashboard");
       }
     } catch (error: any) {
+      console.error("[SMS OTP VERIFY ERROR]", error);
+      let errorMsg = "Invalid SMS verification code. Please try again.";
+      if (error?.code === "auth/invalid-verification-code") {
+        errorMsg = "Incorrect 6-digit SMS OTP code entered.";
+      } else if (error?.code === "auth/code-expired") {
+        errorMsg = "Verification code has expired. Please request a new one.";
+      } else if (error?.message) {
+        errorMsg = error.message;
+      }
+      setErrorMessage(errorMsg);
       toast({
         title: "Verification Failed",
-        description: error.message || "Invalid verification code or registration failed. Please try again.",
+        description: errorMsg,
         variant: "destructive",
       });
     } finally {
@@ -279,12 +260,12 @@ export default function Signup() {
         <Card className="border-border">
           <CardHeader className="text-center pt-6 pb-4">
             <CardTitle className="text-xl font-bold tracking-tight text-foreground">
-              {step === "form" ? "Create Account" : "Verify Email"}
+              {step === "form" ? "Create Account" : "Verify Mobile Number"}
             </CardTitle>
             <CardDescription className="text-xs text-muted-foreground mt-1">
               {step === "form" 
                 ? "Sign up to join Mingree" 
-                : `Enter the 6-digit code for ${email}`}
+                : `Enter the 6-digit SMS code sent to ${phone}`}
             </CardDescription>
           </CardHeader>
           
