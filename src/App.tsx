@@ -266,7 +266,13 @@ function App() {
           <StoreProvider>
             <TooltipProvider>
               <Toaster />
-              <SonnerToaster position="top-right" />
+              <SonnerToaster 
+                position="top-center" 
+                duration={2000}
+                toastOptions={{
+                  className: "backdrop-blur-md bg-background/80 dark:bg-zinc-950/80 border border-border/80 shadow-lg rounded-xl text-foreground font-medium",
+                }}
+              />
               {showSplash && (
                 <SplashScreen
                   durationMs={1300}
