@@ -714,22 +714,22 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       </div>
 
                       {/* 4 Instagram Performance & Insights Stats */}
-                      <div className="grid grid-cols-4 gap-1.5 rounded-xl bg-muted/30 p-2 text-center text-xs border border-border/50">
-                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                      <div className="grid grid-cols-4 gap-1 rounded-xl bg-muted/30 p-1.5 text-center text-xs border border-border/50">
+                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
                           <div className="font-bold tabular-nums text-foreground text-xs">{reachVal ? compact(reachVal) : "—"}</div>
-                          <div className="text-[9px] text-muted-foreground uppercase font-semibold">Reach</div>
+                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Reach</div>
                         </div>
-                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
                           <div className="font-bold tabular-nums text-foreground text-xs">{c.medianViews != null && c.medianViews > 0 ? compact(c.medianViews) : "—"}</div>
-                          <div className="text-[9px] text-muted-foreground uppercase font-semibold">Views</div>
+                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Views</div>
                         </div>
-                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
                           <div className="font-bold tabular-nums text-foreground text-xs">{c.followers > 0 ? compact(c.followers) : "—"}</div>
-                          <div className="text-[9px] text-muted-foreground uppercase font-semibold">Followers</div>
+                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Fol.</div>
                         </div>
-                        <div className="bg-background rounded-lg py-1.5 px-0.5 border border-border/40 shadow-2xs">
+                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
                           <div className="font-bold tabular-nums text-foreground text-xs">{c.engagementRate != null && c.engagementRate > 0 ? `${c.engagementRate}%` : "—"}</div>
-                          <div className="text-[9px] text-muted-foreground uppercase font-semibold">Eng.</div>
+                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Eng.</div>
                         </div>
                       </div>
 
