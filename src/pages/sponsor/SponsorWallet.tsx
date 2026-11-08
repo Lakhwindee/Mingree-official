@@ -976,7 +976,6 @@ export default function SponsorWallet() {
           <Tabs defaultValue="transactions" className="space-y-4">
             <TabsList>
               <TabsTrigger value="transactions" data-testid="tab-transactions">Transactions</TabsTrigger>
-              <TabsTrigger value="withdrawals" data-testid="tab-withdrawals">Withdrawal Requests</TabsTrigger>
               <TabsTrigger value="banks" data-testid="tab-banks">Bank Accounts</TabsTrigger>
             </TabsList>
 
@@ -1036,46 +1035,7 @@ export default function SponsorWallet() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="withdrawals">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Withdrawal Requests</CardTitle>
-                  <CardDescription>Track your withdrawal request status</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {withdrawalRequests.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      
-                      <p>No withdrawal requests yet</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {withdrawalRequests.map((req) => {
-                        const bank = bankAccounts.find(b => b.id === req.bankAccountId);
-                        return (
-                          <div
-                            key={req.id}
-                            className="flex items-center justify-between p-4 rounded-lg border bg-card"
-                            data-testid={`withdrawal-row-${req.id}`}
-                          >
-                            <div>
-                              <p className="font-medium">{formatINR(parseFloat(req.amount))}</p>
-                              <div className="text-xs text-muted-foreground space-y-1">
-                                <p>{format(new Date(req.requestedAt), "dd MMM yyyy, hh:mm a")}</p>
-                                {bank && <p>{bank.bankName} - ****{bank.accountNumber.slice(-4)}</p>}
-                                {req.utrNumber && <p className="text-green-600">UTR: {req.utrNumber}</p>}
-                                {req.adminNote && <p className="text-red-500">{req.adminNote}</p>}
-                              </div>
-                            </div>
-                            <div>{getStatusBadge(req.status)}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+
 
             <TabsContent value="banks">
               <Card>
