@@ -102,10 +102,12 @@ export function setupRecaptcha(containerId: string = "recaptcha-container", size
     window.recaptchaVerifier = undefined;
   }
 
-  // Clear container DOM element if element exists
+  // Clear container DOM element and recreate clean node to prevent "already been rendered" error
   const container = document.getElementById(containerId);
-  if (container) {
-    container.innerHTML = "";
+  if (container && container.parentNode) {
+    const freshContainer = document.createElement("div");
+    freshContainer.id = containerId;
+    container.parentNode.replaceChild(freshContainer, container);
   }
 
   const verifier = new RecaptchaVerifier(firebaseAuth, containerId, {

@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { StoreProvider } from "@/lib/store";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Toaster as SonnerToaster } from "sonner";
+import { Toaster } from "@/components/ui/toaster";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useState, useEffect } from "react";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -266,11 +267,13 @@ function App() {
             <TooltipProvider>
               <SonnerToaster 
                 position="top-center" 
-                duration={2000}
+                duration={2500}
+                richColors
                 toastOptions={{
-                  className: "backdrop-blur-xl bg-white/40 dark:bg-black/40 border border-white/30 dark:border-white/10 shadow-2xl rounded-2xl text-foreground font-medium",
+                  className: "backdrop-blur-xl bg-white/70 dark:bg-black/70 border border-white/30 dark:border-white/10 shadow-2xl rounded-2xl text-foreground font-medium",
                 }}
               />
+              <Toaster />
               {showSplash && (
                 <SplashScreen
                   durationMs={1300}

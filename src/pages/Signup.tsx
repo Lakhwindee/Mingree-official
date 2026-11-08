@@ -3,13 +3,12 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { queryClient } from "@/lib/queryClient";
 import { getCitiesByCountry } from "@shared/cities";
 import { useAuth } from "@/lib/auth-context";
-import { setupRecaptcha, sendPhoneOtp, verifyPhoneOtpCode } from "@/lib/firebase";
 import { ConfirmationResult } from "firebase/auth";
 
 const COUNTRIES = [
@@ -32,26 +31,8 @@ async function safeParseJson(response: Response): Promise<Record<string, any>> {
   }
 }
 
-function getSafeErrorMessage(error: unknown, fallbackMessage: string): string {
-  if (error instanceof Error && error.message) {
-    const msg = error.message;
-    if (
-      msg.includes("expected pattern") ||
-      msg.includes("SyntaxError") ||
-      msg.includes("DOMException") ||
-      msg.includes("Unexpected token") ||
-      msg.includes("JSON")
-    ) {
-      return fallbackMessage;
-    }
-    return msg;
-  }
-  return fallbackMessage;
-}
-
 export default function Signup() {
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
   const { login } = useAuth();
   const [step, setStep] = useState<"form" | "otp">("form");
   const [role, setRole] = useState<UserRole>("creator");
@@ -76,6 +57,7 @@ export default function Signup() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
+  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
   const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
   const [resendTimer, setResendTimer] = useState(0);
 
@@ -86,8 +68,6 @@ export default function Signup() {
     }
   }, [resendTimer]);
 
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-
   const sendOtp = async () => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
@@ -96,21 +76,21 @@ export default function Signup() {
     if (!cleanEmail || !cleanName || !password || cleanPhone.length < 10) {
       const msg = "Please fill all required fields, including a valid 10-digit mobile number.";
       setErrorMessage(msg);
-      toast({ title: "Missing Information", description: msg, variant: "destructive" });
+      toast.error(msg);
       return;
     }
 
     if (!cleanEmail.includes("@") || !cleanEmail.includes(".")) {
       const msg = "Please enter a valid email address.";
       setErrorMessage(msg);
-      toast({ title: "Invalid Email", description: msg, variant: "destructive" });
+      toast.error(msg);
       return;
     }
 
     if (password.length < 6) {
       const msg = "Password must be at least 6 characters.";
       setErrorMessage(msg);
-      toast({ title: "Password Too Short", description: msg, variant: "destructive" });
+      toast.error(msg);
       return;
     }
 
@@ -134,28 +114,17 @@ export default function Signup() {
       }
 
       if (data.devOtp) {
-        setOtp(String(data.devOtp));
-        toast({
-          title: "Verification Code Generated",
-          description: `Your OTP code is ${data.devOtp} (auto-filled for test).`,
-        });
-      } else {
-        toast({
-          title: "OTP Sent",
-          description: `Verification code sent to +91 ${cleanPhone.slice(-10)} & ${cleanEmail}`,
-        });
+        setDevOtpCode(String(data.devOtp));
       }
+      setOtp("");
+      toast.success(`A 6-digit SMS verification code has been sent to +91 ${cleanPhone.slice(-10)}`);
 
       setStep("otp");
       setResendTimer(60);
     } catch (error: any) {
       const msg = error.message || "Failed to send verification code. Please try again.";
       setErrorMessage(msg);
-      toast({
-        title: "Error Sending Code",
-        description: msg,
-        variant: "destructive",
-      });
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -170,11 +139,12 @@ export default function Signup() {
     const cleanOtp = otp.trim();
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
+    const cleanPhone = phone.replace(/[^0-9]/g, "");
 
     if (!cleanOtp || cleanOtp.length !== 6) {
       const msg = "Please enter the complete 6-digit verification code.";
       setErrorMessage(msg);
-      toast({ title: "Invalid Code", description: msg, variant: "destructive" });
+      toast.error(msg);
       return;
     }
 
@@ -184,7 +154,7 @@ export default function Signup() {
       const verifyRes = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, otp: cleanOtp, otpToken }),
+        body: JSON.stringify({ email: cleanEmail, phone: cleanPhone, otp: cleanOtp, otpToken }),
       });
 
       const verifyData = await safeParseJson(verifyRes);
@@ -201,7 +171,7 @@ export default function Signup() {
         body: JSON.stringify({
           name: cleanName,
           email: cleanEmail,
-          phone: phone.trim(),
+          phone: cleanPhone,
           country,
           city: city || "Bangalore",
           password,
@@ -231,24 +201,19 @@ export default function Signup() {
       queryClient.setQueryData(["currentUser"], finalUser);
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
-      toast({
-        title: "Account Created",
-        description: "Welcome to Mingree!",
-      });
+      toast.success("Account created successfully! Welcome to Mingree.");
 
-      if (role === "sponsor") {
-        setLocation("/sponsor");
-      } else {
-        setLocation("/dashboard");
-      }
+      setTimeout(() => {
+        if (role === "sponsor") {
+          window.location.href = "/sponsor";
+        } else {
+          window.location.href = "/dashboard";
+        }
+      }, 350);
     } catch (error: any) {
       const msg = error.message || "Invalid verification code or registration failed. Please try again.";
       setErrorMessage(msg);
-      toast({
-        title: "Verification Failed",
-        description: msg,
-        variant: "destructive",
-      });
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -519,32 +484,49 @@ export default function Signup() {
 
             {step === "otp" && (
               <div className="space-y-4">
-                <div className="flex flex-col items-center gap-3">
+                <div className="rounded-lg bg-muted/50 p-3 text-center border border-border">
+                  <p className="text-xs text-muted-foreground">
+                    Enter the 6-digit SMS verification code sent to{" "}
+                    <strong className="text-foreground font-mono">+91 {phone.replace(/[^0-9]/g, "").slice(-10)}</strong>
+                  </p>
+                </div>
+
+                <div className="flex flex-col items-center gap-3 py-2">
                   <InputOTP 
                     maxLength={6} 
                     value={otp} 
-                    onChange={setOtp}
+                    onChange={(val) => {
+                      setOtp(val);
+                      if (errorMessage) setErrorMessage(null);
+                    }}
                     data-testid="input-otp"
                   >
                     <InputOTPGroup>
-                      <InputOTPSlot index={0} className="text-base w-10 h-10" />
-                      <InputOTPSlot index={1} className="text-base w-10 h-10" />
-                      <InputOTPSlot index={2} className="text-base w-10 h-10" />
-                      <InputOTPSlot index={3} className="text-base w-10 h-10" />
-                      <InputOTPSlot index={4} className="text-base w-10 h-10" />
-                      <InputOTPSlot index={5} className="text-base w-10 h-10" />
+                      <InputOTPSlot index={0} className="text-base w-10 h-10 font-bold" />
+                      <InputOTPSlot index={1} className="text-base w-10 h-10 font-bold" />
+                      <InputOTPSlot index={2} className="text-base w-10 h-10 font-bold" />
+                      <InputOTPSlot index={3} className="text-base w-10 h-10 font-bold" />
+                      <InputOTPSlot index={4} className="text-base w-10 h-10 font-bold" />
+                      <InputOTPSlot index={5} className="text-base w-10 h-10 font-bold" />
                     </InputOTPGroup>
                   </InputOTP>
                 </div>
 
+                {errorMessage && (
+                  <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-xs text-destructive font-medium flex items-center justify-between">
+                    <span>{errorMessage}</span>
+                    <button type="button" onClick={() => setErrorMessage(null)} className="text-destructive/70 hover:text-destructive text-sm font-bold ml-2">×</button>
+                  </div>
+                )}
+
                 <Button
                   type="button"
                   onClick={verifyAndSignup}
-                  className="w-full text-xs font-semibold h-9"
+                  className="w-full text-xs font-semibold h-10"
                   disabled={isLoading || otp.length !== 6}
                   data-testid="button-verify"
                 >
-                  {isLoading ? "Verifying..." : "Verify & Create Account"}
+                  {isLoading ? "Verifying & Creating Account..." : "Verify & Create Account"}
                 </Button>
 
                 <p className="text-center text-xs text-muted-foreground">
@@ -552,10 +534,10 @@ export default function Signup() {
                   <button
                     onClick={resendOtp}
                     disabled={resendTimer > 0 || isLoading}
-                    className={`font-semibold ${resendTimer > 0 ? "text-muted-foreground" : "text-foreground hover:underline"}`}
+                    className={`font-semibold ${resendTimer > 0 ? "text-muted-foreground" : "text-foreground hover:underline cursor-pointer"}`}
                     data-testid="button-resend"
                   >
-                    {resendTimer > 0 ? `Resend in ${resendTimer}s` : "Resend"}
+                    {resendTimer > 0 ? `Resend in ${resendTimer}s` : "Resend Code"}
                   </button>
                 </p>
               </div>

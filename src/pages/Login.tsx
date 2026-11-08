@@ -4,13 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 
 export default function Login() {
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,24 +57,20 @@ export default function Login() {
       queryClient.setQueryData(["currentUser"], data);
 
       setIsSuccess(true);
-      toast({
-        title: "Welcome Back",
-        description: `Logged in as ${data.name || data.email}.`,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      toast.success(`Welcome back, ${data.name || data.email}!`);
 
       login(data);
-
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
-      if (data.role === "admin") {
-        setLocation("/admin/dashboard");
-      } else if (data.role === "sponsor") {
-        setLocation("/sponsor");
-      } else {
-        setLocation("/dashboard");
-      }
+      setTimeout(() => {
+        if (data.role === "admin") {
+          window.location.href = "/admin/dashboard";
+        } else if (data.role === "sponsor") {
+          window.location.href = "/sponsor";
+        } else {
+          window.location.href = "/dashboard";
+        }
+      }, 300);
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : "Invalid email or password";
       const safeMsg =
@@ -83,11 +78,7 @@ export default function Login() {
           ? "Invalid email or password"
           : rawMsg;
       setErrorMessage(safeMsg);
-      toast({
-        title: "Login Failed",
-        description: safeMsg,
-        variant: "destructive",
-      });
+      toast.error(safeMsg);
       setIsLoading(false);
     }
   };

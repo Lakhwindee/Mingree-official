@@ -4,13 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
 
 export default function SponsorLogin() {
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -62,11 +61,7 @@ export default function SponsorLogin() {
       }
 
       if (data.role !== "sponsor") {
-        toast({
-          title: "Wrong Account Type",
-          description: "This account is not a brand/sponsor account. Please use creator login.",
-          variant: "destructive",
-        });
+        toast.error("This account is not a brand/sponsor account. Please use creator login.");
         setIsLoading(false);
         return;
       }
@@ -75,12 +70,7 @@ export default function SponsorLogin() {
       queryClient.setQueryData(["currentSponsor"], data);
 
       setIsSuccess(true);
-      toast({
-        title: "Welcome Back",
-        description: `Signed in as ${data.name || "Brand Sponsor"}.`,
-      });
-
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      toast.success(`Welcome, ${data.name || "Brand Sponsor"}!`);
 
       login({
         id: data.id || 2,
@@ -93,17 +83,15 @@ export default function SponsorLogin() {
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
       queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
 
-      setLocation("/sponsor");
+      setTimeout(() => {
+        window.location.href = "/sponsor";
+      }, 300);
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : "Invalid email or password";
       const safeMsg = rawMsg.includes("expected pattern") || rawMsg.includes("SyntaxError")
         ? "Invalid email or password"
         : rawMsg;
-      toast({
-        title: "Login Failed",
-        description: safeMsg,
-        variant: "destructive",
-      });
+      toast.error(safeMsg);
       setIsLoading(false);
     }
   };
