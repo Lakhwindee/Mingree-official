@@ -523,7 +523,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 truncate">
                             <span className="font-bold text-sm text-foreground truncate">
-                              {c.accountName || c.displayName || (c.username === "ijudgesaab" ? "Judge Saab" : `@${c.username}`)}
+                              {c.accountName || c.displayName || `@${c.username}`}
                             </span>
                             <span className="text-xs text-muted-foreground font-medium">@{c.username}</span>
                             {c.isRealRegisteredCreator && (
@@ -533,7 +533,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5 flex-wrap">
-                            <span className="text-primary font-medium">Mingree User</span>
+                            <span>Instagram Creator</span>
                             {c.city?.name && <span>· {c.city.name}</span>}
                             <span>·</span>
                             <span className="text-sky-600 font-semibold">📡 {c.reach ? compact(c.reach) : (c.followers > 0 ? compact(Math.round(c.followers * 2.2)) : "—")} reach</span>
@@ -669,7 +669,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               {searchResults.map((c) => {
                 const isChosen = selected.has(c.id);
                 const reachVal = c.reach || Math.round(c.followers * 2.2);
-                const creatorName = c.accountName || c.displayName || (c.username === "ijudgesaab" ? "Judge Saab" : `@${c.username}`);
+                const creatorName = c.accountName || c.displayName || `@${c.username}`;
                 return (
                   <div
                     key={c.id}
@@ -679,22 +679,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                     )}
                   >
                     <div className="space-y-2.5">
-                      {/* Mingree Account User Header at the top of the box */}
-                      <div className="flex items-center justify-between gap-2 pb-2 border-b border-border/50 text-xs">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-[10px] uppercase font-bold tracking-wider text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded shrink-0">
-                            Mingree Account
-                          </span>
-                          <span className="font-bold text-xs text-foreground truncate" title={creatorName}>
-                            {creatorName}
-                          </span>
-                        </div>
-                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1">
-                          <span className="w-1 h-1 rounded-full bg-emerald-500" />
-                          Verified
-                        </span>
-                      </div>
-
                       <div className="flex items-center gap-3">
                         <CreatorAvatar
                           avatarUrl={c.avatarUrl}
@@ -955,7 +939,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                     />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold truncate flex items-center gap-1.5">
-                        <span className="text-foreground font-bold">{c.accountName || c.displayName || (c.username === "ijudgesaab" ? "Judge Saab" : `@${c.username}`)}</span>
+                        <span className="text-foreground font-bold">{c.accountName || c.displayName || `@${c.username}`}</span>
                         <span className="text-xs text-muted-foreground font-normal">(@{c.username})</span>
                         {c.isRealRegisteredCreator && (
                           <span className="text-[9px] font-semibold bg-emerald-500/10 text-emerald-600 px-1 py-0.2 rounded shrink-0">
@@ -1098,7 +1082,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                         <tr key={c.id}>
                           <td className="p-3 font-medium">
                             <div className="flex items-center gap-2">
-                              <span className="font-semibold text-foreground">{c.accountName || c.displayName || (c.username === "ijudgesaab" ? "Judge Saab" : `@${c.username}`)}</span>
+                              <span className="font-semibold text-foreground">{c.accountName || c.displayName || `@${c.username}`}</span>
                               <span className="text-xs text-muted-foreground">(@{c.username})</span>
                               {hasCustom && (
                                 <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">

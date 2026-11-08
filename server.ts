@@ -1183,25 +1183,6 @@ const defaultAccounts = [
     tier: "Admin",
     isEmailVerified: true,
   },
-  {
-    id: 1,
-    email: "manindersinghjudge@gmail.com",
-    name: "Judge Saab",
-    role: "creator",
-    handle: "@ijudgesaab",
-    instagramUsername: "ijudgesaab",
-    instagramProfileUrl: "https://instagram.com/ijudgesaab",
-    instagramFollowers: 68800,
-    followers: 68800,
-    medianViews: 30900,
-    reach: 151300,
-    engagementRate: 4.8,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    tier: "Mid",
-    city: "Mumbai",
-    isEmailVerified: true,
-  },
 ];
 
 let registeredUsers: any[] = [...defaultAccounts];
@@ -6746,6 +6727,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
     }
 
     const realCreatorCards: any[] = [];
+    const seenHandles = new Set<string>();
     for (const u of realCreatorsMap.values()) {
       // Strictly exclude unlinked creators
       if (!u.instagramUsername || !u.isInstagramVerified || u.instagramVerificationStatus === "unlinked") {
@@ -6757,6 +6739,12 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       if (!cleanHandle) {
         continue;
       }
+
+      const handleKey = cleanHandle.toLowerCase();
+      if (seenHandles.has(handleKey)) {
+        continue;
+      }
+      seenHandles.add(handleKey);
 
       const tierId = resolveTierId(followers, u.tier);
       const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
@@ -6774,19 +6762,17 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
 
       const rawName = (u.name && u.name.trim() && u.name !== "Mingree Platform Treasury")
         ? u.name.trim()
-        : (cleanHandle.toLowerCase() === "ijudgesaab" || (u.email && u.email.toLowerCase().includes("judge")))
-          ? "Judge Saab"
-          : (u.displayName && !u.displayName.startsWith("@"))
-            ? u.displayName.trim()
-            : (u.email ? u.email.split("@")[0] : cleanHandle);
-      const mingreeName = rawName || `@${cleanHandle}`;
+        : (u.displayName && !u.displayName.startsWith("@"))
+          ? u.displayName.trim()
+          : (u.email ? u.email.split("@")[0] : cleanHandle);
+      const profileName = rawName || `@${cleanHandle}`;
 
       realCreatorCards.push({
         id: Number(u.id),
         username: cleanHandle,
-        displayName: mingreeName,
-        accountName: mingreeName,
-        mingreeName: mingreeName,
+        displayName: profileName,
+        accountName: profileName,
+        mingreeName: profileName,
         mingreeHandle: u.handle || `@${cleanHandle}`,
         userEmail: u.email || null,
         avatarUrl: avatarUrl,

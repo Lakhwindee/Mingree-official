@@ -288,7 +288,7 @@ export function CreatorPickerModal({ open, onOpenChange, api, tierId, cities, de
                     <Avatar c={c} />
                     <div className="min-w-0 flex-1 basis-40">
                       <div className="font-semibold text-sm text-foreground truncate leading-tight">
-                        {c.accountName || c.displayName || (c.username === "ijudgesaab" ? "Judge Saab" : `@${c.username}`)}
+                        {c.accountName || c.displayName || `@${c.username}`}
                       </div>
                       <div className="flex items-center gap-1.5 truncate mt-0.5">
                         <span className="text-xs text-muted-foreground font-medium truncate">@{c.username}</span>
