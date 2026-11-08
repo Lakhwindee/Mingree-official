@@ -734,15 +734,11 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       </div>
 
                       {/* Instagram Insights Tag */}
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground px-0.5">
-                        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                          <span>Meta Insights Verified</span>
-                        </span>
-                        {c.indiaAudiencePct ? (
+                      {c.indiaAudiencePct ? (
+                        <div className="flex items-center justify-end text-[11px] text-muted-foreground px-0.5">
                           <span className="text-[10px] text-muted-foreground font-medium">{c.indiaAudiencePct}% India</span>
-                        ) : null}
-                      </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     {/* Rate and Custom Negotiation Offer Button */}
