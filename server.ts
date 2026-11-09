@@ -7440,10 +7440,18 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
     // Filter by cities
     if (cityIds.length > 0) {
       items = items.filter((c) => {
-        if (c.isRealRegisteredCreator) {
-          return true; // Real registered creators are always eligible across campaign cities
+        const allowedCityNames = cityIds.map(id => {
+          const found = CITIES_LIST.find(cl => cl.id === id);
+          return found ? found.name.toLowerCase() : "";
+        }).filter(Boolean);
+
+        if (c.city && c.city.name && allowedCityNames.includes(c.city.name.toLowerCase())) {
+          return true;
         }
-        return c.city && cityIds.includes(c.city.id);
+        if (c.rawCity && allowedCityNames.includes(String(c.rawCity).toLowerCase())) {
+          return true;
+        }
+        return false;
       });
     }
 
