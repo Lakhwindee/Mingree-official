@@ -215,15 +215,6 @@ export function AdminDashboard() {
             </div>
           )}
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 px-3 border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 font-medium text-xs hidden sm:inline-flex gap-1.5 shadow-none"
-            onClick={() => setLocation("/dashboard")}
-          >
-            <span>Creator Workspace</span>
-            <ArrowUpRight className="w-3.5 h-3.5 text-slate-400" />
-          </Button>
 
           <Button
             variant="outline"
@@ -964,6 +955,42 @@ function UsersPage() {
     onError: (err: any) => toast.error(err.message),
   });
 
+  const deleteUserMutation = useMutation({
+    mutationFn: async ({ userId }: { userId: number }) => {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to delete user");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("User deleted successfully from database");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const clearAllMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/admin/users/clear-all", {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to clear test users");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("All test users deleted successfully from database");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1036,6 +1063,22 @@ function UsersPage() {
           >
             <RotateCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
             <span>Refresh</span>
+          </Button>
+
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => {
+              if (window.confirm("Are you sure you want to delete ALL non-admin test users? This action cannot be undone.")) {
+                clearAllMutation.mutate();
+              }
+            }}
+            disabled={clearAllMutation.isPending}
+            className="h-8 px-3 text-xs bg-rose-600 hover:bg-rose-700 text-white gap-1.5 shadow-none"
+            data-testid="button-clear-all-test-users"
+          >
+            <Ban className="w-3.5 h-3.5" />
+            <span>{clearAllMutation.isPending ? "Deleting..." : "Clear Test Users"}</span>
           </Button>
         </div>
       </div>
@@ -1176,6 +1219,22 @@ function UsersPage() {
                         >
                           City
                         </Button>
+                        {u.role !== "admin" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-[11px] h-7 px-2 border-rose-200 text-rose-700 hover:bg-rose-50 shadow-none"
+                            onClick={() => {
+                              if (window.confirm(`Permanently delete user ${u.name} (#${u.id})?`)) {
+                                deleteUserMutation.mutate({ userId: u.id });
+                              }
+                            }}
+                            disabled={deleteUserMutation.isPending}
+                            data-testid={`button-delete-user-${u.id}`}
+                          >
+                            Delete
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

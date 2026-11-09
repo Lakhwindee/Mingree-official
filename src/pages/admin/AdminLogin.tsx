@@ -41,7 +41,7 @@ export default function AdminLogin() {
       login(user);
       queryClient.clear();
       queryClient.setQueryData(["currentUser"], user);
-      setLocation("/admin/dashboard");
+      setLocation("/admin");
     },
     onError: (err: Error) => {
       const rawMsg = err.message || "";

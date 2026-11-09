@@ -16,6 +16,7 @@ import { TIERS, FIXED_TIERS, getPaymentByStyle, calculateSponsorPayment, TAX_RAT
 import { PROMOTION_CATEGORIES } from "@shared/schema";
 import { COUNTRIES, getCountryByCode } from "@shared/countries";
 import { getCitiesByCountry, CITIES_BY_COUNTRY } from "@shared/cities";
+import { INDIAN_LANGUAGES } from "@shared/languages";
 import { CreatorListPopup } from "@/components/CreatorListPopup";
 import {
   Dialog,
@@ -95,6 +96,7 @@ export default function CreateCampaign() {
     brandLogo: "",
     brandLogoFileName: "",
     category: "music_reels",
+    language: "Hindi (हिंदी)",
     contentType: "reel",
     promotionStyle: "",
     description: "",
@@ -358,6 +360,7 @@ export default function CreateCampaign() {
           brand: formData.brand,
           brandLogo: formData.brandLogo,
           category: formData.category,
+          language: formData.language,
           payAmount: String(avgPay),
           budget: totalPayable,
           totalBudget: totalPayable,
@@ -705,23 +708,44 @@ export default function CreateCampaign() {
                 </div>
 
 
-                <div className="space-y-2">
-                  <Label htmlFor="category">Promotion Category *</Label>
-                  <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
-                    <SelectTrigger data-testid="select-category">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PROMOTION_CATEGORIES.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {PROMOTION_CATEGORIES.find(c => c.id === formData.category)?.description}
-                  </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="category">Promotion Category *</Label>
+                    <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
+                      <SelectTrigger data-testid="select-category">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROMOTION_CATEGORIES.map((cat) => (
+                          <SelectItem key={cat.id} value={cat.id}>
+                            {cat.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {PROMOTION_CATEGORIES.find(c => c.id === formData.category)?.description}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="language">Campaign Language *</Label>
+                    <Select value={formData.language} onValueChange={(v) => setFormData({ ...formData, language: v })}>
+                      <SelectTrigger data-testid="select-language">
+                        <SelectValue placeholder="Select language..." />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[300px]">
+                        {INDIAN_LANGUAGES.map((lang) => (
+                          <SelectItem key={lang} value={lang}>
+                            {lang}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Target creators by preferred regional language.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-3">

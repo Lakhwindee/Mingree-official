@@ -9,6 +9,7 @@ import { compact, inr } from "./tiers";
 import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { ArrowLeft } from "lucide-react";
+import { INDIAN_LANGUAGES } from "@shared/languages";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -369,7 +370,20 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           </Field>
           <div className="grid sm:grid-cols-3 gap-4">
             <Field id="genre" label="Genre"><Input id="genre" value={d.genre} onChange={(e) => set("genre", e.target.value)} placeholder="Punjabi pop" /></Field>
-            <Field id="lang" label="Language"><Input id="lang" value={d.language} onChange={(e) => set("language", e.target.value)} placeholder="Punjabi" /></Field>
+            <Field id="lang" label="Language">
+              <select
+                id="lang"
+                value={d.language}
+                onChange={(e) => set("language", e.target.value)}
+                className="w-full h-10 rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {INDIAN_LANGUAGES.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {lang}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field id="deadline" label="Post by (deadline)" required><Input id="deadline" type="date" min={today} value={d.deadline} onChange={(e) => set("deadline", e.target.value)} /></Field>
           </div>
           <Field id="accounts" label="Accounts to mention (optional)">

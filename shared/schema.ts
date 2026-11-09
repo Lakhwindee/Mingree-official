@@ -15,6 +15,7 @@ export const users = pgTable("users", {
   status: text("status").notNull().default("active"),
   companyName: text("company_name"),
   city: text("city"),
+  phone: text("phone"),
   gstin: text("gstin"),
   pan: text("pan"),
   billingAddress: text("billing_address"),

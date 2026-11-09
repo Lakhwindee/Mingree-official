@@ -62,11 +62,11 @@ function RootEntry() {
   }
 
   if (isAuthenticated && user) {
+    if (user.role === "admin") {
+      return <Redirect to="/admin" />;
+    }
     if (user.role === "sponsor") {
       return <Redirect to="/sponsor" />;
-    }
-    if (user.role === "admin") {
-      return <Redirect to="/admin/dashboard" />;
     }
     return <Redirect to="/dashboard" />;
   }
@@ -89,6 +89,11 @@ function ProtectedCreatorRoute({ component: Component }: { component: React.Comp
 
   if (!isAuthenticated || !user) {
     return <Redirect to="/login" />;
+  }
+
+  // Admin MUST NEVER enter creator hub
+  if (user.role === "admin") {
+    return <Redirect to="/admin" />;
   }
 
   if (user.role === "sponsor") {
@@ -114,6 +119,11 @@ function ProtectedSponsorRoute({ component: Component }: { component: React.Comp
     return <Redirect to="/login" />;
   }
 
+  // Admin MUST NEVER enter sponsor hub
+  if (user.role === "admin") {
+    return <Redirect to="/admin" />;
+  }
+
   return <Component />;
 }
 
@@ -126,6 +136,9 @@ function GuestRoute({ component: Component }: { component: React.ComponentType }
   }
 
   if (isAuthenticated && user) {
+    if (user.role === "admin") {
+      return <Redirect to="/admin" />;
+    }
     if (user.role === "sponsor") {
       return <Redirect to="/sponsor" />;
     }
@@ -241,7 +254,9 @@ function Router() {
       
       {/* Admin Routes */}
       <Route path="/admin/login" component={AdminLogin} />
-      <Route path="/admin/dashboard" component={AdminRoute} />
+      <Route path="/admin/dashboard">
+        <Redirect to="/admin" />
+      </Route>
       <Route path="/admin" component={AdminRoute} />
       
       {/* Legal Pages */}

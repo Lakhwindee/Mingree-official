@@ -88,6 +88,8 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
         ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS avatar_url text;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
+        CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
       `).catch(() => {});
 
       // Purge any residual demo campaigns and demo users from DB

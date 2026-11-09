@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
   email_verified boolean NOT NULL DEFAULT false,
   status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'blocked')),
   company_name text,
+  city text,
+  phone text,
   gstin text,
   pan text,
   billing_address text,
@@ -21,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS idx_users_role_status ON users (role, status);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
 
 -- Internal Platform Account for collecting fees
 INSERT INTO users (email, password_hash, name, role, email_verified, status)

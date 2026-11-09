@@ -1,8 +1,9 @@
 import { pool } from "./db";
 
 export async function searchCreators(city: string, minFollowers: number, maxFollowers: number) {
-  const cleanCity = city && city.includes(':') ? city.split(':')[1] : city;
+  const cleanCity = city && city.includes(':') ? city.split(':')[1] : (city || "").trim();
   const maxRange = maxFollowers === Infinity || isNaN(maxFollowers) ? 100000000 : maxFollowers;
+  const isAllCities = !cleanCity || cleanCity.toLowerCase() === "all" || cleanCity === "";
   
   try {
     const query = `
@@ -13,12 +14,18 @@ export async function searchCreators(city: string, minFollowers: number, maxFoll
         city, gender
       FROM users 
       WHERE role = 'creator' 
-        AND (city ILIKE $1 OR city ILIKE $2 OR TRUE)
+        AND ($5 = true OR city ILIKE $1 OR city ILIKE $2)
         AND instagram_followers >= $3 
         AND instagram_followers <= $4
       LIMIT 20
     `;
-    const result = await pool.query(query, [city || '%', cleanCity || '%', minFollowers, maxRange]);
+    const result = await pool.query(query, [
+      city || '%',
+      cleanCity || '%',
+      minFollowers,
+      maxRange,
+      isAllCities
+    ]);
     
     if (result.rows.length > 0) {
       return result.rows;

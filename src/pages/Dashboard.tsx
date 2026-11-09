@@ -2,7 +2,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
-import { useLocation } from "wouter";
+import { useLocation, Redirect } from "wouter";
 import { api, type ApiCampaign, type ApiReservation, formatINR } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { NotificationDropdown } from "@/components/NotificationDropdown";
@@ -57,6 +57,10 @@ export default function Dashboard() {
     queryFn: api.getCreatorAnalytics,
     enabled: !!activeUser && activeUser.role === "creator",
   });
+
+  if (activeUser?.role === "admin") {
+    return <Redirect to="/admin" />;
+  }
 
   if (!activeUser) {
     return (
