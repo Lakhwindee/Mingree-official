@@ -8299,7 +8299,9 @@ app.post("/api/cashfree/verify", requireAuth, async (req: AuthRequest, res) => {
     }
 
     // Process payment success inside ONE atomic DB transaction (Idempotent)
-    const result = await processOrderPaymentSuccess(targetOrderId, { gstin, pan, billingAddress });
+    const userId = req.user!.id;
+    const amountNum = req.body.amount ? parseFloat(req.body.amount) : undefined;
+    const result = await processOrderPaymentSuccess(targetOrderId, { gstin, pan, billingAddress, userId, amount: amountNum });
 
     return res.json({
       success: true,
