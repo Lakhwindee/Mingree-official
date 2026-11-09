@@ -10,6 +10,8 @@ import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, Deliverab
 import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { ArrowLeft } from "lucide-react";
 import { INDIAN_LANGUAGES } from "@shared/languages";
+import { INDIAN_GENRES } from "@shared/genres";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Dummy icon fallbacks for removed icons
 const __DummyIcon = () => null;
@@ -369,20 +371,33 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             <Textarea id="desc" value={d.description} onChange={(e) => set("description", e.target.value)} rows={4} />
           </Field>
           <div className="grid sm:grid-cols-3 gap-4">
-            <Field id="genre" label="Genre"><Input id="genre" value={d.genre} onChange={(e) => set("genre", e.target.value)} placeholder="Punjabi pop" /></Field>
+            <Field id="genre" label="Genre">
+              <Select value={d.genre} onValueChange={(v) => set("genre", v)}>
+                <SelectTrigger className="w-full h-10 rounded-xl" data-testid="select-genre">
+                  <SelectValue placeholder="Select genre..." />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {INDIAN_GENRES.map((genre) => (
+                    <SelectItem key={genre} value={genre}>
+                      {genre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
             <Field id="lang" label="Language">
-              <select
-                id="lang"
-                value={d.language}
-                onChange={(e) => set("language", e.target.value)}
-                className="w-full h-10 rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {INDIAN_LANGUAGES.map((lang) => (
-                  <option key={lang} value={lang}>
-                    {lang}
-                  </option>
-                ))}
-              </select>
+              <Select value={d.language} onValueChange={(v) => set("language", v)}>
+                <SelectTrigger className="w-full h-10 rounded-xl" data-testid="select-language">
+                  <SelectValue placeholder="Select language..." />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {INDIAN_LANGUAGES.map((lang) => (
+                    <SelectItem key={lang} value={lang}>
+                      {lang}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
             <Field id="deadline" label="Post by (deadline)" required><Input id="deadline" type="date" min={today} value={d.deadline} onChange={(e) => set("deadline", e.target.value)} /></Field>
           </div>
