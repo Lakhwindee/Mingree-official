@@ -1313,7 +1313,7 @@ app.post("/api/admin/api-keys", (req, res) => {
 // Auth Rate Limiting Middleware
 const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200,
+  max: 50,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many authentication requests. Please try again in 15 minutes." },

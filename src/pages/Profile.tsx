@@ -73,6 +73,7 @@ export default function Profile() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [isConnectingInstagram, setIsConnectingInstagram] = useState(false);
+  const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false);
   const [isHandleModalOpen, setIsHandleModalOpen] = useState(false);
   const [handleToVerify, setHandleToVerify] = useState("");
   const [isVerifyingHandle, setIsVerifyingHandle] = useState(false);
@@ -700,7 +701,7 @@ export default function Profile() {
                           variant="ghost" 
                           size="sm" 
                           className="h-8 text-xs font-medium text-destructive hover:bg-destructive/10 rounded-lg px-2.5"
-                          onClick={handleDisconnect}
+                          onClick={() => setIsDisconnectModalOpen(true)}
                           data-testid="button-disconnect-instagram"
                         >
                           Disconnect
@@ -1004,6 +1005,41 @@ export default function Profile() {
               data-testid="button-view-tiers-low-followers-modal"
             >
               View Creator Tiers
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Instagram Disconnection Warning Dialog */}
+      <Dialog open={isDisconnectModalOpen} onOpenChange={setIsDisconnectModalOpen}>
+        <DialogContent className="sm:max-w-md p-6 bg-card border-border shadow-xl">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="text-base font-bold text-foreground">
+              ⚠️ Warning: Disconnect Instagram Account
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground leading-relaxed">
+              Instagram account disconnect karne par aapki sabhi active ad reservations aur unapproved/unsubmitted campaign submissions remove aur cancel ho jayengi jinka aapne kuch bhi reserve karke submit nahi kiya ho. Kya aap sach mein disconnect karna chahte hain?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-row items-center justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsDisconnectModalOpen(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={async () => {
+                setIsDisconnectModalOpen(false);
+                await handleDisconnect();
+              }}
+              className="text-xs font-semibold"
+            >
+              Yes, Disconnect
             </Button>
           </DialogFooter>
         </DialogContent>
