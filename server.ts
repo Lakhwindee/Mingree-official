@@ -8189,8 +8189,8 @@ app.post("/api/cashfree/create-order", requireAuth, async (req: AuthRequest, res
 
     const orderId = `cf_order_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const settings = loadSettings();
-    const appId = process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "";
-    const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "";
+    const appId = process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "TEST1025785536412b1d7d0a6842f1cf55875201";
+    const secretKey = process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || "TEST1bf3d749bc674d830b5e50529e8c456894c25f48";
     const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production";
 
     // Store pending payment order on server

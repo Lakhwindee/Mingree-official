@@ -97,12 +97,6 @@ export default function SponsorWallet() {
   const [isValidatingPromo, setIsValidatingPromo] = useState(false);
   const [isTaxExempt, setIsTaxExempt] = useState(false);
   
-  // Sandbox Cashfree Checkout Modal State
-  const [isSandboxCheckoutOpen, setIsSandboxCheckoutOpen] = useState(false);
-  const [sandboxOrderId, setSandboxOrderId] = useState("");
-  const [sandboxAmount, setSandboxAmount] = useState(0);
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("upi");
-  
   // Standalone promo code application
   const [standalonePromoCode, setStandalonePromoCode] = useState("");
   const [isApplyingPromo, setIsApplyingPromo] = useState(false);
@@ -433,14 +427,6 @@ export default function SponsorWallet() {
 
       const configRes = await fetch("/api/cashfree/config").then(r => r.json()).catch(() => ({ configured: false, mode: "sandbox" }));
 
-      if (orderData.simulated || !configRes.configured) {
-        setSandboxOrderId(orderData.order_id);
-        setSandboxAmount(isTaxExempt ? baseAmount : calculateDepositWithGST(baseAmount).totalPayable);
-        setIsSandboxCheckoutOpen(true);
-        setIsProcessing(false);
-        return;
-      }
-
       if (typeof window.Cashfree === 'undefined') {
         const waitForCashfree = () => new Promise<void>((resolve, reject) => {
           let attempts = 0;
@@ -500,37 +486,6 @@ export default function SponsorWallet() {
     } catch (error: any) {
       console.error("Cashfree payment error:", error);
       toast.error(error.message || "Failed to initiate Cashfree payment");
-      setIsProcessing(false);
-    }
-  };
-
-  const handleSandboxPaymentComplete = async () => {
-    setIsProcessing(true);
-    try {
-      const verifyRes = await fetch("/api/cashfree/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: sandboxOrderId,
-          sponsorId: sponsor?.id,
-          amount: sandboxAmount,
-          purpose: "wallet_deposit",
-        }),
-      });
-      const verifyData = await verifyRes.json();
-      if (verifyData.success) {
-        toast.success(`Cashfree Payment successful! ₹${verifyData.walletCredit} added to wallet.`);
-        queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
-        queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
-        setDepositAmount("");
-        setIsDepositOpen(false);
-        setIsSandboxCheckoutOpen(false);
-      } else {
-        toast.error(verifyData.error || "Payment verification failed");
-      }
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to verify payment");
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -1103,110 +1058,6 @@ export default function SponsorWallet() {
             >
               {addBankMutation.isPending ? "Saving..." : "Save Bank Account"}
             </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Cashfree Sandbox Checkout Simulation Modal */}
-      <Dialog open={isSandboxCheckoutOpen} onOpenChange={setIsSandboxCheckoutOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded bg-indigo-600 text-white flex items-center font-bold text-xs justify-center">CF</div>
-                <div>
-                  <DialogTitle className="text-base">Cashfree Payments</DialogTitle>
-                  <DialogDescription className="text-xs">Secured Checkout • 100% Safe</DialogDescription>
-                </div>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="p-3 bg-muted rounded-lg flex justify-between items-center text-sm">
-              <div>
-                <p className="text-xs text-muted-foreground font-mono">Order ID: {sandboxOrderId}</p>
-                <p className="font-semibold text-base mt-1">Total Payable</p>
-              </div>
-              <div className="text-right">
-                <p className="font-bold text-lg text-primary">{formatINR(sandboxAmount)}</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Payment Method</Label>
-              <div className="grid grid-cols-3 gap-2">
-                <Button
-                  variant={selectedPaymentMethod === "upi" ? "default" : "outline"}
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setSelectedPaymentMethod("upi")}
-                >
-                  UPI / QR
-                </Button>
-                <Button
-                  variant={selectedPaymentMethod === "card" ? "default" : "outline"}
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setSelectedPaymentMethod("card")}
-                >
-                  Card
-                </Button>
-                <Button
-                  variant={selectedPaymentMethod === "netbanking" ? "default" : "outline"}
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setSelectedPaymentMethod("netbanking")}
-                >
-                  NetBanking
-                </Button>
-              </div>
-            </div>
-
-            {selectedPaymentMethod === "upi" && (
-              <div className="space-y-2">
-                <Label className="text-xs">Enter UPI ID / VPA</Label>
-                <Input placeholder="username@okhdfcbank" defaultValue="sponsor@oksbi" className="font-mono text-sm" />
-              </div>
-            )}
-            {selectedPaymentMethod === "card" && (
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Card Number</Label>
-                  <Input placeholder="4111 2222 3333 4444" defaultValue="4242 4242 4242 4242" className="font-mono text-sm" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input placeholder="MM / YY" defaultValue="12/28" className="font-mono text-sm" />
-                  <Input placeholder="CVV" defaultValue="999" type="password" className="font-mono text-sm" />
-                </div>
-              </div>
-            )}
-            {selectedPaymentMethod === "netbanking" && (
-              <div className="space-y-2">
-                <Label className="text-xs">Select Bank</Label>
-                <Select defaultValue="hdfc">
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="hdfc">HDFC Bank</SelectItem>
-                    <SelectItem value="icici">ICICI Bank</SelectItem>
-                    <SelectItem value="sbi">State Bank of India</SelectItem>
-                    <SelectItem value="axis">Axis Bank</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            <Button
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold h-11 text-base rounded-xl shadow-lg mt-2"
-              onClick={handleSandboxPaymentComplete}
-              disabled={isProcessing}
-            >
-              {isProcessing ? "Processing Payment..." : `Pay ${formatINR(sandboxAmount)} Now`}
-            </Button>
-
-            <p className="text-[10px] text-center text-muted-foreground flex items-center justify-center gap-1 mt-2">
-              🔒 256-Bit SSL Encrypted • Powered by Cashfree Payments India
-            </p>
           </div>
         </DialogContent>
       </Dialog>
