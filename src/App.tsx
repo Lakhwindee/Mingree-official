@@ -57,8 +57,8 @@ function RootEntry() {
 
   if (isLoading) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-zinc-950 text-white">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-pink-500 border-t-transparent" />
+      <div className="flex min-h-screen w-full items-center justify-center bg-white text-slate-900">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-rose-500 border-t-transparent" />
       </div>
     );
   }
@@ -128,13 +128,14 @@ function GuestRoute({ component: Component }: { component: React.ComponentType }
   }
 
   if (isAuthenticated && user) {
-    if (user.role === "admin") {
-      return <Redirect to="/admin" />;
-    }
+    // Only redirect active creators and sponsors to their respective dashboards
+    // Do NOT automatically hijack admins away to /admin when they want to view public pages or login
     if (user.role === "sponsor") {
       return <Redirect to="/sponsor" />;
     }
-    return <Redirect to="/dashboard" />;
+    if (user.role === "creator") {
+      return <Redirect to="/dashboard" />;
+    }
   }
 
   return <Component />;

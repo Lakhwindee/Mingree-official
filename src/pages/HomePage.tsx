@@ -403,7 +403,7 @@ export default function HomePage() {
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.12]">
                 Book Verified Creators.{" "}
                 <span className="bg-gradient-to-r from-rose-600 via-pink-600 to-amber-600 bg-clip-text text-transparent">
-                  Zero Broker Cut.
+                  Transparent Platform Fee.
                 </span>{" "}
                 100% Secure Payments.
               </h1>
@@ -411,7 +411,7 @@ export default function HomePage() {
               {/* Subtitle */}
               <p className="text-base sm:text-lg text-slate-600 max-w-2xl mx-auto lg:mx-0 leading-relaxed font-normal">
                 Directly collaborate with top Indian creators for Instagram Reels, Stories, and Collab
-                posts. Standardized transparent pricing, zero agency markups, and funds held safely in
+                posts. Standardized transparent pricing, nominal platform percentage fee, and funds held safely in
                 reserve until you review and approve the post.
               </p>
 
@@ -544,7 +544,7 @@ export default function HomePage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs font-bold text-slate-700">
                     <span>Standardized Rates</span>
-                    <span className="text-emerald-700 font-semibold">Zero Commission Cut</span>
+                    <span className="text-slate-600 font-semibold">Standard Platform Percentage</span>
                   </div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div className="p-2.5 rounded-xl bg-rose-50/70 border border-rose-200 text-center">
@@ -612,7 +612,7 @@ export default function HomePage() {
           <span className="text-slate-600">·</span>
           <div className="flex items-center gap-2 text-xs font-semibold">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>0% Broker Margin · 100% Direct Rates</span>
+            <span>Transparent Platform Fee · Direct Creator Deals</span>
           </div>
         </div>
       </div>

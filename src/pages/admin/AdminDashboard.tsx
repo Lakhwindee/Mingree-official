@@ -8,9 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import {
+  Globe,
   LayoutDashboard,
   Users,
   ShieldAlert,
@@ -168,7 +169,7 @@ export function AdminDashboard() {
       await logout();
       queryClient.clear();
       toast.success("Admin signed out");
-      setLocation("/admin");
+      setLocation("/");
     } catch {
       toast.error("Failed to sign out");
     }
@@ -190,13 +191,13 @@ export function AdminDashboard() {
             {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
 
-          <div className="flex items-center gap-2.5">
-            <div className="h-7 w-7 rounded-md bg-slate-900 flex items-center justify-center text-white font-bold text-xs tracking-tight relative">
+          <Link href="/" className="flex items-center gap-2.5 group cursor-pointer" title="Back to Mingree Homepage">
+            <div className="h-7 w-7 rounded-md bg-slate-900 flex items-center justify-center text-white font-bold text-xs tracking-tight relative group-hover:scale-105 transition-transform">
               M
               <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#FF3399] ring-2 ring-white" />
             </div>
             <div className="flex items-center gap-2 text-sm">
-              <span className="font-semibold text-slate-900 tracking-tight">Mingree</span>
+              <span className="font-semibold text-slate-900 tracking-tight group-hover:text-rose-600 transition-colors">Mingree</span>
               <span className="text-slate-300">/</span>
               <span className="text-xs font-medium text-slate-500">Admin Console</span>
               <span className="hidden md:inline-block text-slate-300">/</span>
@@ -204,17 +205,25 @@ export function AdminDashboard() {
                 {activeNavMeta.label}
               </span>
             </div>
-          </div>
+          </Link>
         </div>
 
         <div className="flex items-center gap-2.5">
+          <Link
+            href="/"
+            className="h-8 px-2.5 sm:px-3 border border-slate-200 rounded-md text-slate-700 hover:bg-slate-50 hover:text-slate-900 font-medium text-xs inline-flex items-center gap-1.5 transition-colors"
+            title="Go to public homepage"
+          >
+            <Globe className="w-3.5 h-3.5 text-slate-500" />
+            <span className="hidden sm:inline">View Website</span>
+          </Link>
+
           {user?.email && (
             <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200/80 text-xs text-slate-600">
               <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
               <span className="font-medium text-slate-700 truncate max-w-[180px]">{user.email}</span>
             </div>
           )}
-
 
           <Button
             variant="outline"
