@@ -262,12 +262,35 @@ export default function SponsorWallet() {
     document.body.appendChild(script);
   }, []);
   
-  // Handle PayU and Cashfree success/failure callback
+  // Handle Cashfree and PayU success/failure return callbacks
   useEffect(() => {
     if (!sponsor) return;
     const params = new URLSearchParams(searchString);
-    if (params.get("order_id")) {
-      setLocation("/sponsor/wallet");
+    const returnOrderId = params.get("order_id");
+
+    if (returnOrderId) {
+      fetch("/api/cashfree/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: returnOrderId, sponsorId: sponsor.id }),
+      })
+        .then((r) => r.json())
+        .then((verifyData) => {
+          if (verifyData.success) {
+            toast.success(`Cashfree Payment verified! ₹${verifyData.walletCredit || ""} added to wallet.`);
+            queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
+            queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
+          } else {
+            toast.error(verifyData.error || "Payment verification failed");
+          }
+        })
+        .catch(() => {
+          toast.error("Failed to verify Cashfree payment");
+        })
+        .finally(() => {
+          setLocation("/sponsor/wallet");
+        });
+      return;
     }
     
     if (params.get("payu_success") === "true") {
@@ -441,48 +464,15 @@ export default function SponsorWallet() {
       }
 
       const cashfree = window.Cashfree({
-        mode: configRes.mode || configRes.environment || "sandbox",
+        mode: configRes.mode || configRes.environment || "production",
       });
 
       const checkoutOptions = {
         paymentSessionId: orderData.payment_session_id,
-        redirectTarget: "_modal",
+        redirectTarget: "_self",
       };
 
-      cashfree.checkout(checkoutOptions).then(async (result: any) => {
-        try {
-          if (result && result.error) {
-            toast.error(result.error.message || "Payment cancelled or failed");
-            setIsProcessing(false);
-            return;
-          }
-
-          const verifyRes = await fetch("/api/cashfree/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              orderId: orderData.order_id,
-              sponsorId: sponsor.id,
-              amount: isTaxExempt ? baseAmount : calculateDepositWithGST(baseAmount).totalPayable,
-              purpose: "wallet_deposit",
-            }),
-          });
-          const verifyData = await verifyRes.json();
-          if (verifyData.success) {
-            toast.success(`Cashfree Payment successful! ₹${verifyData.walletCredit} added to wallet.`);
-            queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
-            queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
-            setDepositAmount("");
-            setIsDepositOpen(false);
-          } else {
-            toast.error(verifyData.error || "Payment verification failed");
-          }
-        } catch (err: any) {
-          toast.error(err?.message || "Failed to verify Cashfree payment");
-        } finally {
-          setIsProcessing(false);
-        }
-      });
+      cashfree.checkout(checkoutOptions);
     } catch (error: any) {
       console.error("Cashfree payment error:", error);
       toast.error(error.message || "Failed to initiate Cashfree payment");
