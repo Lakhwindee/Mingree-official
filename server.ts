@@ -7394,6 +7394,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         avatarUrl: avatarUrl,
         igVerifiedBadge: true,
         city: creatorCity,
+        rawCity: u.city,
         tier: tierId,
         rawTier: u.tier,
         followers,
