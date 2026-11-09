@@ -2226,7 +2226,7 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
   let authoritativeUser: any = null;
   if (isDatabaseConfigured) {
     try {
-      const dbRes = await pool.query("SELECT id, email, name, role, email_verified, status, company_name, gstin, pan, billing_address, created_at FROM users WHERE id = $1", [targetId]);
+      const dbRes = await pool.query("SELECT id, email, name, role, email_verified, status, company_name, gstin, pan, billing_address, avatar, avatar_url, city, created_at FROM users WHERE id = $1", [targetId]);
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = 0;
@@ -2236,9 +2236,10 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
         let instagramUsername: string | null = null;
         let isInstagramVerified = false;
         let tierLabel = "Nano";
+        let cpAvatar: string | null = null;
 
         try {
-          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status FROM creator_profiles WHERE user_id = $1", [targetId]);
+          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status, avatar_url FROM creator_profiles WHERE user_id = $1", [targetId]);
           if (cpRes.rows.length > 0) {
             const cp = cpRes.rows[0];
             if (cp.username) instagramUsername = cp.username;
@@ -2246,6 +2247,7 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
             if (cp.median_views !== null && cp.median_views !== undefined) medianViews = Number(cp.median_views);
             if (cp.engagement_rate !== null && cp.engagement_rate !== undefined) engagementRate = Number(cp.engagement_rate);
             if (cp.tier_label) tierLabel = cp.tier_label;
+            if (cp.avatar_url) cpAvatar = cp.avatar_url;
             if (cp.status === "active" && (cp.access_token_enc || cp.instagram_user_id)) {
               isInstagramVerified = true;
             }
@@ -2262,13 +2264,18 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
           medianViews = 0;
         }
 
+        const regUser = registeredUsers.find((u) => u.id === targetId) || (req.user?.id === targetId ? req.user : null);
+        const resolvedAvatar = row.avatar || row.avatar_url || cpAvatar || (regUser ? regUser.avatar : null) || null;
+
         authoritativeUser = {
           id: Number(row.id),
           email: row.email,
           name: row.name,
           role: row.role,
           handle: `@${row.email.split("@")[0]}`,
-          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          avatar: resolvedAvatar,
+          avatarUrl: resolvedAvatar,
+          city: row.city || (regUser ? regUser.city : ""),
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
           status: row.status,
@@ -2306,7 +2313,7 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
 });
 
 // PUT /api/users/:id/profile
-app.put("/api/users/:id/profile", requireAuth, (req: AuthRequest, res) => {
+app.put("/api/users/:id/profile", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -2321,8 +2328,19 @@ app.put("/api/users/:id/profile", requireAuth, (req: AuthRequest, res) => {
   if (city !== undefined) user.city = city.trim();
   if (avatar !== undefined) {
     user.avatar = avatar;
+    user.avatarUrl = avatar;
     const existing = registeredUsers.find((u) => u.id === user.id);
-    if (existing) existing.avatar = avatar;
+    if (existing) {
+      existing.avatar = avatar;
+      existing.avatarUrl = avatar;
+    }
+    if (isDatabaseConfigured) {
+      try {
+        await pool.query("UPDATE users SET avatar = $1, avatar_url = $1 WHERE id = $2", [avatar, targetId]);
+      } catch (err: any) {
+        console.warn("[DB AVATAR UPDATE WARNING]", err?.message || err);
+      }
+    }
   }
   saveRegisteredUsers();
   res.json(sanitizeUser(user));

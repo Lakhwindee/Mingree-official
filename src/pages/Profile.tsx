@@ -16,7 +16,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import { useLocation, Link } from "wouter";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -411,6 +411,23 @@ export default function Profile() {
     ? activeUser.name
     : (activeUser.instagramUsername ? `@${activeUser.instagramUsername}` : (activeUser.name || "Creator"));
 
+  const creatorAvatarSrc = useMemo(() => {
+    if (activeUser?.avatar && !activeUser.avatar.includes("photo-1534528741775-53994a69daeb")) {
+      return activeUser.avatar;
+    }
+    if (activeUser?.avatarUrl && !activeUser.avatarUrl.includes("photo-1534528741775-53994a69daeb")) {
+      return activeUser.avatarUrl;
+    }
+    if (user?.avatar && !user.avatar.includes("photo-1534528741775-53994a69daeb")) {
+      return user.avatar;
+    }
+    const igHandle = (activeUser?.instagramUsername || activeUser?.handle || "").replace(/^@+/, "");
+    if (igHandle) {
+      return `https://unavatar.io/instagram/${igHandle}`;
+    }
+    return undefined;
+  }, [activeUser?.avatar, activeUser?.avatarUrl, user?.avatar, activeUser?.instagramUsername, activeUser?.handle]);
+
   return (
     <div className="flex flex-col md:flex-row min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       <Sidebar />
@@ -431,215 +448,173 @@ export default function Profile() {
             </Link>
           </div>
 
-          {/* User Profile Card */}
-          <Card className="overflow-hidden border-border/80 shadow-xs">
-            {/* Subtle Gradient Cover Banner */}
-            <div className="h-28 sm:h-36 bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900 dark:from-zinc-950 dark:via-zinc-900 dark:to-black relative overflow-hidden border-b border-border/40">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-pink-500/15 via-purple-500/10 to-transparent pointer-events-none" />
-              <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 text-[11px] font-medium text-white/90">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Creator Account</span>
-              </div>
-            </div>
-
-            <CardContent className="px-4 sm:px-6 pb-6 pt-0 relative">
-              <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 -mt-12 sm:-mt-14 mb-4">
-                {/* Avatar with Camera Overlay Button */}
-                <div className="relative group self-center sm:self-start">
-                  <Avatar className="h-24 w-24 sm:h-28 sm:w-28 rounded-2xl ring-4 ring-card bg-card shadow-md">
-                    <AvatarImage
-                      src={(user.avatar && !user.avatar.includes("unsplash.com")) ? user.avatar : undefined}
-                      className="object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                    <AvatarFallback className="text-2xl font-bold bg-muted text-foreground">
-                      {creatorDisplayName.replace(/^@/, "").charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  
-                  <button
-                    type="button"
-                    onClick={() => avatarInputRef.current?.click()}
-                    className="absolute -bottom-1 -right-1 p-2 rounded-xl bg-foreground text-background shadow-md hover:opacity-90 transition-all cursor-pointer flex items-center justify-center border-2 border-card"
-                    disabled={avatarMutation.isPending}
-                    title="Change profile picture"
-                    data-testid="button-change-avatar"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </button>
-                  <input
-                    ref={avatarInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAvatarChange}
-                    className="hidden"
-                    data-testid="input-avatar-upload"
-                  />
-                </div>
-
-                {/* Edit Profile Info Button */}
-                {!isEditingProfile && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsEditingProfile(true)}
-                    className="self-center sm:self-auto text-xs h-9 px-4 font-semibold gap-1.5 border-border hover:bg-muted/60 rounded-lg shadow-2xs"
-                    data-testid="button-edit-profile-info"
-                  >
-                    <svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                    Edit Profile
-                  </Button>
-                )}
-              </div>
-
-              {/* User Info Details */}
-              <div className="text-center sm:text-left space-y-2">
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
-                    {creatorDisplayName}
-                  </h2>
-                  {user.isVerified && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                      <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      Verified
-                    </span>
-                  )}
-                </div>
-                
-                <p className="text-xs sm:text-sm font-medium text-muted-foreground">
-                  {activeUser.instagramUsername 
-                    ? `@${activeUser.instagramUsername}` 
-                    : (activeUser.handle ? (activeUser.handle.startsWith("@") ? activeUser.handle : `@${activeUser.handle}`) : "Not connected")}
-                </p>
-
-                {/* Status & Identity Attributes */}
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 pt-1.5">
-                  {/* Followers Metric */}
-                  {activeUser.followers ? (
-                    <div className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-lg bg-muted/60 text-foreground border border-border/70">
-                      <span className="tabular-nums font-bold">{activeUser.followers.toLocaleString()}</span>
-                      <span className="text-muted-foreground font-normal">followers</span>
-                    </div>
-                  ) : null}
-
-                  {/* Marketplace Tier Badge */}
-                  <div className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-lg bg-muted/60 text-foreground border border-border/70">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
-                    <span>{getTierNameByFollowers(activeUser.followers || 0, Boolean(activeUser.isInstagramVerified && activeUser.instagramUsername))}</span>
-                  </div>
-
-                  {/* City Indicator or Prompt */}
-                  {activeUser.city ? (
-                    <div className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1 rounded-lg bg-muted/60 text-foreground border border-border/70">
-                      <svg className="w-3.5 h-3.5 text-muted-foreground shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span>{activeUser.city}</span>
-                    </div>
-                  ) : (
+          {/* User Profile Card (Clean Flat Design, No Dark Cover Banner) */}
+          <Card className="border-border/80 shadow-xs bg-card">
+            <CardContent className="p-5 sm:p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                {/* Avatar & Identity Info */}
+                <div className="flex items-center sm:items-start gap-4">
+                  <div className="relative group shrink-0">
+                    <Avatar className="h-20 w-20 sm:h-24 sm:w-24 rounded-2xl border-2 border-border/80 bg-muted shadow-xs">
+                      <AvatarImage
+                        src={creatorAvatarSrc}
+                        className="object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                      <AvatarFallback className="text-2xl font-bold bg-muted text-foreground">
+                        {creatorDisplayName.replace(/^@/, "").charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    
                     <button
                       type="button"
-                      onClick={() => setIsEditingProfile(true)}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25 hover:bg-amber-500/20 transition-colors cursor-pointer"
-                      data-testid="button-choose-city-prompt"
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="absolute -bottom-1 -right-1 p-2 rounded-xl bg-foreground text-background shadow-md hover:opacity-90 transition-all cursor-pointer flex items-center justify-center border-2 border-card"
+                      disabled={avatarMutation.isPending}
+                      title="Upload or change profile picture"
+                      data-testid="button-change-avatar"
                     >
-                      <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                       </svg>
-                      <span>Add Location</span>
                     </button>
-                  )}
-                </div>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAvatarChange}
+                      className="hidden"
+                      data-testid="input-avatar-upload"
+                    />
+                  </div>
 
-                {/* Edit Form Drawer */}
-                {isEditingProfile && (
-                  <div className="mt-5 p-4 sm:p-5 bg-muted/30 rounded-xl border border-border text-left space-y-4">
-                    <div className="flex items-center justify-between pb-2 border-b border-border/70">
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Edit Profile Information</h4>
-                      <button 
-                        onClick={() => setIsEditingProfile(false)} 
-                        className="text-xs font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-                      >
-                        Cancel
-                      </button>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+                        {creatorDisplayName}
+                      </h2>
+                      {user.isVerified && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <svg className="w-3 h-3 fill-current" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                          Verified
+                        </span>
+                      )}
                     </div>
+                    
+                    <p className="text-xs sm:text-sm font-medium text-muted-foreground font-mono">
+                      {activeUser.instagramUsername 
+                        ? `@${activeUser.instagramUsername}` 
+                        : (activeUser.handle ? (activeUser.handle.startsWith("@") ? activeUser.handle : `@${activeUser.handle}`) : "Not connected")}
+                    </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                      <div>
-                        <Label className="text-xs font-medium text-muted-foreground">Creator / Display Name</Label>
-                        <Input
-                          value={profileName}
-                          onChange={(e) => setProfileName(e.target.value)}
-                          placeholder="Your display name"
-                          className="h-9 text-sm mt-1 bg-background"
-                          data-testid="input-profile-name"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs font-medium text-muted-foreground">Public Handle</Label>
-                        <div className="relative mt-1">
-                          <span className="absolute left-3 top-2 text-xs text-muted-foreground">@</span>
-                          <Input
-                            value={profileHandle}
-                            onChange={(e) => setProfileHandle(e.target.value)}
-                            placeholder="username"
-                            className="h-9 text-sm pl-7 bg-background"
-                            data-testid="input-profile-handle"
-                          />
+                    {/* Status Attributes (Location completely removed) */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {activeUser.followers ? (
+                        <div className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-lg bg-muted/60 text-foreground border border-border/70">
+                          <span className="tabular-nums font-bold">{activeUser.followers.toLocaleString()}</span>
+                          <span className="text-muted-foreground font-normal">followers</span>
                         </div>
-                      </div>
-                    </div>
+                      ) : null}
 
-                    <div>
-                      <Label className="text-xs font-medium text-muted-foreground">City (Creator Location)</Label>
-                      <div className="mt-1">
-                        <Select value={profileCity} onValueChange={setProfileCity}>
-                          <SelectTrigger className="h-9 text-sm bg-background" data-testid="select-profile-city">
-                            <SelectValue placeholder="Select your city" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[220px]">
-                            {availableCities.map((c) => (
-                              <SelectItem key={c} value={c}>{c}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                      <div className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-lg bg-muted/60 text-foreground border border-border/70">
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
+                        <span>{getTierNameByFollowers(activeUser.followers || 0, Boolean(activeUser.isInstagramVerified && activeUser.instagramUsername))}</span>
                       </div>
-                    </div>
-
-                    <div className="flex gap-2 justify-end pt-2 border-t border-border/50">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setIsEditingProfile(false)}
-                        className="h-8 text-xs font-medium"
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => updateProfileMutation.mutate({ 
-                          name: profileName, 
-                          handle: profileHandle,
-                          city: profileCity
-                        })}
-                        disabled={updateProfileMutation.isPending || !profileName.trim()}
-                        className="h-8 text-xs font-semibold px-4"
-                        data-testid="button-save-profile"
-                      >
-                        {updateProfileMutation.isPending ? "Saving..." : "Save Changes"}
-                      </Button>
                     </div>
                   </div>
-                )}
+                </div>
+
+                {/* Account Type Tag & Edit Profile */}
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 text-[11px] font-semibold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Creator Account</span>
+                  </div>
+
+                  {!isEditingProfile && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingProfile(true)}
+                      className="text-xs h-8 px-3 font-semibold gap-1.5 border-border hover:bg-muted/60 rounded-lg shadow-2xs"
+                      data-testid="button-edit-profile-info"
+                    >
+                      <svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      Edit Profile
+                    </Button>
+                  )}
+                </div>
               </div>
+
+              {/* Edit Form Drawer */}
+              {isEditingProfile && (
+                <div className="mt-4 p-4 sm:p-5 bg-muted/30 rounded-xl border border-border text-left space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-border/70">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">Edit Profile Information</h4>
+                    <button 
+                      onClick={() => setIsEditingProfile(false)} 
+                      className="text-xs font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div>
+                      <Label className="text-xs font-medium text-muted-foreground">Creator / Display Name</Label>
+                      <Input
+                        value={profileName}
+                        onChange={(e) => setProfileName(e.target.value)}
+                        placeholder="Your display name"
+                        className="h-9 text-sm mt-1 bg-background"
+                        data-testid="input-profile-name"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs font-medium text-muted-foreground">Public Handle</Label>
+                      <div className="relative mt-1">
+                        <span className="absolute left-3 top-2 text-xs text-muted-foreground">@</span>
+                        <Input
+                          value={profileHandle}
+                          onChange={(e) => setProfileHandle(e.target.value)}
+                          placeholder="username"
+                          className="h-9 text-sm pl-7 bg-background"
+                          data-testid="input-profile-handle"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 justify-end pt-2 border-t border-border/50">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsEditingProfile(false)}
+                      className="h-8 text-xs font-medium"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => updateProfileMutation.mutate({ 
+                        name: profileName, 
+                        handle: profileHandle,
+                        city: profileCity
+                      })}
+                      disabled={updateProfileMutation.isPending || !profileName.trim()}
+                      className="h-8 text-xs font-semibold px-4"
+                      data-testid="button-save-profile"
+                    >
+                      {updateProfileMutation.isPending ? "Saving..." : "Save Changes"}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -679,7 +654,7 @@ export default function Profile() {
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar className="h-12 w-12 border border-border shrink-0 shadow-2xs">
                           <AvatarImage
-                            src={(activeUser.avatar && !activeUser.avatar.includes("unsplash.com")) ? activeUser.avatar : undefined}
+                            src={creatorAvatarSrc}
                             className="object-cover"
                             referrerPolicy="no-referrer"
                           />
