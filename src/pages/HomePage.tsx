@@ -6,7 +6,6 @@ import {
   ShieldCheck,
   CheckCircle2,
   TrendingUp,
-  Sparkles,
   ArrowRight,
   Search,
   Users,

@@ -6,7 +6,6 @@ import {
   MapPin,
   BadgeCheck,
   TrendingUp,
-  Sparkles,
   ArrowRight,
   Filter,
   SlidersHorizontal,
@@ -417,8 +416,8 @@ export default function CreatorDirectory() {
       <section className="bg-white border-b border-slate-200 py-12 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto space-y-4">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700">
-            <Sparkles className="w-3.5 h-3.5 text-rose-600" />
-            <span>100% Verified Indian Creators</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+            <span>Verified Indian Creators</span>
           </div>
 
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">

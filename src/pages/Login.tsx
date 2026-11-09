@@ -7,7 +7,6 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
-import { Lock } from "lucide-react";
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -188,15 +187,6 @@ export default function Login() {
                   Create an account
                 </button>
               </p>
-
-              <div className="pt-2 text-center border-t border-border mt-3">
-                <Link href="/admin/login">
-                  <span className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer inline-flex items-center justify-center gap-1">
-                    <Lock className="w-3 h-3 text-muted-foreground" />
-                    Admin Console Login
-                  </span>
-                </Link>
-              </div>
             </div>
           </CardContent>
         </Card>
