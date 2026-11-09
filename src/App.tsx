@@ -49,9 +49,11 @@ const Help = __DummyIcon;
 
 
 
-// Root entry point that routes authenticated users directly to their dashboard
+import HomePage from "@/pages/HomePage";
+
+// Root entry point: renders public homepage for guests & logged in users with live portal access
 function RootEntry() {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -61,18 +63,8 @@ function RootEntry() {
     );
   }
 
-  if (isAuthenticated && user) {
-    if (user.role === "admin") {
-      return <Redirect to="/admin" />;
-    }
-    if (user.role === "sponsor") {
-      return <Redirect to="/sponsor" />;
-    }
-    return <Redirect to="/dashboard" />;
-  }
-
-  // If not authenticated, open login directly (skip marketing pages)
-  return <Login />;
+  // Render the premium public homepage
+  return <HomePage />;
 }
 
 // Protected Route wrapper for Creator
@@ -173,8 +165,9 @@ function AdminRoute() {
 function Router() {
   return (
     <Switch>
-      {/* Root Entry: Auto-redirects to Dashboard if logged in, else Login */}
+      {/* Public Marketplace Homepage */}
       <Route path="/" component={RootEntry} />
+      <Route path="/home" component={HomePage} />
       
       {/* In-app About & Help Section (Contains previous landing page info) */}
       <Route path="/about" component={AboutMingree} />

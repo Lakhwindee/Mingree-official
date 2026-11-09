@@ -451,17 +451,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               </div>
             </Field>
           </div>
-          <div className="space-y-1.5">
-            <div className="text-sm font-semibold">Content type <span className="text-primary">*</span></div>
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Content type">
-              {DELIVERABLES.map((x) => (
-                <button key={x.id} type="button" role="radio" aria-checked={d.deliverable === x.id} onClick={() => setDeliverable(x.id)}
-                  className={cn("h-10 px-4 rounded-xl border text-sm font-medium", d.deliverable === x.id ? "border-primary bg-primary/10 text-primary" : "hover:border-primary/50")}>
-                  {x.label}
-                </button>
-              ))}
-            </div>
-          </div>
         </section>
       )}
 
@@ -1039,6 +1028,28 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       {step === 2 && (
         <section className="rounded-2xl border bg-card p-5 sm:p-6 space-y-5">
           <header><h2 className="text-xl font-bold">Promotion Content</h2><p className="text-sm text-muted-foreground">Tell creators exactly what the post must contain. You will approve the post against these rules.</p></header>
+          
+          <div className="space-y-1.5">
+            <div className="text-sm font-semibold">Content type <span className="text-primary">*</span></div>
+            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Content type">
+              {DELIVERABLES.map((x) => (
+                <button
+                  key={x.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={d.deliverable === x.id}
+                  onClick={() => setDeliverable(x.id)}
+                  className={cn(
+                    "h-10 px-4 rounded-xl border text-sm font-medium transition cursor-pointer",
+                    d.deliverable === x.id ? "border-primary bg-primary/10 text-primary font-semibold" : "hover:border-primary/50"
+                  )}
+                >
+                  {x.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-1.5">
             <div className="text-sm font-semibold">Promotion style</div>
             <div className="grid sm:grid-cols-3 gap-3" role="radiogroup" aria-label="Promotion style">

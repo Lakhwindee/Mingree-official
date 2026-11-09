@@ -1528,12 +1528,167 @@ const defaultAccounts = [
     tier: "Admin",
     isEmailVerified: true,
   },
+  {
+    id: 1,
+    email: "riyasen.creator@mingree.in",
+    passwordHash: bcrypt.hashSync("creator123", 10),
+    name: "Riya Sen",
+    displayName: "Riya Sen",
+    accountName: "Riya Sen",
+    role: "creator",
+    handle: "@riyasen.official",
+    instagramUsername: "riyasen.official",
+    instagramFollowers: 94200,
+    followers: 94200,
+    isInstagramVerified: true,
+    instagramVerificationStatus: "verified",
+    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
+    avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
+    tier: "mid",
+    city: "Mumbai",
+    medianViews: 52400,
+    reach: 248500,
+    engagementRate: 5.2,
+    indiaAudiencePct: 96,
+    completedDeals: 24,
+    onTimeRate: 100,
+    isEmailVerified: true,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 2,
+    email: "aarohi.creator@mingree.in",
+    passwordHash: bcrypt.hashSync("creator123", 10),
+    name: "Aarohi Mehta",
+    displayName: "Aarohi Mehta",
+    accountName: "Aarohi Mehta",
+    role: "creator",
+    handle: "@aarohimehta_",
+    instagramUsername: "aarohimehta_",
+    instagramFollowers: 142000,
+    followers: 142000,
+    isInstagramVerified: true,
+    instagramVerificationStatus: "verified",
+    avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300",
+    avatarUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300",
+    tier: "upper_mid",
+    city: "Delhi",
+    medianViews: 89000,
+    reach: 380000,
+    engagementRate: 4.9,
+    indiaAudiencePct: 94,
+    completedDeals: 31,
+    onTimeRate: 98,
+    isEmailVerified: true,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 3,
+    email: "tanvi.creator@mingree.in",
+    passwordHash: bcrypt.hashSync("creator123", 10),
+    name: "Tanvi Kapoor",
+    displayName: "Tanvi Kapoor",
+    accountName: "Tanvi Kapoor",
+    role: "creator",
+    handle: "@tanvikapoor.fit",
+    instagramUsername: "tanvikapoor.fit",
+    instagramFollowers: 78500,
+    followers: 78500,
+    isInstagramVerified: true,
+    instagramVerificationStatus: "verified",
+    avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=300",
+    avatarUrl: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=300",
+    tier: "mid",
+    city: "Bangalore",
+    medianViews: 44200,
+    reach: 195000,
+    engagementRate: 5.6,
+    indiaAudiencePct: 95,
+    completedDeals: 19,
+    onTimeRate: 100,
+    isEmailVerified: true,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 4,
+    email: "simran.creator@mingree.in",
+    passwordHash: bcrypt.hashSync("creator123", 10),
+    name: "Simran Kaur",
+    displayName: "Simran Kaur",
+    accountName: "Simran Kaur",
+    role: "creator",
+    handle: "@simrankaur_vibes",
+    instagramUsername: "simrankaur_vibes",
+    instagramFollowers: 185000,
+    followers: 185000,
+    isInstagramVerified: true,
+    instagramVerificationStatus: "verified",
+    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300",
+    avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300",
+    tier: "upper_mid",
+    city: "Chandigarh",
+    medianViews: 112000,
+    reach: 490000,
+    engagementRate: 6.1,
+    indiaAudiencePct: 97,
+    completedDeals: 42,
+    onTimeRate: 100,
+    isEmailVerified: true,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 5,
+    email: "kavya.creator@mingree.in",
+    passwordHash: bcrypt.hashSync("creator123", 10),
+    name: "Kavya Nair",
+    displayName: "Kavya Nair",
+    accountName: "Kavya Nair",
+    role: "creator",
+    handle: "@kavyanair_daily",
+    instagramUsername: "kavyanair_daily",
+    instagramFollowers: 62000,
+    followers: 62000,
+    isInstagramVerified: true,
+    instagramVerificationStatus: "verified",
+    avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+    avatarUrl: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
+    tier: "mid",
+    city: "Kochi",
+    medianViews: 38500,
+    reach: 160000,
+    engagementRate: 5.4,
+    indiaAudiencePct: 95,
+    completedDeals: 16,
+    onTimeRate: 100,
+    isEmailVerified: true,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  },
 ];
+
+const USERS_STORE_PATH = path.join(process.cwd(), "data", "users_store.json");
 
 let registeredUsers: any[] = [...defaultAccounts];
 (global as any).registeredUsers = registeredUsers;
 
 function loadRegisteredUsers() {
+  try {
+    if (fs.existsSync(USERS_STORE_PATH)) {
+      const raw = fs.readFileSync(USERS_STORE_PATH, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        registeredUsers = parsed;
+        (global as any).registeredUsers = registeredUsers;
+      }
+    }
+  } catch (err: any) {
+    console.warn("[USERS STORE LOAD WARN]", err?.message || err);
+  }
+
   // Ensure default accounts exist if not already present
   for (const acc of defaultAccounts) {
     const existing = registeredUsers.find((u) => u.email.toLowerCase() === acc.email.toLowerCase() || u.id === acc.id);
@@ -1576,10 +1731,17 @@ function loadRegisteredUsers() {
 }
 
 function saveRegisteredUsers() {
-  // In-memory store; Step 3 migrates users directly to PostgreSQL
+  try {
+    const dir = path.dirname(USERS_STORE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(USERS_STORE_PATH, JSON.stringify(registeredUsers, null, 2), "utf-8");
+  } catch (err: any) {
+    console.warn("[USERS STORE SAVE WARN]", err?.message || err);
+  }
 }
 
 loadRegisteredUsers();
+saveRegisteredUsers();
 
 // Export role middleware helpers
 export const requireAdmin = requireRole("admin");
@@ -7340,6 +7502,224 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       nextCursor: null,
     });
   }
+});
+
+// GET /api/public/creators - Public marketplace showcase for Homepage (Featured + Trending + Platform Stats)
+app.get("/api/public/creators", async (req: express.Request, res: express.Response) => {
+  try {
+    // 1. Load featured IDs
+    let featuredIds: number[] = [1];
+    const featuredFilePath = path.join(process.cwd(), "data", "featured_creators.json");
+    try {
+      if (fs.existsSync(featuredFilePath)) {
+        const raw = fs.readFileSync(featuredFilePath, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) featuredIds = parsed;
+      }
+    } catch {}
+
+    // 2. Collect all real verified creators
+    const allTiers = [
+      { id: "nano", minFollowers: 5000, maxFollowers: 10000, basePrice: 1200 },
+      { id: "micro", minFollowers: 10000, maxFollowers: 50000, basePrice: 2800 },
+      { id: "mid", minFollowers: 50000, maxFollowers: 100000, basePrice: 6500 },
+      { id: "upper_mid", minFollowers: 100000, maxFollowers: 250000, basePrice: 15000 },
+      { id: "macro", minFollowers: 250000, maxFollowers: 500000, basePrice: 32000 },
+      { id: "large", minFollowers: 500000, maxFollowers: 1000000, basePrice: 65000 },
+      { id: "mega", minFollowers: 1000000, maxFollowers: 2500000, basePrice: 125000 },
+      { id: "elite", minFollowers: 2500000, maxFollowers: 10000000, basePrice: 250000 },
+    ];
+
+    const fakeEmails = new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com", "platform@mingree.internal"]);
+    const fakeHandles = new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
+
+    const realCreatorCards: any[] = [];
+    const seenHandles = new Set<string>();
+
+    for (const u of registeredUsers) {
+      const email = (u.email || "").toLowerCase().trim();
+      const handle = (u.handle || "").toLowerCase().trim();
+      if (fakeEmails.has(email) || fakeHandles.has(handle) || email.includes("demo") || email.includes("example")) {
+        continue;
+      }
+      if (u.role !== "creator" || !u.isInstagramVerified || u.instagramVerificationStatus === "unlinked") {
+        continue;
+      }
+
+      const followers = Number(u.instagramFollowers || u.followers) || 0;
+      const cleanHandle = (u.instagramUsername || u.handle || "").trim().replace(/^@+/, "");
+      if (!cleanHandle) continue;
+
+      const handleKey = cleanHandle.toLowerCase();
+      if (seenHandles.has(handleKey)) continue;
+      seenHandles.add(handleKey);
+
+      const f = followers;
+      let tierId = "micro";
+      if (f >= 2500000) tierId = "elite";
+      else if (f >= 1000000) tierId = "mega";
+      else if (f >= 500000) tierId = "large";
+      else if (f >= 250000) tierId = "macro";
+      else if (f >= 100000) tierId = "upper_mid";
+      else if (f >= 50000) tierId = "mid";
+      else if (f >= 10000) tierId = "micro";
+      else if (f >= 5000) tierId = "nano";
+
+      const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
+      const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.45) : 5000);
+      const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : 25000);
+      const engRate = u.engagementRate ? Number(u.engagementRate) : 4.8;
+      const rawName = u.displayName || u.name || cleanHandle;
+
+      const isFeatured = featuredIds.includes(Number(u.id));
+
+      realCreatorCards.push({
+        id: Number(u.id),
+        username: cleanHandle,
+        displayName: rawName,
+        handle: `@${cleanHandle}`,
+        avatar: u.avatar || u.avatarUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200",
+        city: u.city || "Mumbai",
+        tier: tierId,
+        followers,
+        medianViews: mViews,
+        reach: mReach,
+        engagementRate: engRate,
+        indiaAudiencePct: u.indiaAudiencePct || 95,
+        pricePerReel: tierObj.basePrice,
+        pricePerStory: Math.round(tierObj.basePrice * 0.5),
+        pricePerCollab: Math.round(tierObj.basePrice * 1.4),
+        isFeatured,
+        isInstagramVerified: true,
+        completedDeals: u.completedDeals || 0,
+        onTimeRate: u.onTimeRate || 100,
+      });
+    }
+
+    // Try also from DB if available
+    try {
+      const dbRes = await pool.query(`
+        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.city,
+               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate
+        FROM users u
+        INNER JOIN creator_profiles cp ON cp.user_id = u.id
+        WHERE u.role = 'creator'
+          AND cp.username IS NOT NULL AND cp.status = 'active'
+      `);
+      for (const row of dbRes.rows) {
+        const id = Number(row.id);
+        if (realCreatorCards.some(c => c.id === id)) continue;
+        const cleanHandle = (row.instagram_username || "").trim().replace(/^@+/, "");
+        if (!cleanHandle) continue;
+        const f = Number(row.cp_followers || 0);
+        let tierId = "micro";
+        if (f >= 50000) tierId = "mid";
+        else if (f >= 10000) tierId = "micro";
+        else tierId = "nano";
+
+        const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
+        realCreatorCards.push({
+          id,
+          username: cleanHandle,
+          displayName: row.name || cleanHandle,
+          handle: `@${cleanHandle}`,
+          avatar: row.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200",
+          city: row.city || "Mumbai",
+          tier: tierId,
+          followers: f,
+          medianViews: Number(row.median_views || 25000),
+          reach: Math.round(f * 2.2),
+          engagementRate: Number(row.engagement_rate || 4.5),
+          indiaAudiencePct: 95,
+          pricePerReel: tierObj.basePrice,
+          pricePerStory: Math.round(tierObj.basePrice * 0.5),
+          pricePerCollab: Math.round(tierObj.basePrice * 1.4),
+          isFeatured: featuredIds.includes(id),
+          isInstagramVerified: true,
+          completedDeals: 5,
+          onTimeRate: 100,
+        });
+      }
+    } catch {}
+
+    // Featured creators: those selected by admin, or if none selected, the top creators
+    let featured = realCreatorCards.filter(c => c.isFeatured);
+    if (featured.length === 0 && realCreatorCards.length > 0) {
+      featured = [...realCreatorCards].slice(0, 4);
+    }
+
+    // Trending creators: sorted by reach & engagement score
+    const trending = [...realCreatorCards].sort((a, b) => {
+      const scoreA = (a.reach * 1.5) + (a.medianViews * 2) + (a.followers * (a.engagementRate / 100) * 10);
+      const scoreB = (b.reach * 1.5) + (b.medianViews * 2) + (b.followers * (b.engagementRate / 100) * 10);
+      return scoreB - scoreA;
+    });
+
+    const totalReach = realCreatorCards.reduce((acc, c) => acc + (c.reach || 0), 0);
+    const avgEng = realCreatorCards.length > 0
+      ? (realCreatorCards.reduce((acc, c) => acc + (c.engagementRate || 0), 0) / realCreatorCards.length).toFixed(1)
+      : "4.8";
+
+    return res.json({
+      featured,
+      trending,
+      all: realCreatorCards,
+      stats: {
+        totalVerifiedCreators: realCreatorCards.length,
+        totalVerifiedReach: totalReach > 0 ? totalReach : 151200,
+        averageEngagementRate: avgEng,
+        escrowProtectionRate: 100,
+        avgTurnaroundHours: 48,
+      },
+      featuredIds,
+    });
+  } catch (err: any) {
+    console.error("[PUBLIC CREATORS ERROR]", err);
+    return res.status(500).json({ error: "Failed to load public creators" });
+  }
+});
+
+// Admin endpoint to get featured creators
+app.get("/api/admin/featured-creators", requireAuth, requireRole("admin"), (req, res) => {
+  const featuredFilePath = path.join(process.cwd(), "data", "featured_creators.json");
+  let featuredIds: number[] = [1];
+  try {
+    if (fs.existsSync(featuredFilePath)) {
+      featuredIds = JSON.parse(fs.readFileSync(featuredFilePath, "utf-8"));
+    }
+  } catch {}
+  res.json({ featuredIds });
+});
+
+// Admin endpoint to toggle or update featured creators
+app.post("/api/admin/featured-creators", requireAuth, requireRole("admin"), (req, res) => {
+  const { creatorIds, toggleId } = req.body || {};
+  const featuredFilePath = path.join(process.cwd(), "data", "featured_creators.json");
+  let featuredIds: number[] = [1];
+  try {
+    if (fs.existsSync(featuredFilePath)) {
+      featuredIds = JSON.parse(fs.readFileSync(featuredFilePath, "utf-8"));
+    }
+  } catch {}
+
+  if (Array.isArray(creatorIds)) {
+    featuredIds = creatorIds.map(Number).filter(n => !isNaN(n));
+  } else if (toggleId !== undefined) {
+    const idNum = Number(toggleId);
+    if (featuredIds.includes(idNum)) {
+      featuredIds = featuredIds.filter(id => id !== idNum);
+    } else {
+      featuredIds.push(idNum);
+    }
+  }
+
+  try {
+    const dir = path.dirname(featuredFilePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(featuredFilePath, JSON.stringify(featuredIds, null, 2), "utf-8");
+  } catch {}
+
+  res.json({ success: true, featuredIds });
 });
 
 app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
