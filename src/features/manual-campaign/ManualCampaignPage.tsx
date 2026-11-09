@@ -9,7 +9,7 @@ import { compact, inr } from "./tiers";
 import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
 import { ArrowLeft } from "lucide-react";
-import { INDIAN_LANGUAGES } from "@shared/languages";
+import { CITIES_BY_COUNTRY } from "@shared/cities";
 import { INDIAN_GENRES } from "@shared/genres";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -183,6 +183,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
   // Live direct creator search state
   const [globalSearchQ, setGlobalSearchQ] = useState("");
+  const [selectedCityFilter, setSelectedCityFilter] = useState<string>("all");
   const [activeSort, setActiveSort] = useState<NonNullable<CreatorSearchParams["sort"]>>("relevance");
   const [searchResults, setSearchResults] = useState<CreatorCard[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -197,6 +198,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
     const timer = setTimeout(async () => {
       try {
         const res = await api.searchCreators({
+          city: selectedCityFilter === "all" ? undefined : selectedCityFilter,
           cityIds: [],
           tierId: "all",
           deliverable: d.deliverable,
@@ -219,7 +221,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       active = false;
       clearTimeout(timer);
     };
-  }, [step, globalSearchQ, activeSort, d.deliverable, api]);
+  }, [step, globalSearchQ, selectedCityFilter, activeSort, d.deliverable, api]);
 
   const toggleCreator = (creator: CreatorCard) => {
     setSelected((prev) => {
@@ -370,7 +372,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           <Field id="desc" label="Description" required hint="What should creators do? Mention the vibe, hook and anything to avoid.">
             <Textarea id="desc" value={d.description} onChange={(e) => set("description", e.target.value)} rows={4} />
           </Field>
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 gap-4">
             <Field id="genre" label="Genre">
               <Select value={d.genre} onValueChange={(v) => set("genre", v)}>
                 <SelectTrigger className="w-full h-10 rounded-xl" data-testid="select-genre">
@@ -380,20 +382,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   {INDIAN_GENRES.map((genre) => (
                     <SelectItem key={genre} value={genre}>
                       {genre}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field id="lang" label="Language">
-              <Select value={d.language} onValueChange={(v) => set("language", v)}>
-                <SelectTrigger className="w-full h-10 rounded-xl" data-testid="select-language">
-                  <SelectValue placeholder="Select language..." />
-                </SelectTrigger>
-                <SelectContent className="max-h-[300px]">
-                  {INDIAN_LANGUAGES.map((lang) => (
-                    <SelectItem key={lang} value={lang}>
-                      {lang}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -487,30 +475,46 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             </p>
           </header>
 
-          {/* Big Google-style Search Box in the Upper Center with Floating Auto-Suggest Dropdown */}
-          <div className="w-full max-w-2xl mx-auto space-y-2 relative">
-            <div className="relative flex items-center group">
-              <span className="absolute left-5 text-muted-foreground text-xl pointer-events-none group-focus-within:text-primary transition-colors">
-                🔍
-              </span>
-              <input
-                id="global-creator-search"
-                type="text"
-                value={globalSearchQ}
-                onChange={(e) => setGlobalSearchQ(e.target.value)}
-                placeholder="Search creator by name or @handle... (e.g. judge, priya, maninder)"
-                className="w-full h-14 pl-14 pr-12 rounded-full border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary focus:ring-4 focus:ring-primary/10 text-sm sm:text-base transition-all outline-none"
-              />
-              {globalSearchQ && (
-                <button
-                  type="button"
-                  onClick={() => setGlobalSearchQ("")}
-                  className="absolute right-4 h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs text-muted-foreground hover:text-foreground hover:bg-muted-foreground/20 cursor-pointer transition"
-                  title="Clear search"
-                >
-                  ✕
-                </button>
-              )}
+          <div className="w-full max-w-2xl mx-auto space-y-3 relative">
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <div className="relative flex items-center group flex-1">
+                <span className="absolute left-4 text-muted-foreground text-lg pointer-events-none group-focus-within:text-primary transition-colors">
+                  🔍
+                </span>
+                <input
+                  id="global-creator-search"
+                  type="text"
+                  value={globalSearchQ}
+                  onChange={(e) => setGlobalSearchQ(e.target.value)}
+                  placeholder="Search creator by name or @handle... (e.g. judge, priya)"
+                  className="w-full h-12 pl-12 pr-10 rounded-xl border-2 border-border/80 bg-background shadow-xs hover:border-primary/60 focus:border-primary text-sm transition-all outline-none"
+                />
+                {globalSearchQ && (
+                  <button
+                    type="button"
+                    onClick={() => setGlobalSearchQ("")}
+                    className="absolute right-3 h-6 w-6 rounded-full bg-muted flex items-center justify-center text-xs text-muted-foreground hover:text-foreground cursor-pointer transition"
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* City Filter Dropdown */}
+              <select
+                value={selectedCityFilter}
+                onChange={(e) => setSelectedCityFilter(e.target.value)}
+                className="h-12 px-3 rounded-xl border-2 border-border/80 bg-background text-sm font-medium text-foreground outline-none hover:border-primary/60 focus:border-primary shrink-0"
+                aria-label="Filter creators by city"
+              >
+                <option value="all">📍 All Cities (India)</option>
+                {CITIES_BY_COUNTRY.IN.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Google-Style Floating Live Suggestion Dropdown */}

@@ -41,6 +41,7 @@ export interface CreatorCard {
 }
 
 export interface CreatorSearchParams {
+  city?: string;
   cityIds: number[];
   tierId: string;
   deliverable: DeliverableType;
