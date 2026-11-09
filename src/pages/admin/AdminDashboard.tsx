@@ -45,11 +45,15 @@ import {
   ShieldCheck,
   UserCheck,
   Sparkles,
+  BadgeCheck,
   History,
 } from "lucide-react";
 
+import { LandingShowcasePage } from "./LandingShowcasePage";
+
 type AdminTabId =
   | "overview"
+  | "landing-showcase"
   | "users"
   | "risk-review"
   | "campaigns-deals"
@@ -85,7 +89,8 @@ const navSections: NavSection[] = [
   {
     title: "Marketplace & Trust",
     items: [
-      { id: "users", label: "Users", shortDesc: "Creators, sponsors & access control", icon: Users },
+      { id: "landing-showcase", label: "Landing & Trending", shortDesc: "Curate trending creators, hero & live ticker", icon: Sparkles },
+      { id: "users", label: "Users & Accounts", shortDesc: "Creators, brands & wallet management", icon: Users },
       { id: "risk-review", label: "Risk Review", shortDesc: "Follower burst & anomaly screening", icon: ShieldAlert },
       { id: "campaigns-deals", label: "Campaigns & Deals", shortDesc: "Active campaigns & post verification", icon: Briefcase },
       { id: "disputes", label: "Disputes", shortDesc: "Escrow arbitration & settlement", icon: Scale },
@@ -335,6 +340,7 @@ export function AdminDashboard() {
             {activeTab === "overview" && (
               <OverviewPage onNavigate={(tab, subTab) => handleNavigate(tab as AdminTabId, subTab)} />
             )}
+            {activeTab === "landing-showcase" && <LandingShowcasePage />}
             {activeTab === "users" && <UsersPage />}
             {activeTab === "risk-review" && <RiskReviewPage />}
             {activeTab === "campaigns-deals" && (
@@ -870,6 +876,11 @@ function UsersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [selectedUser, setSelectedUser] = useState<any>(null);
 
+  // Wallet Credit Dialog State
+  const [walletCreditDialog, setWalletCreditDialog] = useState<{ userId: number; userName: string; currentBalance: number; role: string } | null>(null);
+  const [walletCreditAmount, setWalletCreditAmount] = useState("");
+  const [walletCreditReason, setWalletCreditReason] = useState("");
+
   // Action Dialog States
   const [actionDialog, setActionDialog] = useState<{
     type: "block" | "unblock" | "reset_ig" | "change_city";
@@ -880,6 +891,76 @@ function UsersPage() {
   const [actionCity, setActionCity] = useState("");
 
   const queryClient = useQueryClient();
+
+  // Landing showcase data to know which creators are featured
+  const { data: showcaseData } = useQuery({
+    queryKey: ["/api/admin/landing-showcase"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/landing-showcase");
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+  const trendingIds: number[] = showcaseData?.config?.trendingCreatorIds || [];
+
+  const toggleFeatureMutation = useMutation({
+    mutationFn: async (userId: number) => {
+      const res = await fetch("/api/admin/landing-showcase/toggle-creator", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creatorId: userId }),
+      });
+      if (!res.ok) throw new Error("Failed to toggle trending");
+      return res.json();
+    },
+    onSuccess: (res) => {
+      toast.success(res.isTrending ? "Creator added to Landing Page Trending!" : "Creator removed from Landing Page Trending");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/landing-showcase"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/public/creators"] });
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const verifyBadgeMutation = useMutation({
+    mutationFn: async ({ userId, isVerified, type }: { userId: number; isVerified: boolean; type: string }) => {
+      const res = await fetch(`/api/admin/users/${userId}/verify-badge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isVerified, type }),
+      });
+      if (!res.ok) throw new Error("Failed to update verification badge");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Verification badge updated");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
+
+  const creditWalletMutation = useMutation({
+    mutationFn: async ({ userId, amount, reason }: { userId: number; amount: number; reason: string }) => {
+      const res = await fetch("/api/admin/wallets/credit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, amount, reason }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to adjust wallet");
+      }
+      return res.json();
+    },
+    onSuccess: (res) => {
+      toast.success(res.message || "Wallet updated successfully");
+      setWalletCreditDialog(null);
+      setWalletCreditAmount("");
+      setWalletCreditReason("");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => toast.error(err.message),
+  });
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ["/api/admin/users", page, search, roleFilter, statusFilter],
@@ -1009,6 +1090,33 @@ function UsersPage() {
             Search and manage creators, artists/sponsors, and administrators. All state changes require an audited justification.
           </p>
         </div>
+      </div>
+
+      {/* Quick Role Switcher Pills */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => { setRoleFilter("all"); setPage(1); }}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${roleFilter === "all" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+        >
+          All Accounts
+        </button>
+        <button
+          type="button"
+          onClick={() => { setRoleFilter("creator"); setPage(1); }}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${roleFilter === "creator" ? "bg-rose-600 text-white" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+        >
+          <Sparkles className="w-3 h-3" />
+          Creators Only
+        </button>
+        <button
+          type="button"
+          onClick={() => { setRoleFilter("sponsor"); setPage(1); }}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${roleFilter === "sponsor" ? "bg-indigo-600 text-white" : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+        >
+          <Building2 className="w-3 h-3" />
+          Brands & Sponsors
+        </button>
       </div>
 
       {/* Filter Bar */}
@@ -1171,6 +1279,60 @@ function UsersPage() {
                     </TableCell>
                     <TableCell className="py-3 text-right pr-4">
                       <div className="inline-flex items-center justify-end gap-1">
+                        {u.role === "creator" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className={`text-[11px] h-7 px-2 shadow-none font-bold ${
+                              trendingIds.includes(u.id)
+                                ? "bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100"
+                                : "border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                            }`}
+                            onClick={() => toggleFeatureMutation.mutate(u.id)}
+                            title={trendingIds.includes(u.id) ? "Featured on Landing Page (Click to unfeature)" : "Feature on Landing Page"}
+                          >
+                            <Sparkles className={`w-3 h-3 ${trendingIds.includes(u.id) ? "text-rose-600 fill-rose-500" : ""}`} />
+                            <span className="hidden xl:inline ml-1">{trendingIds.includes(u.id) ? "Featured" : "+ Feature"}</span>
+                          </Button>
+                        )}
+
+                        {u.role === "sponsor" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className={`text-[11px] h-7 px-2 shadow-none font-bold ${
+                              u.status === "verified"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                            }`}
+                            onClick={() => verifyBadgeMutation.mutate({ userId: u.id, isVerified: u.status !== "verified", type: "brand" })}
+                            title="Toggle Verified Brand Badge"
+                          >
+                            <BadgeCheck className="w-3 h-3 text-sky-500" />
+                            <span className="hidden xl:inline ml-1">{u.status === "verified" ? "Verified" : "Verify Brand"}</span>
+                          </Button>
+                        )}
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-[11px] h-7 px-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50 shadow-none font-medium"
+                          onClick={() => {
+                            setWalletCreditDialog({
+                              userId: u.id,
+                              userName: u.name || u.email,
+                              currentBalance: u.wallet?.balance || 0,
+                              role: u.role,
+                            });
+                            setWalletCreditAmount("");
+                            setWalletCreditReason("");
+                          }}
+                          title="Credit or top-up wallet balance"
+                        >
+                          <Wallet className="w-3 h-3 text-emerald-600" />
+                          <span className="hidden xl:inline ml-1">Wallet</span>
+                        </Button>
+
                         <Button
                           size="sm"
                           variant="outline"
@@ -1321,6 +1483,111 @@ function UsersPage() {
               }}
             >
               Confirm & Log Audit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Wallet Credit & Balance Adjustment Modal */}
+      <Dialog open={Boolean(walletCreditDialog)} onOpenChange={() => setWalletCreditDialog(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
+              <Wallet className="w-4 h-4 text-emerald-600" />
+              Adjust Wallet Balance — {walletCreditDialog?.userName}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Top up creator or sponsor wallet. This creates an immediate ledger entry and immutable audit log.
+            </DialogDescription>
+          </DialogHeader>
+
+          {walletCreditDialog && (
+            <div className="space-y-3 py-2 text-xs">
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500 block text-[11px]">Current Balance</span>
+                  <span className="font-mono font-bold text-slate-900 text-sm">
+                    {formatINR(walletCreditDialog.currentBalance)}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-500 block text-[11px]">Account Role</span>
+                  <span className="capitalize font-semibold text-slate-800">
+                    {walletCreditDialog.role === "sponsor" ? "Brand / Sponsor" : walletCreditDialog.role}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-700">Credit Amount (INR ₹)</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-semibold text-xs">₹</span>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="Enter amount, e.g. 5000"
+                    value={walletCreditAmount}
+                    onChange={(e) => setWalletCreditAmount(e.target.value)}
+                    className="pl-7 h-8 text-xs font-mono font-bold"
+                  />
+                </div>
+                <div className="flex gap-1.5 pt-1">
+                  {[500, 1000, 2500, 5000, 10000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setWalletCreditAmount(String(amt))}
+                      className="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono"
+                    >
+                      +₹{amt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-700">Audit Justification Reason *</Label>
+                <Textarea
+                  placeholder="e.g. Promotional campaign budget credit, manual NEFT reconciliation, or dispute goodwill..."
+                  value={walletCreditReason}
+                  onChange={(e) => setWalletCreditReason(e.target.value)}
+                  rows={2}
+                  className="text-xs"
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => setWalletCreditDialog(null)}
+              disabled={creditWalletMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+              disabled={
+                !walletCreditAmount ||
+                Number(walletCreditAmount) <= 0 ||
+                !walletCreditReason.trim() ||
+                creditWalletMutation.isPending
+              }
+              onClick={() => {
+                if (!walletCreditDialog) return;
+                creditWalletMutation.mutate({
+                  userId: walletCreditDialog.userId,
+                  amount: Number(walletCreditAmount),
+                  reason: walletCreditReason,
+                });
+              }}
+            >
+              {creditWalletMutation.isPending ? "Processing..." : "Credit Wallet & Log Audit"}
             </Button>
           </DialogFooter>
         </DialogContent>

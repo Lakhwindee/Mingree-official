@@ -183,6 +183,8 @@ export default function HomePage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [howItWorksTab, setHowItWorksTab] = useState<"brands" | "creators">("brands");
   const [creators, setCreators] = useState<PublicCreator[]>(CURATED_CREATORS);
+  const [heroCreator, setHeroCreator] = useState<PublicCreator>(CURATED_CREATORS[0]);
+  const [tickerAnnouncements, setTickerAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Fetch real creators data from public endpoint
@@ -193,8 +195,16 @@ export default function HomePage() {
         const res = await fetch("/api/public/creators");
         if (res.ok) {
           const data = await res.json();
-          if (isMounted && data.trending && data.trending.length > 0) {
-            setCreators(data.trending);
+          if (isMounted) {
+            if (data.heroCreator) {
+              setHeroCreator(data.heroCreator);
+            }
+            if (data.trending && data.trending.length > 0) {
+              setCreators(data.trending);
+            }
+            if (data.tickerAnnouncements && data.tickerAnnouncements.length > 0) {
+              setTickerAnnouncements(data.tickerAnnouncements);
+            }
           }
         }
       } catch (err) {
@@ -235,9 +245,6 @@ export default function HomePage() {
     if (user.role === "sponsor") return "Brand Dashboard";
     return "Creator Hub";
   };
-
-  // Hero creator card (Riya Sen)
-  const heroCreator = creators[0] || CURATED_CREATORS[0];
 
   // Infinite ticker items
   const marqueeList = useMemo(() => {
@@ -482,7 +489,7 @@ export default function HomePage() {
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                   <div className="flex items-center gap-2 text-xs font-bold text-emerald-700">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
-                    <span>Verified Creator Profile</span>
+                    <span>{(heroCreator as any)?.badge || "Verified Creator Profile"}</span>
                   </div>
                   <span className="text-xs text-slate-400 font-medium">Live sync</span>
                 </div>
@@ -587,33 +594,35 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 3. Live Ticker / Moving Activity Row */}
+      {/* 3. Live Ticker / Moving Activity Row (Managed via Admin Console) */}
       <div className="w-full bg-slate-900 text-white py-3 overflow-hidden border-y border-slate-800">
         <div className="flex items-center gap-8 whitespace-nowrap animate-marquee">
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>⚡ Campaign Completed: 112,000 Views Delivered for Lifestyle Brand</span>
-          </div>
-          <span className="text-slate-600">·</span>
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            <span>₹45,000 Verified Payouts Disbursed to Active Creators</span>
-          </div>
-          <span className="text-slate-600">·</span>
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <Instagram className="w-3.5 h-3.5 text-pink-400" />
-            <span>New Creator Verified: @simrankaur_vibes (185K Followers · Chandigarh)</span>
-          </div>
-          <span className="text-slate-600">·</span>
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>Instant UPI Payout Disbursed in 90 Seconds</span>
-          </div>
-          <span className="text-slate-600">·</span>
-          <div className="flex items-center gap-2 text-xs font-semibold">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Transparent Platform Fee · Direct Creator Deals</span>
-          </div>
+          {(tickerAnnouncements.length > 0
+            ? [...tickerAnnouncements, ...tickerAnnouncements]
+            : [
+                { id: "1", text: "⚡ Campaign Completed: 112,000 Views Delivered for Lifestyle Brand", icon: "zap" },
+                { id: "2", text: "₹45,000 Verified Payouts Disbursed to Active Creators", icon: "shield" },
+                { id: "3", text: "New Creator Verified: @simrankaur_vibes (185K Followers · Chandigarh)", icon: "ig" },
+                { id: "4", text: "Instant UPI Payout Disbursed in 90 Seconds", icon: "zap" },
+                { id: "5", text: "Transparent Platform Fee · Direct Creator Deals", icon: "check" },
+              ]
+          ).map((item, idx) => (
+            <div key={`${item.id}-${idx}`} className="inline-flex items-center gap-8">
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                {item.icon === "zap" && <Zap className="w-3.5 h-3.5 text-amber-400" />}
+                {item.icon === "shield" && <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />}
+                {item.icon === "ig" && <Instagram className="w-3.5 h-3.5 text-pink-400" />}
+                {item.icon === "check" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                {!["zap", "shield", "ig", "check"].includes(item.icon || "") && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                )}
+                <span className={item.highlight ? "text-amber-300 font-bold" : "text-slate-100"}>
+                  {item.text}
+                </span>
+              </div>
+              <span className="text-slate-600">·</span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -670,11 +679,16 @@ export default function HomePage() {
                       </div>
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <h4 className="font-bold text-slate-900 text-base truncate">
                           {c.displayName}
                         </h4>
                         <BadgeCheck className="w-4 h-4 text-sky-500 flex-shrink-0" />
+                        {(c as any).badge && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                            {(c as any).badge}
+                          </span>
+                        )}
                       </div>
                       <p className="text-xs text-slate-500 font-mono font-medium truncate">{c.handle}</p>
                       <div className="flex items-center gap-1.5 mt-0.5 text-xs text-slate-500">

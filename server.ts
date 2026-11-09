@@ -96,6 +96,14 @@ import {
 } from "./server/adminConsole";
 
 import {
+  buildPublicCreatorsResponse,
+  getLandingShowcaseConfig,
+  saveLandingShowcaseConfig,
+  LandingShowcaseConfig,
+  DEFAULT_SHOWCASE_CREATORS,
+} from "./server/landingShowcase";
+
+import {
   matchAndInviteCreators,
   submitQuoteOrAccept,
   getCampaignShortlist,
@@ -7504,222 +7512,242 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
   }
 });
 
-// GET /api/public/creators - Public marketplace showcase for Homepage (Featured + Trending + Platform Stats)
+// GET /api/public/creators - Public marketplace showcase for Homepage (Hero + Trending + Live Ticker)
 app.get("/api/public/creators", async (req: express.Request, res: express.Response) => {
   try {
-    // 1. Load featured IDs
-    let featuredIds: number[] = [1];
-    const featuredFilePath = path.join(process.cwd(), "data", "featured_creators.json");
-    try {
-      if (fs.existsSync(featuredFilePath)) {
-        const raw = fs.readFileSync(featuredFilePath, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) featuredIds = parsed;
-      }
-    } catch {}
-
-    // 2. Collect all real verified creators
-    const allTiers = [
-      { id: "nano", minFollowers: 5000, maxFollowers: 10000, basePrice: 1200 },
-      { id: "micro", minFollowers: 10000, maxFollowers: 50000, basePrice: 2800 },
-      { id: "mid", minFollowers: 50000, maxFollowers: 100000, basePrice: 6500 },
-      { id: "upper_mid", minFollowers: 100000, maxFollowers: 250000, basePrice: 15000 },
-      { id: "macro", minFollowers: 250000, maxFollowers: 500000, basePrice: 32000 },
-      { id: "large", minFollowers: 500000, maxFollowers: 1000000, basePrice: 65000 },
-      { id: "mega", minFollowers: 1000000, maxFollowers: 2500000, basePrice: 125000 },
-      { id: "elite", minFollowers: 2500000, maxFollowers: 10000000, basePrice: 250000 },
-    ];
-
-    const fakeEmails = new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com", "platform@mingree.internal"]);
-    const fakeHandles = new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
-
-    const realCreatorCards: any[] = [];
-    const seenHandles = new Set<string>();
-
-    for (const u of registeredUsers) {
-      const email = (u.email || "").toLowerCase().trim();
-      const handle = (u.handle || "").toLowerCase().trim();
-      if (fakeEmails.has(email) || fakeHandles.has(handle) || email.includes("demo") || email.includes("example")) {
-        continue;
-      }
-      if (u.role !== "creator" || !u.isInstagramVerified || u.instagramVerificationStatus === "unlinked") {
-        continue;
-      }
-
-      const followers = Number(u.instagramFollowers || u.followers) || 0;
-      const cleanHandle = (u.instagramUsername || u.handle || "").trim().replace(/^@+/, "");
-      if (!cleanHandle) continue;
-
-      const handleKey = cleanHandle.toLowerCase();
-      if (seenHandles.has(handleKey)) continue;
-      seenHandles.add(handleKey);
-
-      const f = followers;
-      let tierId = "micro";
-      if (f >= 2500000) tierId = "elite";
-      else if (f >= 1000000) tierId = "mega";
-      else if (f >= 500000) tierId = "large";
-      else if (f >= 250000) tierId = "macro";
-      else if (f >= 100000) tierId = "upper_mid";
-      else if (f >= 50000) tierId = "mid";
-      else if (f >= 10000) tierId = "micro";
-      else if (f >= 5000) tierId = "nano";
-
-      const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
-      const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.45) : 5000);
-      const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : 25000);
-      const engRate = u.engagementRate ? Number(u.engagementRate) : 4.8;
-      const rawName = u.displayName || u.name || cleanHandle;
-
-      const isFeatured = featuredIds.includes(Number(u.id));
-
-      realCreatorCards.push({
-        id: Number(u.id),
-        username: cleanHandle,
-        displayName: rawName,
-        handle: `@${cleanHandle}`,
-        avatar: u.avatar || u.avatarUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200",
-        city: u.city || "Mumbai",
-        tier: tierId,
-        followers,
-        medianViews: mViews,
-        reach: mReach,
-        engagementRate: engRate,
-        indiaAudiencePct: u.indiaAudiencePct || 95,
-        pricePerReel: tierObj.basePrice,
-        pricePerStory: Math.round(tierObj.basePrice * 0.5),
-        pricePerCollab: Math.round(tierObj.basePrice * 1.4),
-        isFeatured,
-        isInstagramVerified: true,
-        completedDeals: u.completedDeals || 0,
-        onTimeRate: u.onTimeRate || 100,
-      });
-    }
-
-    // Try also from DB if available
-    try {
-      const dbRes = await pool.query(`
-        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.city,
-               cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate
-        FROM users u
-        INNER JOIN creator_profiles cp ON cp.user_id = u.id
-        WHERE u.role = 'creator'
-          AND cp.username IS NOT NULL AND cp.status = 'active'
-      `);
-      for (const row of dbRes.rows) {
-        const id = Number(row.id);
-        if (realCreatorCards.some(c => c.id === id)) continue;
-        const cleanHandle = (row.instagram_username || "").trim().replace(/^@+/, "");
-        if (!cleanHandle) continue;
-        const f = Number(row.cp_followers || 0);
-        let tierId = "micro";
-        if (f >= 50000) tierId = "mid";
-        else if (f >= 10000) tierId = "micro";
-        else tierId = "nano";
-
-        const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
-        realCreatorCards.push({
-          id,
-          username: cleanHandle,
-          displayName: row.name || cleanHandle,
-          handle: `@${cleanHandle}`,
-          avatar: row.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200",
-          city: row.city || "Mumbai",
-          tier: tierId,
-          followers: f,
-          medianViews: Number(row.median_views || 25000),
-          reach: Math.round(f * 2.2),
-          engagementRate: Number(row.engagement_rate || 4.5),
-          indiaAudiencePct: 95,
-          pricePerReel: tierObj.basePrice,
-          pricePerStory: Math.round(tierObj.basePrice * 0.5),
-          pricePerCollab: Math.round(tierObj.basePrice * 1.4),
-          isFeatured: featuredIds.includes(id),
-          isInstagramVerified: true,
-          completedDeals: 5,
-          onTimeRate: 100,
-        });
-      }
-    } catch {}
-
-    // Featured creators: those selected by admin, or if none selected, the top creators
-    let featured = realCreatorCards.filter(c => c.isFeatured);
-    if (featured.length === 0 && realCreatorCards.length > 0) {
-      featured = [...realCreatorCards].slice(0, 4);
-    }
-
-    // Trending creators: sorted by reach & engagement score
-    const trending = [...realCreatorCards].sort((a, b) => {
-      const scoreA = (a.reach * 1.5) + (a.medianViews * 2) + (a.followers * (a.engagementRate / 100) * 10);
-      const scoreB = (b.reach * 1.5) + (b.medianViews * 2) + (b.followers * (b.engagementRate / 100) * 10);
-      return scoreB - scoreA;
-    });
-
-    const totalReach = realCreatorCards.reduce((acc, c) => acc + (c.reach || 0), 0);
-    const avgEng = realCreatorCards.length > 0
-      ? (realCreatorCards.reduce((acc, c) => acc + (c.engagementRate || 0), 0) / realCreatorCards.length).toFixed(1)
-      : "4.8";
-
-    return res.json({
-      featured,
-      trending,
-      all: realCreatorCards,
-      stats: {
-        totalVerifiedCreators: realCreatorCards.length,
-        totalVerifiedReach: totalReach > 0 ? totalReach : 151200,
-        averageEngagementRate: avgEng,
-        escrowProtectionRate: 100,
-        avgTurnaroundHours: 48,
-      },
-      featuredIds,
-    });
+    const payload = await buildPublicCreatorsResponse(registeredUsers);
+    return res.json(payload);
   } catch (err: any) {
     console.error("[PUBLIC CREATORS ERROR]", err);
     return res.status(500).json({ error: "Failed to load public creators" });
   }
 });
 
-// Admin endpoint to get featured creators
-app.get("/api/admin/featured-creators", requireAuth, requireRole("admin"), (req, res) => {
-  const featuredFilePath = path.join(process.cwd(), "data", "featured_creators.json");
-  let featuredIds: number[] = [1];
+// GET /api/admin/landing-showcase - Admin endpoint to fetch full showcase configuration
+app.get("/api/admin/landing-showcase", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
   try {
-    if (fs.existsSync(featuredFilePath)) {
-      featuredIds = JSON.parse(fs.readFileSync(featuredFilePath, "utf-8"));
-    }
-  } catch {}
-  res.json({ featuredIds });
+    const config = await getLandingShowcaseConfig();
+    const publicData = await buildPublicCreatorsResponse(registeredUsers);
+
+    // List of all registered creators for admin selection
+    const registeredCreators = registeredUsers
+      .filter((u) => u.role === "creator")
+      .map((u) => {
+        const id = Number(u.id);
+        const cleanHandle = (u.instagramUsername || u.handle || "").replace(/^@+/, "");
+        const isTrending = (config.trendingCreatorIds || []).includes(id);
+        const isHero = config.heroCreatorId === id;
+        return {
+          id,
+          name: u.displayName || u.name || cleanHandle,
+          handle: `@${cleanHandle}`,
+          email: u.email,
+          city: u.city || "Mumbai",
+          tier: u.tier || "mid",
+          followers: Number(u.instagramFollowers || u.followers) || 0,
+          medianViews: Number(u.medianViews) || 0,
+          avatar: u.avatar || u.avatarUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
+          isInstagramVerified: Boolean(u.isInstagramVerified),
+          isTrending,
+          isHero,
+          override: config.creatorOverrides?.[id] || null,
+        };
+      });
+
+    return res.json({
+      config,
+      trendingCreators: publicData.trending,
+      heroCreator: publicData.heroCreator,
+      tickerAnnouncements: config.tickerAnnouncements || [],
+      availableCreators: registeredCreators,
+      platformFeePercent: config.platformFeePercent || 7.5,
+      gstPercent: config.gstPercent || 18,
+    });
+  } catch (err: any) {
+    console.error("[ADMIN LANDING SHOWCASE GET ERROR]", err);
+    return res.status(500).json({ error: "Failed to load landing showcase configuration" });
+  }
 });
 
-// Admin endpoint to toggle or update featured creators
-app.post("/api/admin/featured-creators", requireAuth, requireRole("admin"), (req, res) => {
-  const { creatorIds, toggleId } = req.body || {};
-  const featuredFilePath = path.join(process.cwd(), "data", "featured_creators.json");
-  let featuredIds: number[] = [1];
+// POST /api/admin/landing-showcase - Admin save full showcase configuration
+app.post("/api/admin/landing-showcase", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
   try {
-    if (fs.existsSync(featuredFilePath)) {
-      featuredIds = JSON.parse(fs.readFileSync(featuredFilePath, "utf-8"));
+    const currentConfig = await getLandingShowcaseConfig();
+    const { heroCreatorId, trendingCreatorIds, creatorOverrides, tickerAnnouncements, customCreators, platformFeePercent } = req.body || {};
+
+    const updatedConfig: LandingShowcaseConfig = {
+      ...currentConfig,
+      heroCreatorId: heroCreatorId !== undefined ? Number(heroCreatorId) : currentConfig.heroCreatorId,
+      trendingCreatorIds: Array.isArray(trendingCreatorIds) ? trendingCreatorIds.map(Number) : currentConfig.trendingCreatorIds,
+      creatorOverrides: creatorOverrides || currentConfig.creatorOverrides,
+      tickerAnnouncements: Array.isArray(tickerAnnouncements) ? tickerAnnouncements : currentConfig.tickerAnnouncements,
+      customCreators: Array.isArray(customCreators) ? customCreators : currentConfig.customCreators,
+      platformFeePercent: platformFeePercent !== undefined ? Number(platformFeePercent) : currentConfig.platformFeePercent,
+    };
+
+    await saveLandingShowcaseConfig(updatedConfig);
+    recordAdminAuditLog(req.user!.id, "UPDATE_LANDING_SHOWCASE", "settings", "landing_showcase", null, updatedConfig, "Admin updated landing page showcase and trending creators");
+
+    return res.json({ success: true, config: updatedConfig });
+  } catch (err: any) {
+    console.error("[ADMIN LANDING SHOWCASE POST ERROR]", err);
+    return res.status(500).json({ error: "Failed to update landing showcase configuration" });
+  }
+});
+
+// POST /api/admin/landing-showcase/toggle-creator - Quick toggle creator in/out of trending
+app.post("/api/admin/landing-showcase/toggle-creator", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
+  try {
+    const { creatorId } = req.body;
+    const idNum = Number(creatorId);
+    if (isNaN(idNum)) return res.status(400).json({ error: "Invalid creatorId" });
+
+    const config = await getLandingShowcaseConfig();
+    let currentIds = config.trendingCreatorIds || [];
+    let isNowTrending = false;
+
+    if (currentIds.includes(idNum)) {
+      currentIds = currentIds.filter((id) => id !== idNum);
+      isNowTrending = false;
+    } else {
+      currentIds.push(idNum);
+      isNowTrending = true;
     }
-  } catch {}
+
+    config.trendingCreatorIds = currentIds;
+    await saveLandingShowcaseConfig(config);
+
+    return res.json({ success: true, creatorId: idNum, isTrending: isNowTrending, trendingCreatorIds: currentIds });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to toggle creator trending status" });
+  }
+});
+
+// POST /api/admin/landing-showcase/set-hero - Quick set hero creator for landing page
+app.post("/api/admin/landing-showcase/set-hero", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
+  try {
+    const { creatorId } = req.body;
+    const idNum = Number(creatorId);
+    if (isNaN(idNum)) return res.status(400).json({ error: "Invalid creatorId" });
+
+    const config = await getLandingShowcaseConfig();
+    config.heroCreatorId = idNum;
+    if (!config.trendingCreatorIds.includes(idNum)) {
+      config.trendingCreatorIds.unshift(idNum);
+    }
+
+    await saveLandingShowcaseConfig(config);
+    return res.json({ success: true, heroCreatorId: idNum });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to set hero creator" });
+  }
+});
+
+// POST /api/admin/landing-showcase/update-creator - Update creator showcase badge/category/pin
+app.post("/api/admin/landing-showcase/update-creator", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
+  try {
+    const { creatorId, badge, category, isPinned, order } = req.body;
+    const idNum = Number(creatorId);
+    if (isNaN(idNum)) return res.status(400).json({ error: "Invalid creatorId" });
+
+    const config = await getLandingShowcaseConfig();
+    if (!config.creatorOverrides) config.creatorOverrides = {};
+
+    config.creatorOverrides[idNum] = {
+      ...config.creatorOverrides[idNum],
+      ...(badge !== undefined ? { badge } : {}),
+      ...(category !== undefined ? { category } : {}),
+      ...(isPinned !== undefined ? { isPinned: Boolean(isPinned) } : {}),
+      ...(order !== undefined ? { order: Number(order) } : {}),
+    };
+
+    // If custom creator, also update customCreators array
+    const customIdx = config.customCreators.findIndex((c) => c.id === idNum);
+    if (customIdx >= 0) {
+      if (badge !== undefined) config.customCreators[customIdx].badge = badge;
+      if (category !== undefined) config.customCreators[customIdx].category = category;
+      if (isPinned !== undefined) config.customCreators[customIdx].isPinned = Boolean(isPinned);
+      if (order !== undefined) config.customCreators[customIdx].order = Number(order);
+    }
+
+    await saveLandingShowcaseConfig(config);
+    return res.json({ success: true, creatorId: idNum, override: config.creatorOverrides[idNum] });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to update creator details" });
+  }
+});
+
+// POST /api/admin/landing-showcase/ticker - Update ticker announcements
+app.post("/api/admin/landing-showcase/ticker", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
+  try {
+    const { announcements } = req.body;
+    if (!Array.isArray(announcements)) return res.status(400).json({ error: "Announcements array required" });
+
+    const config = await getLandingShowcaseConfig();
+    config.tickerAnnouncements = announcements;
+    await saveLandingShowcaseConfig(config);
+
+    return res.json({ success: true, tickerAnnouncements: config.tickerAnnouncements });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to update ticker announcements" });
+  }
+});
+
+// POST /api/admin/users/:id/verify-badge - Admin toggle verification badge for Creator or Brand
+app.post("/api/admin/users/:id/verify-badge", requireAuth, requireRole("admin"), async (req: AuthRequest, res: express.Response) => {
+  try {
+    const targetUserId = Number(req.params.id);
+    const { isVerified, type } = req.body; // type: 'instagram' or 'brand' or 'email'
+
+    const targetUser = registeredUsers.find((u) => u.id === targetUserId);
+    if (!targetUser) return res.status(404).json({ error: "User not found" });
+
+    if (type === "brand" || targetUser.role === "sponsor") {
+      targetUser.isBrandVerified = Boolean(isVerified);
+      if (isDatabaseConfigured) {
+        await pool.query(`UPDATE users SET status = $1 WHERE id = $2`, [isVerified ? 'verified' : 'active', targetUserId]).catch(() => {});
+      }
+    } else {
+      targetUser.isInstagramVerified = Boolean(isVerified);
+      targetUser.instagramVerificationStatus = isVerified ? "verified" : "unlinked";
+      if (isDatabaseConfigured) {
+        await pool.query(`UPDATE creator_profiles SET status = $1 WHERE user_id = $2`, [isVerified ? 'active' : 'pending', targetUserId]).catch(() => {});
+      }
+    }
+
+    recordAdminAuditLog(req.user!.id, "VERIFY_BADGE", "user", targetUserId, null, { isVerified, type }, "Admin toggled verification status");
+    return res.json({ success: true, userId: targetUserId, isVerified: Boolean(isVerified), user: targetUser });
+  } catch (err: any) {
+    return res.status(500).json({ error: "Failed to update verification status" });
+  }
+});
+
+// Admin endpoint to get featured creators (backward compatibility)
+app.get("/api/admin/featured-creators", requireAuth, requireRole("admin"), async (req, res) => {
+  const config = await getLandingShowcaseConfig();
+  res.json({ featuredIds: config.trendingCreatorIds || [1] });
+});
+
+// Admin endpoint to toggle or update featured creators (backward compatibility)
+app.post("/api/admin/featured-creators", requireAuth, requireRole("admin"), async (req, res) => {
+  const { creatorIds, toggleId } = req.body || {};
+  const config = await getLandingShowcaseConfig();
+  let currentIds = config.trendingCreatorIds || [1];
 
   if (Array.isArray(creatorIds)) {
-    featuredIds = creatorIds.map(Number).filter(n => !isNaN(n));
+    currentIds = creatorIds.map(Number).filter((n) => !isNaN(n));
   } else if (toggleId !== undefined) {
     const idNum = Number(toggleId);
-    if (featuredIds.includes(idNum)) {
-      featuredIds = featuredIds.filter(id => id !== idNum);
+    if (currentIds.includes(idNum)) {
+      currentIds = currentIds.filter((id) => id !== idNum);
     } else {
-      featuredIds.push(idNum);
+      currentIds.push(idNum);
     }
   }
 
-  try {
-    const dir = path.dirname(featuredFilePath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(featuredFilePath, JSON.stringify(featuredIds, null, 2), "utf-8");
-  } catch {}
-
-  res.json({ success: true, featuredIds });
+  config.trendingCreatorIds = currentIds;
+  await saveLandingShowcaseConfig(config);
+  res.json({ success: true, featuredIds: currentIds });
 });
 
 app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
