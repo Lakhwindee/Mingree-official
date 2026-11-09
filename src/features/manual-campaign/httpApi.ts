@@ -102,6 +102,7 @@ export function createHttpApi(base = ""): ManualCampaignApi {
     searchCreators: async (p: CreatorSearchParams): Promise<CreatorSearchResult> => {
       try {
         const qs = new URLSearchParams();
+        if (p.city && p.city !== "all") qs.set("city", p.city);
         if (p.cityIds?.length) qs.set("cities", p.cityIds.join(","));
         if (p.tierId && p.tierId !== "all") qs.set("tier", p.tierId);
         if (p.deliverable) qs.set("deliverable", p.deliverable);

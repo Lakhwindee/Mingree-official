@@ -230,7 +230,7 @@ export default function AboutMingree() {
     </div>
   );
 
-  if (isAuthenticated) {
+  if (isAuthenticated && user && user.role !== "admin") {
     const isSponsor = user?.role === "sponsor";
     return (
       <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-background">

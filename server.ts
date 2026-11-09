@@ -7209,16 +7209,18 @@ app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Resp
 // Manual Campaign Endpoints (Choose creators mode)
 // ----------------------------------------------------
 const CITIES_LIST = [
-  { id: 1, name: "Mumbai", state: "Maharashtra" },
+  { id: 1, name: "Punjab", state: "Punjab" },
   { id: 2, name: "Delhi", state: "Delhi" },
-  { id: 3, name: "Bangalore", state: "Karnataka" },
-  { id: 4, name: "Hyderabad", state: "Telangana" },
-  { id: 5, name: "Chennai", state: "Tamil Nadu" },
-  { id: 6, name: "Kolkata", state: "West Bengal" },
-  { id: 7, name: "Pune", state: "Maharashtra" },
-  { id: 8, name: "Ahmedabad", state: "Gujarat" },
-  { id: 9, name: "Jaipur", state: "Rajasthan" },
-  { id: 10, name: "Lucknow", state: "Uttar Pradesh" },
+  { id: 3, name: "Mumbai", state: "Maharashtra" },
+  { id: 4, name: "Chandigarh", state: "Chandigarh" },
+  { id: 5, name: "Bangalore", state: "Karnataka" },
+  { id: 6, name: "Hyderabad", state: "Telangana" },
+  { id: 7, name: "Chennai", state: "Tamil Nadu" },
+  { id: 8, name: "Kolkata", state: "West Bengal" },
+  { id: 9, name: "Pune", state: "Maharashtra" },
+  { id: 10, name: "Ahmedabad", state: "Gujarat" },
+  { id: 11, name: "Jaipur", state: "Rajasthan" },
+  { id: 12, name: "Lucknow", state: "Uttar Pradesh" },
 ];
 
 app.get("/api/cities", (req, res) => {
@@ -7227,11 +7229,12 @@ app.get("/api/cities", (req, res) => {
 
 app.get("/api/campaigns/creator-panel", async (req: express.Request, res: express.Response) => {
   try {
-    const { cities, tier, q, sort, deliverable, minEngagement, genres } = req.query;
+    const { cities, city, tier, q, sort, deliverable, minEngagement, genres } = req.query;
 
     const requestedTier = (tier as string || "").toLowerCase().trim();
     const requestedDeliverable = (deliverable as string || "reel").toLowerCase().trim();
     const cityIds = cities ? (cities as string).split(",").map(Number).filter(n => !isNaN(n)) : [];
+    const cityParam = (city as string || "").trim();
 
     const allTiers = [
       { id: "nano", minFollowers: 5000, maxFollowers: 10000, basePrice: 1200 },
@@ -7438,21 +7441,22 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       });
     }
 
-    // Filter by cities
-    if (cityIds.length > 0) {
+    // Filter by cities or city query param
+    if (cityIds.length > 0 || (cityParam && cityParam.toLowerCase() !== "all")) {
       items = items.filter((c) => {
         const allowedCityNames = cityIds.map(id => {
           const found = CITIES_LIST.find(cl => cl.id === id);
           return found ? found.name.toLowerCase() : "";
         }).filter(Boolean);
 
-        if (c.city && c.city.name && allowedCityNames.includes(c.city.name.toLowerCase())) {
-          return true;
+        if (cityParam && cityParam.toLowerCase() !== "all") {
+          allowedCityNames.push(cityParam.toLowerCase());
         }
-        if (c.rawCity && allowedCityNames.includes(String(c.rawCity).toLowerCase())) {
-          return true;
-        }
-        return false;
+
+        const creatorCityName = (c.city && c.city.name ? c.city.name : (c.rawCity || "")).toLowerCase();
+        if (!creatorCityName) return false;
+
+        return allowedCityNames.some(allowed => creatorCityName.includes(allowed) || allowed.includes(creatorCityName));
       });
     }
 
