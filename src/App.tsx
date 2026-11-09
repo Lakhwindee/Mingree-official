@@ -50,6 +50,7 @@ const Help = __DummyIcon;
 
 
 import HomePage from "@/pages/HomePage";
+import CreatorDirectory from "@/pages/CreatorDirectory";
 
 // Root entry point: renders public homepage for guests & logged in users with live portal access
 function RootEntry() {
@@ -83,13 +84,12 @@ function ProtectedCreatorRoute({ component: Component }: { component: React.Comp
     return <Redirect to="/login" />;
   }
 
-  // Admin MUST NEVER enter creator hub
-  if (user.role === "admin") {
-    return <Redirect to="/admin" />;
-  }
-
   if (user.role === "sponsor") {
     return <Redirect to="/sponsor" />;
+  }
+
+  if (user.role === "admin") {
+    return <Redirect to="/" />;
   }
 
   return <Component />;
@@ -111,9 +111,12 @@ function ProtectedSponsorRoute({ component: Component }: { component: React.Comp
     return <Redirect to="/login" />;
   }
 
-  // Admin MUST NEVER enter sponsor hub
+  if (user.role === "creator") {
+    return <Redirect to="/dashboard" />;
+  }
+
   if (user.role === "admin") {
-    return <Redirect to="/admin" />;
+    return <Redirect to="/" />;
   }
 
   return <Component />;
@@ -169,6 +172,7 @@ function Router() {
       {/* Public Marketplace Homepage */}
       <Route path="/" component={RootEntry} />
       <Route path="/home" component={HomePage} />
+      <Route path="/creators" component={CreatorDirectory} />
       
       {/* In-app About & Help Section (Contains previous landing page info) */}
       <Route path="/about" component={AboutMingree} />

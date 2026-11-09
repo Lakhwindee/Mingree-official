@@ -59,7 +59,7 @@ export default function Dashboard() {
   });
 
   if (activeUser?.role === "admin") {
-    return <Redirect to="/admin" />;
+    return <Redirect to="/" />;
   }
 
   if (!activeUser) {

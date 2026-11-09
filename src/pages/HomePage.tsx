@@ -276,6 +276,9 @@ export default function HomePage() {
 
           {/* Desktop Navigation Links */}
           <nav className="hidden lg:flex items-center gap-8 text-sm font-semibold text-slate-600">
+            <Link href="/creators" className="hover:text-rose-600 transition-colors font-bold text-rose-600">
+              Creator Directory
+            </Link>
             <a href="#trending" className="hover:text-rose-600 transition-colors">
               Trending Creators
             </a>
@@ -345,6 +348,13 @@ export default function HomePage() {
         {mobileMenuOpen && (
           <div className="lg:hidden border-b border-slate-200 bg-white px-4 pt-3 pb-6 space-y-4 shadow-lg">
             <nav className="flex flex-col space-y-3 text-sm font-semibold text-slate-700">
+              <Link
+                href="/creators"
+                onClick={() => setMobileMenuOpen(false)}
+                className="py-1.5 text-rose-600 font-bold"
+              >
+                Creator Directory
+              </Link>
               <a
                 href="#trending"
                 onClick={() => setMobileMenuOpen(false)}
@@ -578,7 +588,7 @@ export default function HomePage() {
                 {/* Protected Booking CTA */}
                 <div className="pt-1">
                   <Link
-                    href="/sponsor/create-campaign/manual"
+                    href={user && user.role === "sponsor" ? "/sponsor/create-campaign/manual" : "/creators"}
                     className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm shadow-lg shadow-rose-600/25 transition"
                   >
                     <Lock className="w-4 h-4 text-white" />
@@ -647,7 +657,7 @@ export default function HomePage() {
 
             <div className="flex items-center gap-2">
               <Link
-                href="/sponsor/create-campaign/manual"
+                href="/creators"
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-slate-300 text-slate-800 font-bold text-xs hover:bg-slate-50 shadow-sm transition"
               >
                 View Full Creator Directory
@@ -731,7 +741,7 @@ export default function HomePage() {
 
                 {/* Booking Button */}
                 <Link
-                  href="/sponsor/create-campaign/manual"
+                  href={user && user.role === "sponsor" ? `/sponsor/create-campaign/manual?creatorId=${c.id}` : "/creators"}
                   className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition"
                 >
                   <span>Book Creator</span>
@@ -1002,6 +1012,11 @@ export default function HomePage() {
               </div>
               <ul className="space-y-2 text-xs font-semibold">
                 <li>
+                  <Link href="/creators" className="hover:text-rose-600 transition font-bold text-slate-900">
+                    Creator Directory
+                  </Link>
+                </li>
+                <li>
                   <a href="#trending" className="hover:text-rose-600 transition">
                     Trending Creators
                   </a>
@@ -1012,8 +1027,8 @@ export default function HomePage() {
                   </a>
                 </li>
                 <li>
-                  <Link href="/sponsor/create-campaign/manual" className="hover:text-rose-600 transition">
-                    Create Campaign
+                  <Link href="/creators" className="hover:text-rose-600 transition">
+                    Find Creators
                   </Link>
                 </li>
               </ul>
