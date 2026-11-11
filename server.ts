@@ -39,6 +39,7 @@ import {
   getSecurityAuditLogs,
   getAllIdentities,
   unlockOrTransferIdentity,
+  syncSecurityStateFromDb,
 } from "./server/instagramSecurity";
 
 import {
@@ -49,6 +50,7 @@ import {
   adjustNegotiatedEscrow,
   getUserTransactionsList,
   createPaymentOrder,
+  getPaymentOrder,
   processOrderPaymentSuccess,
   verifyCashfreeSignature,
   submitUpiTopup,
@@ -283,6 +285,7 @@ app.use("/api", async (req, res, next) => {
   try {
     await ensureSchemaInitialized();
     await ensureWorkspacesLoaded();
+    await syncSecurityStateFromDb();
   } catch {}
   next();
 });
@@ -387,26 +390,47 @@ if (oauthCleanupTimer && typeof oauthCleanupTimer.unref === "function") {
 }
 
 
-// Path for persisted settings
-const SETTINGS_FILE = path.join(process.cwd(), "settings.json");
+// Application Settings (persisted in PostgreSQL app_config, cached in memory; never writes settings.json to disk)
 let inMemorySettings: Record<string, string> = {};
+let settingsHydratedFromDb = false;
+
+async function hydrateSettingsFromDb(): Promise<void> {
+  if (!isDatabaseConfigured || settingsHydratedFromDb) return;
+  try {
+    const res = await pool.query(`SELECT key, value FROM app_config`);
+    for (const row of res.rows) {
+      if (row.key && typeof row.value === "string") {
+        inMemorySettings[row.key] = row.value;
+      }
+    }
+    settingsHydratedFromDb = true;
+  } catch {
+    // ignore if table not initialized yet
+  }
+}
 
 function loadSettings(): Record<string, string> {
-  if (Object.keys(inMemorySettings).length === 0) {
-    try {
-      if (fs.existsSync(SETTINGS_FILE)) {
-        inMemorySettings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
-      }
-    } catch {}
+  if (isDatabaseConfigured && !settingsHydratedFromDb) {
+    hydrateSettingsFromDb().catch(() => {});
   }
   return inMemorySettings;
 }
 
 function saveSettings(settings: Record<string, string>) {
   inMemorySettings = { ...settings };
-  try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(inMemorySettings, null, 2));
-  } catch {}
+  if (isDatabaseConfigured) {
+    for (const [k, v] of Object.entries(inMemorySettings)) {
+      if (typeof v === "string") {
+        pool
+          .query(
+            `INSERT INTO app_config (key, value) VALUES ($1, $2)
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+            [k, v]
+          )
+          .catch((err: any) => console.warn("[SETTINGS DB SAVE WARN]", err?.message));
+      }
+    }
+  }
 }
 
 function getMinInstagramFollowers(): number {
@@ -415,7 +439,7 @@ function getMinInstagramFollowers(): number {
 
 function getEmailCredentials(): { user: string; pass: string } | null {
   const user = process.env.GMAIL_USER || inMemorySettings.gmail_user || "";
-  const pass = process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "";
+  const pass = process.env.GMAIL_APP_PASSWORD || "";
 
   if (user && pass) {
     return { user: user.trim(), pass: pass.trim() };
@@ -423,51 +447,60 @@ function getEmailCredentials(): { user: string; pass: string } | null {
   return null;
 }
 
-// In-memory OTP Store (email -> { otpHash, expiresAt, attempts, name })
+// Secure Expiring OTP Store (PostgreSQL email_otps + TTL in-memory cache; never writes /tmp/mingree_otp_store.json)
 interface StoredOtp {
   otpHash: string;
   expiresAt: number;
   attempts: number;
   name?: string;
 }
-const OTP_STORE_FILE = "/tmp/mingree_otp_store.json";
 
-function loadPersistentOtpStore(): Map<string, StoredOtp> {
-  try {
-    if (fs.existsSync(OTP_STORE_FILE)) {
-      const raw = fs.readFileSync(OTP_STORE_FILE, "utf-8");
-      const obj = JSON.parse(raw);
-      return new Map(Object.entries(obj));
+const otpStore = new Map<string, StoredOtp>();
+
+const otpCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of otpStore.entries()) {
+    if (now > val.expiresAt) {
+      otpStore.delete(key);
     }
-  } catch {}
-  return new Map();
-}
-
-function savePersistentOtpStore(map: Map<string, StoredOtp>) {
-  try {
-    const obj = Object.fromEntries(map.entries());
-    fs.writeFileSync(OTP_STORE_FILE, JSON.stringify(obj), "utf-8");
-  } catch {}
-}
-
-const otpStore = loadPersistentOtpStore();
-
-function setOtpRecord(email: string, data: StoredOtp) {
-  otpStore.set(email, data);
-  savePersistentOtpStore(otpStore);
-}
-
-function getOtpRecord(email: string): StoredOtp | undefined {
-  if (!otpStore.has(email)) {
-    const reloaded = loadPersistentOtpStore();
-    if (reloaded.has(email)) return reloaded.get(email);
   }
-  return otpStore.get(email);
+  if (isDatabaseConfigured) {
+    pool.query(`DELETE FROM email_otps WHERE expires_at < now()`).catch(() => {});
+  }
+}, 5 * 60 * 1000);
+if (otpCleanupTimer && typeof otpCleanupTimer.unref === "function") {
+  otpCleanupTimer.unref();
 }
 
-function deleteOtpRecord(email: string) {
-  otpStore.delete(email);
-  savePersistentOtpStore(otpStore);
+function setOtpRecord(identifier: string, data: StoredOtp) {
+  otpStore.set(identifier, data);
+  if (isDatabaseConfigured) {
+    pool
+      .query(
+        `INSERT INTO email_otps (email, purpose, otp_hash, expires_at, attempts)
+         VALUES ($1, 'signup', $2, to_timestamp($3 / 1000.0), $4)
+         ON CONFLICT (email, purpose) DO UPDATE
+         SET otp_hash = EXCLUDED.otp_hash, expires_at = EXCLUDED.expires_at, attempts = EXCLUDED.attempts`,
+        [identifier, data.otpHash, data.expiresAt, data.attempts]
+      )
+      .catch(() => {});
+  }
+}
+
+function getOtpRecord(identifier: string): StoredOtp | undefined {
+  const rec = otpStore.get(identifier);
+  if (rec && Date.now() > rec.expiresAt) {
+    otpStore.delete(identifier);
+    return undefined;
+  }
+  return rec;
+}
+
+function deleteOtpRecord(identifier: string) {
+  otpStore.delete(identifier);
+  if (isDatabaseConfigured) {
+    pool.query(`DELETE FROM email_otps WHERE email = $1`, [identifier]).catch(() => {});
+  }
 }
 
 // In-memory set of emails that successfully completed OTP verification for registration
@@ -592,7 +625,7 @@ function isEmailVerifiedByToken(token: string | undefined, email: string): boole
 // Send SMS OTP helper (Fast2SMS / Twilio / Simulation)
 async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
-  const fast2smsKey = process.env.FAST2SMS_API_KEY || "DDHm0bUKmxAQnxbQ2wcSXJQF76BpoUpbwgLlcv6KaqU7REOTF8EFWiYZ1TIjhMWaGSl7bzyBP2dFCvl6";
+  const fast2smsKey = (process.env.FAST2SMS_API_KEY || "").trim();
 
   if (fast2smsKey) {
     try {
@@ -710,7 +743,6 @@ app.post("/api/auth/send-otp", async (req, res) => {
     message: smsSent ? `SMS OTP sent successfully to +91 ${cleanPhone}` : `OTP generated successfully`,
     smsSent,
     otpToken,
-    devOtp: rawOtp,
     expiresIn: 600,
   });
 });
@@ -830,7 +862,6 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   return res.json({
     message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code generated`,
     emailConfigured: emailSent,
-    devOtp: emailSent ? undefined : rawOtp,
     expiresIn: 600,
   });
 });
@@ -1192,18 +1223,19 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
   }
 });
 
-// Helper to get Instagram Meta OAuth credentials securely from process.env or settings
+// Helper to get Instagram Meta OAuth credentials securely from process.env
 function getInstagramCredentials(): { appId: string; appSecret: string } {
   const settings = typeof loadSettings === "function" ? loadSettings() : ({} as any);
-  const appId = (process.env.INSTAGRAM_APP_ID || settings?.instagram_app_id || "3167123270152518").trim();
-  const appSecret = (process.env.INSTAGRAM_APP_SECRET || settings?.instagram_app_secret || "a80adcabcc62abb2e66c3d1048a50e76").trim();
+  const appId = (process.env.INSTAGRAM_APP_ID || settings?.instagram_app_id || "").trim();
+  const appSecret = (process.env.INSTAGRAM_APP_SECRET || "").trim();
   return { appId, appSecret };
 }
 
 // Compute official Meta OAuth Redirect / Callback URI from process.env.APP_URL only
-function getInstagramRedirectUri(): string {
+function getInstagramRedirectUri(allowEmpty = false): string {
   const appUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
   if (!appUrl) {
+    if (allowEmpty) return "";
     throw new Error("APP_URL is not set");
   }
   const redirectUri = `${appUrl}/api/instagram/callback`;
@@ -1263,51 +1295,12 @@ const SECRET_KEYS_SET = new Set([
   "rapidapi_secret",
 ]);
 
-// Admin API Keys - Get
-app.get("/api/admin/api-keys", (req, res) => {
-  const { appId, appSecret } = getInstagramCredentials();
-  res.json({
-    gmail_user: process.env.GMAIL_USER || "",
-    gmail_app_password: process.env.GMAIL_APP_PASSWORD ? "••••••••••••••••" : "",
-    cashfree_app_id: process.env.CASHFREE_APP_ID || "",
-    cashfree_secret_key: process.env.CASHFREE_SECRET_KEY ? "••••••••••••••••" : "",
-    instagram_app_id: appId,
-    instagram_app_secret: appSecret ? "••••••••••••••••" : "",
-    instagram_redirect_uri: getInstagramRedirectUri(),
-    min_instagram_followers: getMinInstagramFollowers(),
-    rapidapi_key: process.env.RAPIDAPI_KEY ? "••••••••••••••••" : "",
-  });
-});
-
 // Instagram public requirements endpoint
 app.get("/api/instagram/requirements", (req, res) => {
   res.json({
     minFollowers: getMinInstagramFollowers(),
-    redirectUri: getInstagramRedirectUri(),
+    redirectUri: getInstagramRedirectUri(true),
   });
-});
-
-// Admin API Keys - Save
-app.post("/api/admin/api-keys", (req, res) => {
-  const { key, value } = req.body;
-  if (!key) {
-    return res.status(400).json({ error: "Key is required" });
-  }
-
-  // Never write secrets to disk
-  if (SECRET_KEYS_SET.has(String(key).toLowerCase())) {
-    return res.status(400).json({ 
-      error: "Secret values cannot be written to disk. Please configure secret keys via environment variables (process.env)." 
-    });
-  }
-
-  const settings = loadSettings();
-  if (typeof value === "string" && !value.startsWith("••••")) {
-    settings[key] = value || "";
-    saveSettings(settings);
-    console.log(`[SETTINGS] Updated non-secret setting in memory: ${key}`);
-  }
-  return res.json({ success: true, key });
 });
 
 // Auth Rate Limiting Middleware
@@ -1366,33 +1359,48 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
   const token =
     req.cookies?.[COOKIE_NAME] ||
     (req.headers.authorization?.startsWith("Bearer ")
-      ? req.headers.authorization.slice(7)
+      ? req.headers.authorization.slice(7).trim()
       : null);
 
-  const headerUserId = req.headers["x-user-id"] ? Number(req.headers["x-user-id"]) : null;
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized: Authentication token required" });
+  }
 
-  let targetUserId: number | null = headerUserId && !isNaN(headerUserId) ? headerUserId : null;
-  let targetUserEmail: string | null = null;
+  let decoded: { id: number; email: string; role: string; [key: string]: any };
+  try {
+    decoded = jwt.verify(token, JWT_SECRET) as {
+      id: number;
+      email: string;
+      role: string;
+    };
+  } catch {
+    return res.status(401).json({ error: "Unauthorized: Invalid or expired authentication token" });
+  }
 
-  if (!targetUserId && token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as {
-        id: number;
-        email: string;
-        role: string;
-      };
-      if (decoded?.id) targetUserId = Number(decoded.id);
-      if (decoded?.email) targetUserEmail = decoded.email;
-    } catch {
-      // Token expired or invalid, fall back to headerUserId or registeredUsers
+  const targetUserId = decoded?.id ? Number(decoded.id) : null;
+  const targetUserEmail = decoded?.email ? String(decoded.email).toLowerCase().trim() : null;
+
+  if (!targetUserId || isNaN(targetUserId)) {
+    return res.status(401).json({ error: "Unauthorized: Invalid authentication token payload" });
+  }
+
+  // Never trust client-supplied x-user-id header without matching authenticated token
+  const rawHeaderUserId = req.headers["x-user-id"];
+  if (rawHeaderUserId !== undefined && rawHeaderUserId !== null && String(rawHeaderUserId).trim() !== "") {
+    const headerUserId = Number(rawHeaderUserId);
+    if (isNaN(headerUserId) || (headerUserId !== targetUserId && decoded.role !== "admin")) {
+      return res.status(403).json({ error: "Forbidden: Client-supplied x-user-id does not match authenticated user" });
     }
   }
 
   let user: any = null;
 
-  if (targetUserId) {
+  if (isDatabaseConfigured) {
     try {
-      const dbRes = await pool.query("SELECT id, email, password_hash, name, role, email_verified, status, company_name FROM users WHERE id = $1", [targetUserId]);
+      const dbRes = await pool.query(
+        "SELECT id, email, password_hash, name, role, email_verified, status, company_name, created_at FROM users WHERE id = $1",
+        [targetUserId]
+      );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = 0;
@@ -1404,7 +1412,10 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
 
         if (row.role === "creator") {
           try {
-            const cpRes = await pool.query("SELECT username, followers, median_views, access_token_enc, instagram_user_id, tier_label, status FROM creator_profiles WHERE user_id = $1", [row.id]);
+            const cpRes = await pool.query(
+              "SELECT username, followers, median_views, access_token_enc, instagram_user_id, tier_label, status FROM creator_profiles WHERE user_id = $1",
+              [row.id]
+            );
             if (cpRes.rows.length > 0) {
               const cp = cpRes.rows[0];
               if (cp.username) instagramUsername = cp.username;
@@ -1453,28 +1464,20 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     } catch {
       // Fall through to memory check if DB query had an issue
     }
-
-    if (!user) {
-      user = registeredUsers.find((u) => u.id === targetUserId || (targetUserEmail && u.email?.toLowerCase() === targetUserEmail.toLowerCase()));
-    }
-  }
-
-  if (!user && targetUserEmail) {
-    user = registeredUsers.find((u) => u.email?.toLowerCase() === targetUserEmail?.toLowerCase());
-  }
-
-  // Fallback to active registered user if available in memory
-  if (!user && registeredUsers.length > 0) {
-    const sponsorUser = registeredUsers.find(u => u.role === "sponsor" || u.companyName);
-    if (sponsorUser) {
-      user = sponsorUser;
-    } else {
-      user = registeredUsers[0];
-    }
   }
 
   if (!user) {
-    return res.status(401).json({ error: "Unauthorized: Authentication required" });
+    user = registeredUsers.find(
+      (u) => Number(u.id) === targetUserId || (targetUserEmail && u.email?.toLowerCase() === targetUserEmail)
+    );
+  }
+
+  if (!user) {
+    return res.status(401).json({ error: "Unauthorized: User account not found" });
+  }
+
+  if (user.status === "blocked") {
+    return res.status(403).json({ error: "Forbidden: Account is blocked" });
   }
 
   // Elevate dedicated admin email automatically if needed
@@ -1509,6 +1512,45 @@ export function requireRole(...allowedRoles: string[]) {
 
 // Protect ALL /api/admin/* endpoints
 app.use("/api/admin", requireAuth, requireRole("admin"));
+
+// Admin API Keys - Get
+app.get("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) => {
+  const { appId, appSecret } = getInstagramCredentials();
+  res.json({
+    gmail_user: process.env.GMAIL_USER || "",
+    gmail_app_password: process.env.GMAIL_APP_PASSWORD ? "••••••••••••••••" : "",
+    cashfree_app_id: process.env.CASHFREE_APP_ID || "",
+    cashfree_secret_key: process.env.CASHFREE_SECRET_KEY ? "••••••••••••••••" : "",
+    instagram_app_id: appId,
+    instagram_app_secret: appSecret ? "••••••••••••••••" : "",
+    instagram_redirect_uri: getInstagramRedirectUri(true),
+    min_instagram_followers: getMinInstagramFollowers(),
+    rapidapi_key: process.env.RAPIDAPI_KEY ? "••••••••••••••••" : "",
+  });
+});
+
+// Admin API Keys - Save
+app.post("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) => {
+  const { key, value } = req.body;
+  if (!key) {
+    return res.status(400).json({ error: "Key is required" });
+  }
+
+  // Never write secrets to disk
+  if (SECRET_KEYS_SET.has(String(key).toLowerCase())) {
+    return res.status(400).json({
+      error: "Secret values cannot be written to disk. Please configure secret keys via environment variables (process.env).",
+    });
+  }
+
+  const settings = loadSettings();
+  if (typeof value === "string" && !value.startsWith("••••")) {
+    settings[key] = value || "";
+    saveSettings(settings);
+    console.log(`[SETTINGS] Updated non-secret setting: ${key}`);
+  }
+  return res.json({ success: true, key });
+});
 
 // Registered Users In-Memory Store (Step 3 migrates directly to PostgreSQL)
 
@@ -1676,28 +1718,29 @@ const defaultAccounts = [
     status: "active",
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 20,
+    email: "sponsor@mingree.in",
+    passwordHash: bcrypt.hashSync("sponsor123", 10),
+    name: "Brand Partner",
+    displayName: "Brand Partner",
+    companyName: "Brand Partner",
+    role: "sponsor",
+    handle: "@brandpartner",
+    avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
+    avatarUrl: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
+    tier: "Brand Partner",
+    city: "Mumbai",
+    isEmailVerified: true,
+    status: "active",
+    createdAt: new Date().toISOString(),
+  },
 ];
-
-const USERS_STORE_PATH = path.join(process.cwd(), "data", "users_store.json");
 
 let registeredUsers: any[] = [...defaultAccounts];
 (global as any).registeredUsers = registeredUsers;
 
 function loadRegisteredUsers() {
-  try {
-    if (fs.existsSync(USERS_STORE_PATH)) {
-      const raw = fs.readFileSync(USERS_STORE_PATH, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        registeredUsers = parsed;
-        (global as any).registeredUsers = registeredUsers;
-      }
-    }
-  } catch (err: any) {
-    console.warn("[USERS STORE LOAD WARN]", err?.message || err);
-  }
-
-  // Ensure default accounts exist if not already present
   for (const acc of defaultAccounts) {
     const existing = registeredUsers.find((u) => u.email.toLowerCase() === acc.email.toLowerCase() || u.id === acc.id);
     if (!existing) {
@@ -1705,7 +1748,6 @@ function loadRegisteredUsers() {
     }
   }
 
-  // Migrate plain text passwords to bcrypt hashes
   for (const user of registeredUsers) {
     if (user.password && !user.passwordHash) {
       user.passwordHash = bcrypt.hashSync(user.password, 10);
@@ -1713,7 +1755,6 @@ function loadRegisteredUsers() {
     }
   }
 
-  // Ensure Admin account exists and uses ADMIN_EMAIL & ADMIN_PASSWORD
   let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL || u.role === "admin");
   if (!adminUser) {
     adminUser = {
@@ -1726,6 +1767,7 @@ function loadRegisteredUsers() {
       avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
       tier: "Admin",
       isEmailVerified: true,
+      status: "active",
     };
     registeredUsers.push(adminUser);
   } else {
@@ -1739,17 +1781,45 @@ function loadRegisteredUsers() {
 }
 
 function saveRegisteredUsers() {
-  try {
-    const dir = path.dirname(USERS_STORE_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(USERS_STORE_PATH, JSON.stringify(registeredUsers, null, 2), "utf-8");
-  } catch (err: any) {
-    console.warn("[USERS STORE SAVE WARN]", err?.message || err);
+  (global as any).registeredUsers = registeredUsers;
+  if (!isDatabaseConfigured) return;
+  for (const u of registeredUsers) {
+    if (!u || !u.email || !u.passwordHash) continue;
+    pool
+      .query(
+        `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, company_name, city, phone, avatar, avatar_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (email) DO UPDATE SET
+           password_hash = EXCLUDED.password_hash,
+           name = EXCLUDED.name,
+           role = EXCLUDED.role,
+           email_verified = EXCLUDED.email_verified,
+           status = EXCLUDED.status,
+           company_name = EXCLUDED.company_name,
+           city = EXCLUDED.city,
+           phone = EXCLUDED.phone,
+           avatar = EXCLUDED.avatar,
+           avatar_url = EXCLUDED.avatar_url`,
+        [
+          Number(u.id),
+          u.email,
+          u.passwordHash,
+          u.name || "",
+          u.role || "creator",
+          Boolean(u.isEmailVerified),
+          u.status || "active",
+          u.companyName || null,
+          u.city || null,
+          u.phone || null,
+          u.avatar || null,
+          u.avatarUrl || u.avatar || null,
+        ]
+      )
+      .catch(() => {});
   }
 }
 
 loadRegisteredUsers();
-saveRegisteredUsers();
 
 // Export role middleware helpers
 export const requireAdmin = requireRole("admin");
@@ -6222,20 +6292,20 @@ app.all("/api/instagram/data-deletion", (req, res) => {
 // ================= ADMIN SECURITY & ANTI-ABUSE AUDIT APIS =================
 
 // GET /api/admin/security/logs - Get recent security audit logs
-app.get("/api/admin/security/logs", (req, res) => {
+app.get("/api/admin/security/logs", requireAuth, requireRole("admin"), (req, res) => {
   const limit = req.query.limit ? Number(req.query.limit) : 100;
   const logs = getSecurityAuditLogs(limit);
   res.json({ logs });
 });
 
 // GET /api/admin/security/identities - Get all registered Instagram identities & bindings
-app.get("/api/admin/security/identities", (req, res) => {
+app.get("/api/admin/security/identities", requireAuth, requireRole("admin"), (req, res) => {
   const identities = getAllIdentities();
   res.json({ identities });
 });
 
 // GET /api/admin/security/stats - High-level security metrics
-app.get("/api/admin/security/stats", (req, res) => {
+app.get("/api/admin/security/stats", requireAuth, requireRole("admin"), (req, res) => {
   const logs = getSecurityAuditLogs(500);
   const identities = getAllIdentities();
   
@@ -6258,7 +6328,7 @@ app.get("/api/admin/security/stats", (req, res) => {
 });
 
 // POST /api/admin/security/unlock-identity - Admin transfer or unlock an Instagram identity
-app.post("/api/admin/security/unlock-identity", (req, res) => {
+app.post("/api/admin/security/unlock-identity", requireAuth, requireRole("admin"), (req, res) => {
   const { instagramUserId, newMingreeUserId, reason } = req.body;
   if (!instagramUserId) {
     return res.status(400).json({ error: "Instagram User ID is required" });
@@ -6434,7 +6504,7 @@ app.get("/api/account/status", requireAuth, (req: AuthRequest, res) => {
 });
 
 // Admin endpoints
-app.get("/api/admin/stats", (req, res) => {
+app.get("/api/admin/stats", requireAuth, requireRole("admin"), (req, res) => {
   const campaigns = loadCampaigns();
   const reservations = loadReservations();
   const totalUsers = registeredUsers.length;
@@ -6895,7 +6965,7 @@ app.get(["/api/users/:id/transactions", "/api/transactions"], requireAuth, async
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const txs = getUserTransactionsList(targetId);
+  const txs = await getUserTransactionsList(targetId);
   return res.json(txs);
 });
 
@@ -6959,13 +7029,10 @@ app.post("/api/admin/upi-payments/:id/approve", requireAuth, requireRole("admin"
   }
 });
 
-const DEFAULT_CF_APP_ID = "1421910d2d5e9d84caef953e3ba0191241";
-const DEFAULT_CF_SECRET = ["cfsk", "ma", "prod", "9fc98793006196082b05a1a42c095623", "b63beb2a"].join("_");
-
 function getCashfreeCredentials() {
   const settings = loadSettings();
-  const appId = (process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || DEFAULT_CF_APP_ID).trim();
-  const secretKey = (process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || settings.cashfree_secret_key || DEFAULT_CF_SECRET).trim();
+  const appId = (process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "").trim();
+  const secretKey = (process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || "").trim();
   const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production" || secretKey.startsWith("cfsk_ma_prod_");
   return { appId, secretKey, isProd };
 }
@@ -7069,78 +7136,132 @@ app.post("/api/cashfree/verify", requireAuth, async (req: AuthRequest, res) => {
   }
 
   const cleanOrderId = String(orderId).trim();
-  const { appId, secretKey, isProd } = getCashfreeCredentials();
 
   try {
-    let paymentVerified = false;
-
-    // Direct REST API verification if credentials are provided
-    if (appId && secretKey) {
-      const baseUrl = isProd ? `https://api.cashfree.com/pg/orders/${cleanOrderId}` : `https://sandbox.cashfree.com/pg/orders/${cleanOrderId}`;
-      const cfResponse = await fetch(baseUrl, {
-        method: "GET",
-        headers: {
-          "x-client-id": appId,
-          "x-client-secret": secretKey,
-          "x-api-version": "2023-08-01",
-        },
+    // 1. Require existing stored order & verify user ownership before calling Cashfree
+    const storedOrder = await getPaymentOrder(cleanOrderId);
+    if (!storedOrder) {
+      return res.status(404).json({
+        success: false,
+        orderId: cleanOrderId,
+        error: "Payment order not found",
       });
-
-      if (cfResponse.ok) {
-        const cfData = await cfResponse.json();
-        const cfStatus = String(cfData.order_status || "").toUpperCase();
-        if (cfStatus === "PAID" || cfStatus === "SUCCESS") {
-          paymentVerified = true;
-        } else if (cfStatus === "ACTIVE" || cfStatus === "PENDING") {
-          return res.status(400).json({
-            success: false,
-            orderId: cleanOrderId,
-            status: "PENDING",
-            error: "Payment is still pending on Cashfree. Please complete payment or try again.",
-          });
-        } else {
-          return res.status(400).json({
-            success: false,
-            orderId: cleanOrderId,
-            status: cfStatus,
-            error: `Payment failed or status is ${cfStatus} on Cashfree.`,
-          });
-        }
-      } else {
-        console.warn(`[CASHFREE VERIFY WARNING] Cashfree API status ${cfResponse.status}. Assuming sandbox verification.`);
-        paymentVerified = true;
-      }
-    } else {
-      // Sandbox mode verification
-      paymentVerified = true;
     }
 
-    if (paymentVerified) {
-      const result = await processOrderPaymentSuccess(cleanOrderId, {
-        gstin: req.user?.gstNumber || undefined,
-        pan: req.user?.pan || undefined,
-        billingAddress: req.user?.city ? `${req.user.city}, India` : undefined,
+    if (Number(storedOrder.userId) !== Number(req.user!.id) && req.user!.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        orderId: cleanOrderId,
+        error: "Forbidden: Order does not belong to authenticated user",
       });
+    }
 
+    // 2. Idempotency check if already marked paid
+    if (storedOrder.status === "paid") {
+      const wallet = await getOrCreateWallet(storedOrder.userId);
       return res.json({
         success: true,
         orderId: cleanOrderId,
         status: "PAID",
-        alreadyProcessed: result.alreadyProcessed,
-        walletCredit: result.order.amount,
-        newBalance: result.newBalance,
-        purpose: result.order.purpose,
+        alreadyProcessed: true,
+        walletCredit: parseFloat(storedOrder.amount),
+        newBalance: wallet.balance,
+        purpose: storedOrder.purpose,
       });
     }
 
-    return res.status(400).json({ error: "Cashfree payment verification failed" });
+    // 3. Require configured Cashfree API credentials — never auto-credit when unconfigured
+    const { appId, secretKey, isProd } = getCashfreeCredentials();
+    if (!appId || !secretKey) {
+      return res.status(503).json({
+        success: false,
+        orderId: cleanOrderId,
+        error: "Cashfree API credentials are not configured",
+      });
+    }
+
+    const baseUrl = isProd
+      ? `https://api.cashfree.com/pg/orders/${encodeURIComponent(cleanOrderId)}`
+      : `https://sandbox.cashfree.com/pg/orders/${encodeURIComponent(cleanOrderId)}`;
+
+    const cfResponse = await fetch(baseUrl, {
+      method: "GET",
+      headers: {
+        "x-client-id": appId,
+        "x-client-secret": secretKey,
+        "x-api-version": "2023-08-01",
+      },
+    });
+
+    if (!cfResponse.ok) {
+      const status = cfResponse.status === 404 ? 404 : 400;
+      return res.status(status).json({
+        success: false,
+        orderId: cleanOrderId,
+        error: cfResponse.status === 404
+          ? "Order not found on Cashfree"
+          : `Cashfree verification failed with HTTP ${cfResponse.status}`,
+      });
+    }
+
+    const cfData = await cfResponse.json();
+    const cfOrderId = String(cfData.order_id || "").trim();
+    const cfAmount = Number(cfData.order_amount);
+    const cfStatus = String(cfData.order_status || "").toUpperCase();
+    const expectedAmount = parseFloat(storedOrder.amount);
+
+    if (cfOrderId !== cleanOrderId) {
+      return res.status(400).json({
+        success: false,
+        orderId: cleanOrderId,
+        error: "Cashfree response order_id mismatch",
+      });
+    }
+
+    if (isNaN(cfAmount) || Math.abs(cfAmount - expectedAmount) > 0.01) {
+      return res.status(400).json({
+        success: false,
+        orderId: cleanOrderId,
+        error: `Cashfree payment amount (₹${cfAmount}) does not match stored order amount (₹${expectedAmount.toFixed(2)})`,
+      });
+    }
+
+    if (cfStatus !== "PAID" && cfStatus !== "SUCCESS") {
+      return res.status(400).json({
+        success: false,
+        orderId: cleanOrderId,
+        status: cfStatus || "UNKNOWN",
+        error: cfStatus === "ACTIVE" || cfStatus === "PENDING"
+          ? "Payment is still pending on Cashfree. Please complete payment or try again."
+          : `Payment failed or status is ${cfStatus || "UNKNOWN"} on Cashfree.`,
+      });
+    }
+
+    const result = await processOrderPaymentSuccess(cleanOrderId, {
+      gstin: req.user?.gstNumber || undefined,
+      pan: req.user?.pan || undefined,
+      billingAddress: req.user?.city ? `${req.user.city}, India` : undefined,
+      expectedUserId: storedOrder.userId,
+      expectedAmount: cfAmount,
+    });
+
+    return res.json({
+      success: true,
+      orderId: cleanOrderId,
+      status: "PAID",
+      alreadyProcessed: result.alreadyProcessed,
+      walletCredit: result.order.amount,
+      newBalance: result.newBalance,
+      purpose: result.order.purpose,
+    });
   } catch (err: any) {
     console.error("[CASHFREE VERIFY ERROR]", err);
-    return res.status(500).json({ error: err?.message || "Failed to verify Cashfree payment" });
+    const status = err?.status || 500;
+    return res.status(status).json({ error: err?.message || "Failed to verify Cashfree payment" });
   }
 });
 
-// 3. POST /api/cashfree/webhook - Cashfree webhook with signature verification
+// 3. POST /api/cashfree/webhook - Cashfree webhook with HMAC-SHA256 signature verification
 app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Response) => {
   const { secretKey } = getCashfreeCredentials();
 
@@ -7148,16 +7269,14 @@ app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Resp
   const signature = String(req.headers["x-webhook-signature"] || req.headers["x-cashfree-signature"] || "");
   const timestamp = String(req.headers["x-webhook-timestamp"] || req.headers["x-cashfree-timestamp"] || "");
 
-  console.log(`[CASHFREE WEBHOOK] Webhook received. Signature present: ${Boolean(signature)}`);
+  if (!secretKey || !signature || !timestamp) {
+    return res.status(401).json({ error: "Missing webhook signature, timestamp, or gateway configuration" });
+  }
 
-  // Verify HMAC-SHA256 signature if secretKey and signature headers are provided
-  if (secretKey && signature && timestamp) {
-    const isValidSig = verifyCashfreeSignature(rawBodyBuffer, timestamp, signature, secretKey);
-    if (!isValidSig) {
-      console.warn("[CASHFREE WEBHOOK] Invalid webhook signature detected. Rejecting request.");
-      return res.status(400).json({ error: "Invalid webhook signature" });
-    }
-    console.log("[CASHFREE WEBHOOK] Signature verified successfully.");
+  const isValidSig = verifyCashfreeSignature(rawBodyBuffer, timestamp, signature, secretKey);
+  if (!isValidSig) {
+    console.warn("[CASHFREE WEBHOOK] Invalid webhook signature detected. Rejecting request.");
+    return res.status(400).json({ error: "Invalid webhook signature" });
   }
 
   try {
@@ -7167,6 +7286,7 @@ app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Resp
 
     const orderId = String(orderData?.order_id || orderData?.orderId || payload?.order_id || "").trim();
     const orderStatus = String(orderData?.order_status || paymentData?.payment_status || payload?.type || "").toUpperCase();
+    const orderAmount = orderData?.order_amount !== undefined ? Number(orderData.order_amount) : undefined;
 
     if (!orderId) {
       return res.status(200).json({ status: "ignored", reason: "No order_id found in webhook payload" });
@@ -7179,8 +7299,9 @@ app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Resp
       orderStatus === "PAYMENT_SUCCESS_WEBHOOK";
 
     if (isSuccess) {
-      const result = await processOrderPaymentSuccess(orderId);
-      console.log(`[CASHFREE WEBHOOK] Successfully processed order ${orderId}. Already processed: ${result.alreadyProcessed}`);
+      const result = await processOrderPaymentSuccess(orderId, {
+        expectedAmount: orderAmount,
+      });
       return res.json({
         success: true,
         orderId,
@@ -7189,11 +7310,11 @@ app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Resp
       });
     }
 
-    console.log(`[CASHFREE WEBHOOK] Order ${orderId} received status '${orderStatus}'. No wallet credit required.`);
     return res.json({ success: true, orderId, status: orderStatus, message: "Webhook acknowledged" });
   } catch (err: any) {
     console.error("[CASHFREE WEBHOOK ERROR]", err);
-    return res.status(500).json({ error: err?.message || "Internal webhook processing error" });
+    const status = err?.status || 500;
+    return res.status(status).json({ error: err?.message || "Internal webhook processing error" });
   }
 });
 

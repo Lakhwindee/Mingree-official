@@ -1,10 +1,5 @@
-import fs from "fs";
-import path from "path";
 import { lockEscrow, releaseEscrow, refundEscrow, getOrCreateWallet, adjustNegotiatedEscrow } from "./walletAndPayments";
 import { pool, isDatabaseConfigured } from "./db";
-
-const DATA_DIR = process.env.VERCEL ? "/tmp" : process.cwd();
-const CAMPAIGNS_STORE_FILE = path.join(DATA_DIR, "campaign_workspaces_v2.json");
 
 export interface BriefDiff {
   field: string;
@@ -307,27 +302,11 @@ export function getInitialSeedWorkspaces(): CampaignWorkspaceData[] {
   ];
 }
 
-// Load initial workspaces from disk file if available
-function loadWorkspacesFromDisk(): CampaignWorkspaceData[] {
-  try {
-    if (fs.existsSync(CAMPAIGNS_STORE_FILE)) {
-      const data = fs.readFileSync(CAMPAIGNS_STORE_FILE, "utf-8");
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
-  } catch (err: any) {
-    console.error("[WORKSPACES DISK LOAD ERROR]", err.message);
-  }
-  const seed = getInitialSeedWorkspaces();
-  try {
-    fs.writeFileSync(CAMPAIGNS_STORE_FILE, JSON.stringify(seed, null, 2));
-  } catch {}
-  return seed;
+function loadWorkspacesFromSeed(): CampaignWorkspaceData[] {
+  return getInitialSeedWorkspaces();
 }
 
-let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(loadWorkspacesFromDisk().map((c) => [c.id, c]));
+let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(loadWorkspacesFromSeed().map((c) => [c.id, c]));
 let adminSettingsTableReady = false;
 
 async function ensureAdminSettingsTable(): Promise<void> {
@@ -735,7 +714,7 @@ function normalizeWorkspaceRates(ws: CampaignWorkspaceData): CampaignWorkspaceDa
 
 export function loadAllWorkspaces(): CampaignWorkspaceData[] {
   if (workspacesCache.size === 0) {
-    const loaded = loadWorkspacesFromDisk();
+    const loaded = loadWorkspacesFromSeed();
     if (loaded.length > 0) {
       workspacesCache = new Map(loaded.map((c) => [c.id, normalizeWorkspaceRates(c)]));
     }
@@ -745,11 +724,6 @@ export function loadAllWorkspaces(): CampaignWorkspaceData[] {
 
 export async function saveAllWorkspaces(list: CampaignWorkspaceData[]): Promise<void> {
   workspacesCache = new Map(list.map((c) => [Number(c.id), c]));
-  try {
-    fs.writeFileSync(CAMPAIGNS_STORE_FILE, JSON.stringify(list, null, 2));
-  } catch (err: any) {
-    console.error("[WORKSPACES DISK SAVE ERROR]", err.message);
-  }
 
   if (isDatabaseConfigured) {
     try {

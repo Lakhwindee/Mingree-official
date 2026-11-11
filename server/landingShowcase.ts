@@ -1,5 +1,3 @@
-import path from "path";
-import fs from "fs";
 import { pool, isDatabaseConfigured } from "./db";
 
 export interface ShowcaseCreator {
@@ -51,7 +49,7 @@ export interface LandingShowcaseConfig {
   lastUpdated?: string;
 }
 
-const SHOWCASE_FILE = path.join(process.cwd(), "data", "landing_showcase.json");
+let memoryShowcaseConfig: LandingShowcaseConfig | null = null;
 
 export const DEFAULT_SHOWCASE_CREATORS: ShowcaseCreator[] = [
   {
@@ -226,10 +224,9 @@ export const DEFAULT_CONFIG: LandingShowcaseConfig = {
 };
 
 /**
- * Load Landing Showcase Config with DB first, JSON file fallback
+ * Load Landing Showcase Config with PostgreSQL first, in-memory fallback
  */
 export async function getLandingShowcaseConfig(): Promise<LandingShowcaseConfig> {
-  // 1. Try DB first
   if (isDatabaseConfigured) {
     try {
       const res = await pool.query(
@@ -237,48 +234,31 @@ export async function getLandingShowcaseConfig(): Promise<LandingShowcaseConfig>
       );
       if (res.rows.length > 0 && res.rows[0].value) {
         const val = typeof res.rows[0].value === "string" ? JSON.parse(res.rows[0].value) : res.rows[0].value;
-        return {
+        memoryShowcaseConfig = {
           ...DEFAULT_CONFIG,
           ...val,
         };
+        return memoryShowcaseConfig;
       }
     } catch (dbErr: any) {
       console.warn("[SHOWCASE DB READ]", dbErr.message);
     }
   }
 
-  // 2. Try file fallback
-  try {
-    if (fs.existsSync(SHOWCASE_FILE)) {
-      const raw = fs.readFileSync(SHOWCASE_FILE, "utf-8");
-      const parsed = JSON.parse(raw);
-      return {
-        ...DEFAULT_CONFIG,
-        ...parsed,
-      };
-    }
-  } catch {}
+  if (memoryShowcaseConfig) {
+    return memoryShowcaseConfig;
+  }
 
-  // 3. Return defaults
   return DEFAULT_CONFIG;
 }
 
 /**
- * Save Landing Showcase Config with DB & JSON file persistence
+ * Save Landing Showcase Config with PostgreSQL persistence
  */
 export async function saveLandingShowcaseConfig(config: LandingShowcaseConfig): Promise<LandingShowcaseConfig> {
   config.lastUpdated = new Date().toISOString();
+  memoryShowcaseConfig = { ...config };
 
-  // 1. Save to JSON file
-  try {
-    const dir = path.dirname(SHOWCASE_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SHOWCASE_FILE, JSON.stringify(config, null, 2), "utf-8");
-  } catch (fileErr: any) {
-    console.error("[SHOWCASE FILE WRITE ERROR]", fileErr.message);
-  }
-
-  // 2. Save to DB admin_settings
   if (isDatabaseConfigured) {
     try {
       await pool.query(

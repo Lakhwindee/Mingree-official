@@ -78,12 +78,21 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
   const shouldRelease = !client;
   try {
     const migrationPath = path.join(process.cwd(), "migrations", "001_init.sql");
+    const phase1MigrationPath = path.join(process.cwd(), "migrations", "002_phase1_consolidation.sql");
     let initSql = "";
     if (fs.existsSync(migrationPath)) {
       initSql = fs.readFileSync(migrationPath, "utf-8");
     }
     if (initSql) {
       await localClient.query(initSql);
+      if (fs.existsSync(phase1MigrationPath)) {
+        const phase1Sql = fs.readFileSync(phase1MigrationPath, "utf-8");
+        if (phase1Sql) {
+          await localClient.query(phase1Sql).catch((err) => {
+            console.warn("[DB PHASE1 MIGRATION WARN]", err?.message || err);
+          });
+        }
+      }
       await localClient.query(`
         ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS avatar_url text;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
@@ -113,7 +122,7 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
            OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
       `).catch(() => {});
       schemaInitialized = true;
-      console.log("[DB SCHEMA] Applied migrations/001_init.sql and purged demo accounts successfully.");
+      console.log("[DB SCHEMA] Applied migrations/001_init.sql and 002_phase1_consolidation.sql successfully.");
     }
   } catch (err: any) {
     console.error("[DB SCHEMA INIT ERROR]", err?.message || err);

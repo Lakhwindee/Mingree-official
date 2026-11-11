@@ -1,6 +1,4 @@
-import fs from "fs";
-import path from "path";
-import { pool } from "./db";
+import { pool, isDatabaseConfigured } from "./db";
 
 export interface InstagramIdentityRecord {
   instagramUserId: string;
@@ -55,59 +53,76 @@ interface RateLimitBucket {
   lockoutUntil: number;
 }
 
-const IDENTITIES_FILE = path.join(process.cwd(), "instagram_identities.json");
-const AUDIT_LOGS_FILE = path.join(process.cwd(), "security_audit_logs.json");
-
 // In-memory rate limiting map (IP / UserId -> Bucket)
 const rateLimitMap = new Map<string, RateLimitBucket>();
 
-// Helper to load identities
+// In-memory caches hydrated from PostgreSQL (never writes local JSON files to disk)
+const memoryIdentities: Record<string, InstagramIdentityRecord> = {};
+let memoryAuditLogs: SecurityAuditEvent[] = [];
+
 function loadIdentities(): Record<string, InstagramIdentityRecord> {
-  try {
-    if (fs.existsSync(IDENTITIES_FILE)) {
-      return JSON.parse(fs.readFileSync(IDENTITIES_FILE, "utf-8"));
-    }
-  } catch (err) {
-    console.error("[SECURITY] Failed to read identities file:", err);
-  }
-  return {};
+  return memoryIdentities;
 }
 
-// Helper to save identities
 function saveIdentities(identities: Record<string, InstagramIdentityRecord>) {
-  try {
-    fs.writeFileSync(IDENTITIES_FILE, JSON.stringify(identities, null, 2), "utf-8");
-  } catch (err: any) {
-    // On read-only filesystems (e.g., Vercel Serverless), ignore filesystem write errors
-    if (err?.code !== "EROFS") {
-      console.warn("[SECURITY] Ignored file write error in serverless environment:", err?.message || err);
-    }
-  }
+  Object.assign(memoryIdentities, identities);
 }
 
-// Helper to load audit logs
 function loadAuditLogs(): SecurityAuditEvent[] {
-  try {
-    if (fs.existsSync(AUDIT_LOGS_FILE)) {
-      return JSON.parse(fs.readFileSync(AUDIT_LOGS_FILE, "utf-8"));
-    }
-  } catch (err) {
-    console.error("[SECURITY] Failed to read audit logs file:", err);
-  }
-  return [];
+  return memoryAuditLogs;
 }
 
-// Helper to save audit logs
 function saveAuditLogs(logs: SecurityAuditEvent[]) {
+  memoryAuditLogs = logs.slice(0, 1000);
+}
+
+// Hydrate identities and security audit logs from PostgreSQL when database is configured
+export async function syncSecurityStateFromDb(): Promise<void> {
+  if (!isDatabaseConfigured) return;
   try {
-    // Keep last 1000 logs
-    const trimmed = logs.slice(0, 1000);
-    fs.writeFileSync(AUDIT_LOGS_FILE, JSON.stringify(trimmed, null, 2), "utf-8");
-  } catch (err: any) {
-    // On read-only filesystems (e.g., Vercel Serverless), ignore filesystem write errors
-    if (err?.code !== "EROFS") {
-      console.warn("[SECURITY] Ignored file write error in serverless environment:", err?.message || err);
+    const idRes = await pool.query(`SELECT * FROM instagram_identities`);
+    for (const row of idRes.rows) {
+      const igId = String(row.instagram_user_id);
+      memoryIdentities[igId] = {
+        instagramUserId: igId,
+        instagramUsername: row.username || "",
+        boundMingreeUserId: row.current_user_id ? Number(row.current_user_id) : 0,
+        firstBoundAt: row.first_bound_at ? new Date(row.first_bound_at).toISOString() : (row.linked_at ? new Date(row.linked_at).toISOString() : new Date().toISOString()),
+        lastBoundAt: row.last_bound_at ? new Date(row.last_bound_at).toISOString() : (row.linked_at ? new Date(row.linked_at).toISOString() : new Date().toISOString()),
+        lastFollowersCount: Number(row.last_followers_count || 0),
+        lastMediaCount: Number(row.last_media_count || 0),
+        isLocked: Boolean(row.is_locked),
+        lockoutUntil: row.lockout_until ? Number(row.lockout_until) : null,
+        lockoutReason: row.lockout_reason || null,
+        historicalMingreeUserIds: Array.isArray(row.historical_user_ids) ? row.historical_user_ids.map(Number) : [],
+        linkCount: Number(row.connect_count || 1),
+        disconnectCount: Number(row.disconnect_count || 0),
+        lastDisconnectedAt: row.unlinked_at ? new Date(row.unlinked_at).toISOString() : null,
+        suspiciousFlags: Array.isArray(row.suspicious_flags) ? row.suspicious_flags : [],
+        lastRiskScore: Number(row.last_risk_score || 0),
+      };
     }
+
+    const logRes = await pool.query(`SELECT * FROM security_audit_logs ORDER BY created_at DESC LIMIT 200`);
+    memoryAuditLogs = logRes.rows.map((r: any) => ({
+      id: `sec_${r.id}`,
+      timestamp: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+      event: r.event,
+      mingreeUserId: Number(r.user_id || 0),
+      instagramUsername: r.instagram_username || "",
+      instagramUserId: r.instagram_user_id || undefined,
+      riskScore: Number(r.risk_score || 0),
+      riskLevel: r.risk_level || (Number(r.risk_score || 0) >= 70 ? "HIGH" : Number(r.risk_score || 0) >= 40 ? "MEDIUM" : "LOW"),
+      riskFactors: Array.isArray(r.flags) ? r.flags : [],
+      followers: Number(r.followers || 0),
+      mediaCount: Number(r.media_count || 0),
+      ipAddress: r.ip || "127.0.0.1",
+      userAgent: r.user_agent || "",
+      decision: r.decision || "ALLOW",
+      details: r.details || "",
+    }));
+  } catch {
+    // ignore if table not ready yet
   }
 }
 
