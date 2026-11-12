@@ -115,12 +115,8 @@ export default function Signup() {
         setOtpToken(data.otpToken);
       }
 
-      if (data.devOtp) {
-        setDevOtpCode(String(data.devOtp));
-        toast.info(`Verification code: ${data.devOtp}`, { duration: 15000 });
-      }
       setOtp("");
-      const successMsg = data.message || `Verification code sent to +91 ${cleanPhone.slice(-10)} and ${cleanEmail}`;
+      const successMsg = data.message || `SMS verification code sent to +91 ${cleanPhone.slice(-10)}`;
       toast.success(successMsg);
 
       setStep("otp");
@@ -541,23 +537,9 @@ export default function Signup() {
               <div className="space-y-4">
                 <div className="rounded-lg bg-muted/50 p-3 text-center border border-border">
                   <p className="text-xs text-muted-foreground">
-                    Enter the 6-digit verification code for{" "}
+                    Enter the 6-digit SMS verification code sent to{" "}
                     <strong className="text-foreground font-mono">+91 {phone.replace(/[^0-9]/g, "").slice(-10)}</strong>
                   </p>
-                  {devOtpCode && (
-                    <div className="mt-2 pt-2 border-t border-border/60">
-                      <p className="text-xs font-semibold text-primary">
-                        Your Verification Code:{" "}
-                        <button
-                          type="button"
-                          onClick={() => setOtp(devOtpCode)}
-                          className="font-mono text-sm font-bold underline cursor-pointer px-1.5 py-0.5 rounded bg-primary/10"
-                        >
-                          {devOtpCode}
-                        </button>
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex flex-col items-center gap-3 py-2">

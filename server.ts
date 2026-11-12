@@ -641,34 +641,15 @@ function isEmailVerifiedByToken(token: string | undefined, email: string): boole
   }
 }
 
-// Send SMS OTP helper (Fast2SMS / Twilio / Simulation)
+// Send SMS OTP helper (Fast2SMS / Twilio)
 async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
   const fast2smsKey = (process.env.FAST2SMS_API_KEY || "").trim();
 
   if (fast2smsKey) {
     try {
-      // Try Fast2SMS OTP route
+      // Primary: Quick SMS route (active on account)
       let res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-        method: "POST",
-        headers: {
-          "authorization": fast2smsKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          variables_values: otp,
-          route: "otp",
-          numbers: cleanPhone
-        })
-      });
-      let data = await res.json();
-      if (data && (data.return === true || data.status === true || data.return === "true")) {
-        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
-        return { success: true };
-      }
-
-      // Fallback to Quick SMS route
-      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
         method: "POST",
         headers: {
           "authorization": fast2smsKey,
@@ -682,14 +663,34 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
           numbers: cleanPhone
         })
       });
-      data = await res.json();
+      let data = await res.json();
       if (data && (data.return === true || data.status === true || data.return === "true")) {
         console.log(`[FAST2SMS QUICK SENT] To: +91${cleanPhone}`);
         return { success: true };
       }
 
-      console.warn("[FAST2SMS RESPONSE]", data?.message || data);
-      return { success: false, error: data.message || "SMS API gateway error" };
+      // Fallback: Fast2SMS OTP route
+      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+        method: "POST",
+        headers: {
+          "authorization": fast2smsKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          variables_values: otp,
+          route: "otp",
+          numbers: cleanPhone
+        })
+      });
+      data = await res.json();
+      if (data && (data.return === true || data.status === true || data.return === "true")) {
+        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
+        return { success: true };
+      }
+
+      const errMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
+      console.warn("[FAST2SMS RESPONSE]", errMsg);
+      return { success: false, error: errMsg };
     } catch (err: any) {
       console.error("[FAST2SMS ERROR]", err.message);
       return { success: false, error: err.message || "SMS network failure" };
@@ -724,7 +725,6 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
     }
   }
 
-  console.log(`[SIMULATED SMS DISPATCH] To: +91${cleanPhone}, OTP: ${otp}, Name: ${userName || "User"}`);
   return { success: false, error: "SMS gateway not configured" };
 }
 
@@ -749,6 +749,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
   const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
   let smsSent = false;
+  let smsError = "";
   let emailSent = false;
 
   if (cleanPhone && cleanPhone.length === 10) {
@@ -756,18 +757,21 @@ app.post("/api/auth/send-otp", async (req, res) => {
       const smsResult = await Promise.race([
         sendSmsOtp(cleanPhone, rawOtp, name),
         new Promise<{ success: boolean; error: string }>((resolve) =>
-          setTimeout(() => resolve({ success: false, error: "SMS timeout" }), 3500)
+          setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 6000)
         ),
       ]);
       if (smsResult.success) {
         smsSent = true;
+      } else if (smsResult.error) {
+        smsError = smsResult.error;
       }
     } catch (smsErr: any) {
-      console.warn(`[SMS NON-FATAL]`, smsErr?.message || smsErr);
+      smsError = smsErr?.message || "SMS failure";
+      console.warn(`[SMS NON-FATAL]`, smsError);
     }
   }
 
-  // Also attempt Email OTP with a fast 2.5s timeout so it never blocks
+  // Also attempt Email OTP with a fast 2.5s timeout if configured
   try {
     const emailResult = await Promise.race([
       sendEmailOtp(cleanEmail, rawOtp, name),
@@ -782,18 +786,19 @@ app.post("/api/auth/send-otp", async (req, res) => {
     console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
   }
 
-  const showFallbackOtp = process.env.NODE_ENV !== "production" || (!smsSent && !emailSent);
+  if (!smsSent && !emailSent) {
+    return res.status(500).json({
+      error: smsError || "Failed to send SMS verification code. Please check your mobile number and try again.",
+    });
+  }
 
   return res.json({
     message: smsSent
-      ? `SMS OTP sent successfully to +91 ${cleanPhone}`
-      : emailSent
-      ? `Verification code sent to ${cleanEmail}`
-      : `Verification code generated: ${rawOtp}`,
+      ? `SMS verification code sent to +91 ${cleanPhone}`
+      : `Verification code sent to ${cleanEmail}`,
     smsSent,
     emailSent,
     otpToken,
-    devOtp: showFallbackOtp ? rawOtp : undefined,
     expiresIn: 600,
   });
 });
@@ -1630,8 +1635,11 @@ app.post("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) =>
   return res.json({ success: true, key });
 });
 
+// Configure bcryptjs random fallback for Cloudflare Workers environment
+bcrypt.setRandomFallback((len: number) => Array.from(crypto.randomBytes(len)));
+
 // Registered Users Store (PostgreSQL primary; ephemeral in-memory cache without hardcoded default accounts or passwords)
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
 const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
 
 function sanitizeUser(user: any) {
@@ -1645,8 +1653,12 @@ function sanitizeUser(user: any) {
 
 let registeredUsers: any[] = [];
 (global as any).registeredUsers = registeredUsers;
+let registeredUsersInitialized = false;
 
 function loadRegisteredUsers() {
+  if (registeredUsersInitialized) return;
+  registeredUsersInitialized = true;
+
   for (const user of registeredUsers) {
     if (user.password && !user.passwordHash) {
       user.passwordHash = bcrypt.hashSync(user.password, 10);
@@ -1654,13 +1666,16 @@ function loadRegisteredUsers() {
     }
   }
 
-  if (ADMIN_EMAIL && ADMIN_PASSWORD) {
-    let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL);
+  const adminEmail = (process.env.ADMIN_EMAIL || ADMIN_EMAIL || "").toLowerCase().trim();
+  const adminPass = (process.env.ADMIN_PASSWORD || ADMIN_PASSWORD || "").trim();
+
+  if (adminEmail && adminPass) {
+    let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === adminEmail);
     if (!adminUser) {
       adminUser = {
         id: 99,
-        email: ADMIN_EMAIL,
-        passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
+        email: adminEmail,
+        passwordHash: bcrypt.hashSync(adminPass, 10),
         name: "Mingree Administrator",
         role: "admin",
         handle: "@admin",
@@ -1670,13 +1685,20 @@ function loadRegisteredUsers() {
       };
       registeredUsers.push(adminUser);
     } else {
-      adminUser.email = ADMIN_EMAIL;
+      adminUser.email = adminEmail;
       adminUser.role = "admin";
       adminUser.isEmailVerified = true;
-      adminUser.passwordHash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+      adminUser.passwordHash = bcrypt.hashSync(adminPass, 10);
     }
   }
 }
+
+app.use((_req, _res, next) => {
+  try {
+    loadRegisteredUsers();
+  } catch {}
+  next();
+});
 
 async function saveRegisteredUsers(targetUser?: any): Promise<void> {
   (global as any).registeredUsers = registeredUsers;
@@ -1722,8 +1744,6 @@ async function saveRegisteredUsers(targetUser?: any): Promise<void> {
     }
   }
 }
-
-loadRegisteredUsers();
 
 // Export role middleware helpers
 export const requireAdmin = requireRole("admin");
