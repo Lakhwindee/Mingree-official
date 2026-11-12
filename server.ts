@@ -746,13 +746,61 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
 
 // Send OTP (SMS & Email)
 app.post("/api/auth/send-otp", async (req, res) => {
-  const { email, name, phone } = req.body || {};
+  const { email, name, phone, purpose } = req.body || {};
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Valid email address is required" });
   }
 
   const cleanEmail = email.toLowerCase().trim();
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+
+  // If this is a Forgot Password / Phone Recovery request, verify an account exists BEFORE sending any SMS OTP
+  if (purpose === "forgot_password" || cleanEmail.endsWith("@phone.mingree.com")) {
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      return res.status(400).json({ error: "Please enter a valid 10-digit mobile number." });
+    }
+    const formattedPhone = `+91${cleanPhone}`;
+    let accountExists = false;
+
+    if (isDatabaseConfigured) {
+      try {
+        const dbCheck = await pool.query(
+          `SELECT id FROM users
+           WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
+             AND status != 'blocked'
+             AND LOWER(email) NOT IN ('platform@mingree.internal', 'admin@mingree.com')
+           LIMIT 1`,
+          [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
+        );
+        if (dbCheck.rows.length > 0) {
+          accountExists = true;
+        }
+      } catch (dbErr: any) {
+        console.warn("[FORGOT PW ACCOUNT CHECK WARN]", dbErr?.message || dbErr);
+      }
+    }
+
+    if (!accountExists) {
+      const memMatch = registeredUsers.find(
+        (u) =>
+          u.status !== "blocked" &&
+          u.role !== "admin" &&
+          ((u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone))) ||
+            (u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`)))
+      );
+      if (memMatch) {
+        accountExists = true;
+      }
+    }
+
+    if (!accountExists) {
+      return res.status(404).json({
+        error: `No account is registered with +91 ${cleanPhone}. Please create a new account first.`,
+        noAccountFound: true,
+      });
+    }
+  }
+
   const rawOtp = generateOtp();
   const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
@@ -1503,9 +1551,10 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
                 cp.tier_label AS cp_tier_label, cp.status AS cp_status
          FROM users u
          LEFT JOIN creator_profiles cp ON cp.user_id = u.id
-         WHERE u.id = $1
+         WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
+         ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
          LIMIT 1`,
-        [targetUserId]
+        [targetUserId, targetUserEmail]
       );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
@@ -2532,7 +2581,7 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
           JSON.stringify([]),
           "ALLOW",
           clientIp,
-          `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.`
+          JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
         ]
       );
 
@@ -6098,7 +6147,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
             JSON.stringify(riskEval.riskFactors),
             riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
             clientIp,
-            `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.`
+            JSON.stringify({ message: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.` })
           ]
         );
 

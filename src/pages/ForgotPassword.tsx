@@ -75,34 +75,28 @@ export default function ForgotPassword() {
 
     setIsLoading(true);
     try {
-      const fullPhone = `+91${cleanDigits.slice(-10)}`;
-      let sentViaFirebase = false;
+      const srvRes = await fetch("/api/auth/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: `${cleanDigits.slice(-10)}@phone.mingree.com`,
+          phone: cleanDigits.slice(-10),
+          purpose: "forgot_password",
+        }),
+      });
+      const srvData = await srvRes.json().catch(() => ({}));
 
-      try {
-        const verifier = setupRecaptcha("forgot-password-recaptcha", "invisible");
-        const result = await sendPhoneOtp(fullPhone, verifier);
-        setConfirmationResult(result);
-        sentViaFirebase = true;
-      } catch (fbErr: any) {
-        console.warn("[FIREBASE FORGOT PW SMS FALLBACK TO SERVER]", fbErr.message);
+      if (!srvRes.ok) {
+        if (srvRes.status === 404 || srvData.noAccountFound) {
+          setStep("no-account");
+          toast.error(srvData.error || `No accounts are registered under +91 ${cleanDigits.slice(-10)}`);
+          return;
+        }
+        throw new Error(srvData.error || "Could not send verification code. Please check your number.");
       }
 
-      if (!sentViaFirebase) {
-        const srvRes = await fetch("/api/auth/send-otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: `${cleanDigits.slice(-10)}@phone.mingree.com`,
-            phone: cleanDigits.slice(-10),
-          }),
-        });
-        const srvData = await srvRes.json();
-        if (srvData.otpToken) {
-          setOtpToken(srvData.otpToken);
-        }
-        if (srvData.devOtp) {
-          setDevOtpCode(String(srvData.devOtp));
-        }
+      if (srvData.otpToken) {
+        setOtpToken(srvData.otpToken);
       }
 
       setOtp("");

@@ -632,7 +632,7 @@ export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "time
         JSON.stringify(entry.riskFactors),
         entry.decision,
         entry.ipAddress,
-        entry.details,
+        JSON.stringify({ message: entry.details }),
       ]
     ).catch((err: any) => console.error("[PG AUDIT LOG ERROR]", err.message));
   } catch (err: any) {

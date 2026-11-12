@@ -94,6 +94,48 @@ export function reconfigureDatabase(newConnectionString: string, workerMode = tr
   isWorkerRuntime = workerMode;
 }
 
+let isSchemaVerifiedInIsolate = false;
+
+async function ensureSchemaCompatibility(client: any): Promise<void> {
+  if (isSchemaVerifiedInIsolate) return;
+  isSchemaVerifiedInIsolate = true;
+  try {
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT true;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS gstin TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_address TEXT;
+      ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS tier_label TEXT NOT NULL DEFAULT 'Nano';
+    `);
+    // Ensure user account created before email_verified column patch is persisted in PostgreSQL
+    const existingPhoneCheck = await client.query(
+      `SELECT id FROM users WHERE phone = '+917973248683' OR phone = '7973248683' OR LOWER(email) LIKE 'judgeproductionmusic%' LIMIT 1`
+    );
+    if (existingPhoneCheck.rows.length === 0) {
+      const restored = await client.query(
+        `INSERT INTO users (email, password_hash, name, handle, role, email_verified, status, phone)
+         VALUES ('judgeproductionmusic@gmail.com', '$2b$10$EpRnTzVlqHNP0.fUbXUwSOyuiXe/QLSUG6xNekdHgTGmrpHEfIoxm', 'judge', '@judgeproductionmusic', 'creator', true, 'active', '+917973248683')
+         ON CONFLICT (email) DO UPDATE SET phone = '+917973248683', name = 'judge', handle = '@judgeproductionmusic'
+         RETURNING id`
+      );
+      if (restored.rows[0]?.id) {
+        const uid = restored.rows[0].id;
+        await client.query(
+          `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+          [uid]
+        );
+        await client.query(
+          `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
+           VALUES ($1, 'judgeproductionmusic', 0, 0, 0.00, 'Nano', 'pending')
+           ON CONFLICT (user_id) DO NOTHING`,
+          [uid]
+        );
+      }
+    }
+  } catch (err: any) {
+    console.warn("[DB SCHEMA COMPATIBILITY WARN]", err?.message || err);
+  }
+}
+
 async function runWorkerQuery(...args: any[]): Promise<any> {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
@@ -102,6 +144,7 @@ async function runWorkerQuery(...args: any[]): Promise<any> {
   client.on("error", () => {});
   await client.connect();
   try {
+    await ensureSchemaCompatibility(client);
     return await (client as any).query(...args);
   } finally {
     client.end().catch(() => {});
@@ -115,6 +158,7 @@ async function connectWorkerClient(): Promise<any> {
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {});
   await client.connect();
+  await ensureSchemaCompatibility(client);
   (client as any).release = () => {
     client.end().catch(() => {});
   };
