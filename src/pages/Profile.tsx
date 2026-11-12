@@ -73,7 +73,6 @@ export default function Profile() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [isConnectingInstagram, setIsConnectingInstagram] = useState(false);
-  const [prefetchedIgAuthUrl, setPrefetchedIgAuthUrl] = useState<string | null>(null);
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false);
   const [isHandleModalOpen, setIsHandleModalOpen] = useState(false);
   const [handleToVerify, setHandleToVerify] = useState("");
@@ -228,22 +227,8 @@ export default function Profile() {
     }
   };
 
-  useEffect(() => {
-    if (!user?.id) return;
-    let cancelled = false;
-    fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data) {
-          const url = data.instagramOAuthUrl || data.authUrl;
-          if (url) setPrefetchedIgAuthUrl(url);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
+  // OAuth URL is generated fresh on demand when the user clicks 'Connect with Instagram'
+  // to avoid stale states or expired nonces
 
   useEffect(() => {
     if (!user?.id) return;
@@ -332,12 +317,6 @@ export default function Profile() {
     if (!user) return;
     setIsConnectingInstagram(true);
 
-    if (prefetchedIgAuthUrl) {
-      const targetUrl = prefetchedIgAuthUrl;
-      setPrefetchedIgAuthUrl(null);
-      window.location.href = targetUrl;
-      return;
-    }
 
     try {
       const res = await fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" });

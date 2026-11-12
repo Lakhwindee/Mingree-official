@@ -5656,7 +5656,10 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     });
   }
 
-  const cleanCode = String(code).split("#")[0].replace(/%23_$/i, "").trim();
+  let cleanCode = String(code).split("#")[0].replace(/%23_$/i, "").trim();
+  if (cleanCode.includes(" ")) {
+    cleanCode = cleanCode.replace(/ /g, "+");
+  }
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
   const userAgent = String(req.headers["user-agent"] || "unknown");
 
@@ -5744,6 +5747,19 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
             });
           }
         } catch {}
+      }
+
+      // If user refreshed an old callback URL with an already-used or expired code, auto-redirect to a fresh OAuth handshake
+      const isStaleOrRedeemedCode =
+        igExchangeErrorDetail.toLowerCase().includes("validating verification code") ||
+        igExchangeErrorDetail.toLowerCase().includes("invalid authorization code") ||
+        igExchangeErrorDetail.toLowerCase().includes("expired");
+
+      if (isStaleOrRedeemedCode && stateRecord.userId) {
+        const freshState = createSignedOAuthState(stateRecord.userId, clientReturnTo, appSecret, redirectUri);
+        const freshAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(freshState)}`;
+        console.log(`[INSTAGRAM OAUTH] Stale/replayed code detected on callback; auto-redirecting user #${stateRecord.userId} to fresh OAuth dialog`);
+        return res.redirect(302, freshAuthUrl);
       }
 
       return finishOAuthCallback({
