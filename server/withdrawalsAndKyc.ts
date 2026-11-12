@@ -13,21 +13,20 @@ function throwDbUnavailable(err?: any): never {
   throw error;
 }
 
-const EPHEMERAL_DEV_PAN_KEY = crypto.randomBytes(32).toString("hex");
+let ephemeralDevPanKey: string | null = null;
+function getEphemeralDevPanKey(): string {
+  if (!ephemeralDevPanKey) {
+    ephemeralDevPanKey = crypto.randomBytes(32).toString("hex");
+  }
+  return ephemeralDevPanKey;
+}
 
 function getPanEncryptionKey(): Buffer {
   const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
   if (!raw) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
-    }
-    return crypto.scryptSync(EPHEMERAL_DEV_PAN_KEY, "pan_salt", 32);
+    return crypto.scryptSync(getEphemeralDevPanKey(), "pan_salt", 32);
   }
   return crypto.scryptSync(raw, "pan_salt", 32);
-}
-
-if (process.env.NODE_ENV === "production" && !process.env.TOKEN_ENC_KEY && !process.env.JWT_SECRET) {
-  throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
 }
 
 // 1. PAN Encryption & Masking

@@ -1,3 +1,4 @@
+import http from "node:http";
 import app from "../server";
 import { httpServerHandler } from "cloudflare:node";
 import { reconfigureDatabase, isDatabaseConfigured } from "./db";
@@ -10,8 +11,12 @@ import {
   runSnapshotJobs,
 } from "./cronJobs";
 
+// Create http server from Express app and bind to virtual port 3000
+const server = http.createServer(app);
+server.listen(3000);
+
 // Initialize Cloudflare node HTTP server handler adapter for Express
-const nodeHttpHandler = httpServerHandler(app);
+const nodeHttpHandler = httpServerHandler({ port: 3000 });
 
 export default {
   /**

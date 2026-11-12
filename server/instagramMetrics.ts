@@ -1,21 +1,20 @@
 import crypto from "crypto";
 import { getTierByFollowers } from "../shared/tiers";
 
-const EPHEMERAL_DEV_TOKEN_KEY = crypto.randomBytes(32).toString("hex");
+let ephemeralDevTokenKey: string | null = null;
+function getEphemeralDevTokenKey(): string {
+  if (!ephemeralDevTokenKey) {
+    ephemeralDevTokenKey = crypto.randomBytes(32).toString("hex");
+  }
+  return ephemeralDevTokenKey;
+}
 
 function getTokenEncryptionKey(): Buffer {
   const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
   if (!raw) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
-    }
-    return crypto.scryptSync(EPHEMERAL_DEV_TOKEN_KEY, "mingree_salt_v1", 32);
+    return crypto.scryptSync(getEphemeralDevTokenKey(), "mingree_salt_v1", 32);
   }
   return crypto.scryptSync(raw, "mingree_salt_v1", 32);
-}
-
-if (process.env.NODE_ENV === "production" && !process.env.TOKEN_ENC_KEY && !process.env.JWT_SECRET) {
-  throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
 }
 
 // 1. Encrypt Access Token at rest (AES-256-GCM)

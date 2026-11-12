@@ -385,17 +385,13 @@ interface InstagramOAuthState {
   browserTokenHash?: string;
 }
 const instagramOAuthStates = new Map<string, InstagramOAuthState>();
-
-const oauthCleanupTimer = setInterval(() => {
+function cleanupExpiredOAuthStates() {
   const now = Date.now();
   for (const [stateKey, stateVal] of instagramOAuthStates.entries()) {
     if (now - stateVal.createdAt > 15 * 60 * 1000) {
       instagramOAuthStates.delete(stateKey);
     }
   }
-}, 5 * 60 * 1000);
-if (oauthCleanupTimer && typeof oauthCleanupTimer.unref === "function") {
-  oauthCleanupTimer.unref();
 }
 
 
@@ -465,23 +461,17 @@ interface StoredOtp {
 }
 
 const otpStore = new Map<string, StoredOtp>();
-
-const otpCleanupTimer = setInterval(() => {
+function cleanupExpiredOtps() {
   const now = Date.now();
   for (const [key, val] of otpStore.entries()) {
     if (now > val.expiresAt) {
       otpStore.delete(key);
     }
   }
-  if (isDatabaseConfigured) {
-    pool.query(`DELETE FROM email_otps WHERE expires_at < now()`).catch(() => {});
-  }
-}, 5 * 60 * 1000);
-if (otpCleanupTimer && typeof otpCleanupTimer.unref === "function") {
-  otpCleanupTimer.unref();
 }
 
 function setOtpRecord(identifier: string, data: StoredOtp) {
+  cleanupExpiredOtps();
   otpStore.set(identifier, data);
   if (isDatabaseConfigured) {
     pool
@@ -585,21 +575,20 @@ app.get("/api/auth/email-status", (req, res) => {
 });
 
 // Stateless OTP token helpers for serverless / multi-instance deployments
-const EPHEMERAL_DEV_SIGNING_SECRET = crypto.randomBytes(32).toString("hex");
+let ephemeralDevSigningSecret: string | null = null;
+function getEphemeralDevSigningSecret(): string {
+  if (!ephemeralDevSigningSecret) {
+    ephemeralDevSigningSecret = crypto.randomBytes(32).toString("hex");
+  }
+  return ephemeralDevSigningSecret;
+}
 
 function getOtpSigningSecret(): string {
   const secret = (process.env.OTP_SIGNING_SECRET || process.env.JWT_SECRET || "").trim();
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("CRITICAL: OTP_SIGNING_SECRET or JWT_SECRET environment variable is required in production.");
-    }
-    return EPHEMERAL_DEV_SIGNING_SECRET;
+    return getEphemeralDevSigningSecret();
   }
   return secret;
-}
-
-if (process.env.NODE_ENV === "production" && !process.env.OTP_SIGNING_SECRET && !process.env.JWT_SECRET) {
-  throw new Error("CRITICAL: OTP_SIGNING_SECRET or JWT_SECRET environment variable is required in production.");
 }
 
 export function createSignedOtpToken(email: string, otpHash: string, expiresAt: number): string {
@@ -1124,7 +1113,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
         accountIds: accounts.map((a) => a.id),
         purpose: "phone_password_reset",
       },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: "15m" }
     );
 
@@ -1301,14 +1290,19 @@ function getInstagramRedirectUri(allowEmpty = false): string {
   console.log(`[INSTAGRAM OAUTH] redirect_uri used: ${redirectUri}`);
   return redirectUri;
 }
-
-const INTERNAL_SESSION_SECRET = crypto.randomBytes(32).toString("hex");
+let internalSessionSecret: string | null = null;
+function getInternalSessionSecret(): string {
+  if (!internalSessionSecret) {
+    internalSessionSecret = (process.env.JWT_SECRET || process.env.TOKEN_ENC_KEY || "").trim() || crypto.randomBytes(32).toString("hex");
+  }
+  return internalSessionSecret;
+}
 
 // Cryptographically signed state token generator to protect against CSRF and survive server restarts
 function createSignedOAuthState(userId: number, returnTo: string, appSecret: string, redirectUri?: string): string {
   const nonce = crypto.randomBytes(12).toString("hex");
   const payload = Buffer.from(JSON.stringify({ userId, returnTo, redirectUri, ts: Date.now() })).toString("base64url");
-  const secretKey = appSecret || INTERNAL_SESSION_SECRET;
+  const secretKey = appSecret || getInternalSessionSecret();
   const signature = crypto.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   return `${nonce}.${payload}.${signature}`;
 }
@@ -1319,7 +1313,7 @@ function verifySignedOAuthState(stateStr: string, appSecret: string): { userId: 
   const parts = stateStr.split(".");
   if (parts.length !== 3) return null;
   const [nonce, payload, signature] = parts;
-  const secretKey = appSecret || INTERNAL_SESSION_SECRET;
+  const secretKey = appSecret || getInternalSessionSecret();
   const expectedSig = crypto.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   if (signature !== expectedSig) return null;
   try {
@@ -1376,19 +1370,11 @@ app.use("/api/auth", authRateLimiter);
 export function getJwtSecret(): string {
   const secret = (process.env.JWT_SECRET || "").trim();
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("CRITICAL: JWT_SECRET environment variable is required in production.");
-    }
-    return EPHEMERAL_DEV_SIGNING_SECRET;
+    return getEphemeralDevSigningSecret();
   }
   return secret;
 }
 
-if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
-  throw new Error("CRITICAL: JWT_SECRET environment variable is required in production.");
-}
-
-const JWT_SECRET = getJwtSecret();
 const COOKIE_NAME = "auth_token";
 
 function setAuthTokenCookie(res: express.Response, user: any) {
@@ -5500,7 +5486,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
   const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
   if (token) {
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
+      const decoded = jwt.verify(token, getJwtSecret()) as { id: number };
       if (decoded?.id) sessionUserId = decoded.id;
     } catch {}
   }

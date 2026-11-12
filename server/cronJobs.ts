@@ -1,4 +1,3 @@
-import cron from "node-cron";
 import { db } from "./db";
 import { deals, campaigns, users, notifications, subscriptions, metricSnapshots, creatorProfiles } from "../shared/schema";
 import { eq, and, lte, sql } from "drizzle-orm";
@@ -360,35 +359,45 @@ export async function runSnapshotJobs(): Promise<{ snapshotsCount: number }> {
 }
 
 /**
- * Initialize all Node-Cron schedules
+ * Initialize background task schedules for standalone Node.js environments.
+ * In Cloudflare Workers, scheduled events are dispatched via Cloudflare Workers Cron Triggers.
  */
 export function initCronJobs(): void {
-  console.log("[CRON] Initializing node-cron background task schedules...");
+  // If running in Cloudflare Workers or non-Node environment, skip
+  if (typeof process === "undefined" || !process.release || process.release.name !== "node") {
+    return;
+  }
+
+  console.log("[CRON] Initializing background task schedules for Node.js server...");
 
   // Every 5 minutes: Deal expiration & 6h/1h warnings
-  cron.schedule("*/5 * * * *", async () => {
+  const timer5m = setInterval(async () => {
     console.log("[CRON 5m] Running deal expiration check & warnings...");
-    await runDealExpirationCheck();
-  });
+    await runDealExpirationCheck().catch(err => console.warn("[CRON 5m error]", err));
+  }, 5 * 60 * 1000);
+  if (timer5m.unref) timer5m.unref();
 
   // Every 15 minutes: Auto-approve submissions past REVIEW_WINDOW_HOURS
-  cron.schedule("*/15 * * * *", async () => {
+  const timer15m = setInterval(async () => {
     console.log("[CRON 15m] Running auto-approval engine...");
-    await runAutoApproveEngine();
-  });
+    await runAutoApproveEngine().catch(err => console.warn("[CRON 15m error]", err));
+  }, 15 * 60 * 1000);
+  if (timer15m.unref) timer15m.unref();
 
   // Hourly: 48h Metric Snapshots
-  cron.schedule("0 * * * *", async () => {
+  const timer1h = setInterval(async () => {
     console.log("[CRON 1h] Taking metric snapshots...");
-    await runSnapshotJobs();
-  });
+    await runSnapshotJobs().catch(err => console.warn("[CRON 1h error]", err));
+  }, 60 * 60 * 1000);
+  if (timer1h.unref) timer1h.unref();
 
-  // Daily at midnight: Still-live check, final release, Instagram token/metric refresh, Pro reminders
-  cron.schedule("0 0 * * *", async () => {
+  // Daily (24h): Still-live check, final release, Instagram token/metric refresh, Pro reminders
+  const timer24h = setInterval(async () => {
     console.log("[CRON Daily] Running daily maintenance jobs...");
-    await runFinalReleaseEngine();
-    await runDailyMaintenanceJobs();
-  });
+    await runFinalReleaseEngine().catch(err => console.warn("[CRON Daily finalRelease error]", err));
+    await runDailyMaintenanceJobs().catch(err => console.warn("[CRON Daily maintenance error]", err));
+  }, 24 * 60 * 60 * 1000);
+  if (timer24h.unref) timer24h.unref();
 
   console.log("[CRON] All background schedules started successfully.");
 }
