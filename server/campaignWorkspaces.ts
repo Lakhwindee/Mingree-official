@@ -207,7 +207,7 @@ export async function ensureWorkspacesLoaded(force = false): Promise<CampaignWor
   }
 
   const now = Date.now();
-  if (!force && workspacesCache.size > 0 && now - lastSettingsLoadTime < 3000) {
+  if (!force && lastSettingsLoadTime > 0 && now - lastSettingsLoadTime < 15000) {
     return loadAllWorkspaces();
   }
 
@@ -233,8 +233,8 @@ export async function ensureWorkspacesLoaded(force = false): Promise<CampaignWor
     console.warn("[WORKSPACES SETTINGS LOAD WARNING]", err?.message || err);
   }
 
-  // Only run heavy 4-query reconciliation if cache is empty or > 20s since last reconcile
-  if (workspacesCache.size > 0 && Date.now() - lastFullReconcileTime < 20000) {
+  // Only run heavy 4-query reconciliation if forced or > 30s since last reconcile
+  if (!force && lastFullReconcileTime > 0 && Date.now() - lastFullReconcileTime < 30000) {
     return loadAllWorkspaces();
   }
   lastFullReconcileTime = Date.now();

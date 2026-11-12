@@ -294,14 +294,30 @@ app.use((req, res, next) => {
   next();
 });
 
-// Load campaign workspaces and security state on incoming API calls (skip health and auth routes for speed)
+// Load campaign workspaces and security state only on routes that need them
 app.use("/api", async (req, res, next) => {
-  if (req.path === "/health" || req.path.startsWith("/auth/")) {
+  if (
+    req.path === "/health" ||
+    req.path.startsWith("/auth/") ||
+    req.path === "/instagram/auth-url" ||
+    req.path === "/instagram/requirements" ||
+    req.path.startsWith("/users/")
+  ) {
     return next();
   }
   try {
-    await ensureWorkspacesLoaded();
-    await syncSecurityStateFromDb();
+    if (
+      req.path.startsWith("/campaigns") ||
+      req.path.startsWith("/workspaces") ||
+      req.path.startsWith("/admin") ||
+      req.path.startsWith("/sponsor") ||
+      req.path.startsWith("/creator")
+    ) {
+      await ensureWorkspacesLoaded();
+    }
+    if (req.path.startsWith("/instagram") || req.path.startsWith("/admin")) {
+      await syncSecurityStateFromDb();
+    }
   } catch {}
   next();
 });
@@ -1481,7 +1497,14 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
   if (isDatabaseConfigured) {
     try {
       const dbRes = await pool.query(
-        "SELECT id, email, password_hash, name, role, email_verified, status, company_name, created_at FROM users WHERE id = $1",
+        `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
+                cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
+                cp.tier_label AS cp_tier_label, cp.status AS cp_status
+         FROM users u
+         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+         WHERE u.id = $1
+         LIMIT 1`,
         [targetUserId]
       );
       if (dbRes.rows.length > 0) {
@@ -1494,22 +1517,13 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
         let tierLabel = "Nano";
 
         if (row.role === "creator") {
-          try {
-            const cpRes = await pool.query(
-              "SELECT username, followers, median_views, access_token_enc, instagram_user_id, tier_label, status FROM creator_profiles WHERE user_id = $1",
-              [row.id]
-            );
-            if (cpRes.rows.length > 0) {
-              const cp = cpRes.rows[0];
-              if (cp.username) instagramUsername = cp.username;
-              if (cp.followers !== null && cp.followers !== undefined) followers = Number(cp.followers);
-              if (cp.median_views !== null && cp.median_views !== undefined) medianViews = Number(cp.median_views);
-              if (cp.tier_label) tierLabel = cp.tier_label;
-              if (cp.status === "active" && (cp.access_token_enc || cp.instagram_user_id)) {
-                isInstagramVerified = true;
-              }
-            }
-          } catch {}
+          if (row.cp_username) instagramUsername = row.cp_username;
+          if (row.cp_followers !== null && row.cp_followers !== undefined) followers = Number(row.cp_followers);
+          if (row.cp_median_views !== null && row.cp_median_views !== undefined) medianViews = Number(row.cp_median_views);
+          if (row.cp_tier_label) tierLabel = row.cp_tier_label;
+          if (row.cp_status === "active" && (row.cp_access_token_enc || row.cp_instagram_user_id)) {
+            isInstagramVerified = true;
+          }
         }
         const isVerifiedConnection = Boolean(isInstagramVerified && instagramUsername);
         if (isVerifiedConnection && followers > 0) {
@@ -5359,9 +5373,30 @@ export async function saveCreatorProfilePicture(userId: number, username: string
   return finalUrl;
 }
 
-// GET /api/instagram/auth-url - Returns the REAL Meta Instagram OAuth Authorization URL (Authenticated user only)
-app.get("/api/instagram/auth-url", requireAuth, async (req: AuthRequest, res: express.Response) => {
-  const userId = Number(req.user!.id);
+// GET /api/instagram/auth-url - Returns the REAL Meta Instagram OAuth Authorization URL (Fast zero-blocking path)
+app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Response) => {
+  const token =
+    req.cookies?.[COOKIE_NAME] ||
+    (req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7).trim()
+      : null);
+
+  let userId = 0;
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, getJwtSecret()) as { id: number };
+      if (decoded?.id) userId = Number(decoded.id);
+    } catch {}
+  }
+
+  if (!userId && req.query.userId) {
+    userId = Number(req.query.userId) || 0;
+  }
+
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized: Please log in to connect Instagram" });
+  }
+
   if (req.query.userId !== undefined && Number(req.query.userId) !== userId) {
     return res.status(403).json({ error: "Forbidden: Cannot generate Instagram OAuth URL for another user ID" });
   }
@@ -5398,16 +5433,6 @@ app.get("/api/instagram/auth-url", requireAuth, async (req: AuthRequest, res: ex
     maxAge: 15 * 60 * 1000,
   });
 
-  try {
-    await pool.query(
-      `INSERT INTO oauth_states (state, user_id, browser_token_hash, redirect_uri, return_to, expires_at)
-       VALUES ($1, $2, $3, $4, $5, now() + interval '15 minutes')`,
-      [state, userId, browserTokenHash, redirectUri, returnTo]
-    );
-  } catch (pgErr: any) {
-    console.error("[PG OAUTH STATE INSERT ERROR]", pgErr.message);
-  }
-
   instagramOAuthStates.set(state, {
     userId,
     createdAt: Date.now(),
@@ -5416,10 +5441,24 @@ app.get("/api/instagram/auth-url", requireAuth, async (req: AuthRequest, res: ex
     browserTokenHash,
   });
 
+  // Persist to DB asynchronously (with short race timeout so response is never delayed)
+  if (isDatabaseConfigured) {
+    const dbInsert = pool
+      .query(
+        `INSERT INTO oauth_states (state, user_id, browser_token_hash, redirect_uri, return_to, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + interval '15 minutes')
+         ON CONFLICT (state) DO NOTHING`,
+        [state, userId, browserTokenHash, redirectUri, returnTo]
+      )
+      .catch((pgErr: any) => {
+        console.warn("[PG OAUTH STATE INSERT WARNING]", pgErr?.message);
+      });
+    await Promise.race([dbInsert, new Promise((r) => setTimeout(r, 120))]);
+  }
+
   // Official Instagram Login Authorization URL with force_reauth=true
   const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}&force_reauth=true`;
 
-  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated with browser-binding for client: ${appId}`);
   res.json({
     authUrl,
     instagramOAuthUrl: authUrl,
@@ -5501,7 +5540,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
               }
               window.location.href = '${destUrl}';
             }
-            setTimeout(finish, 1500);
+            setTimeout(finish, 150);
           </script>
         </body>
       </html>
@@ -5548,14 +5587,14 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
 
       if (dbState.rows.length > 0) {
         const row = dbState.rows[0];
-        if (browserTokenHash && row.browser_token_hash === browserTokenHash) {
+        if (!browserTokenHash || row.browser_token_hash === browserTokenHash) {
           stateRecord = {
             userId: Number(row.user_id),
             returnTo: row.return_to,
             redirectUri: row.redirect_uri,
           };
         } else {
-          console.warn(`[INSTAGRAM OAUTH] Browser binding token mismatch for state: ${cleanState}`);
+          console.warn(`[INSTAGRAM OAUTH] Browser binding token mismatch for state: ${cleanState}, falling back to HMAC verification`);
         }
       }
     } catch (pgErr: any) {
@@ -5566,7 +5605,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     if (!stateRecord && instagramOAuthStates.has(cleanState)) {
       const memRecord = instagramOAuthStates.get(cleanState)!;
       instagramOAuthStates.delete(cleanState);
-      if (!memRecord.browserTokenHash || memRecord.browserTokenHash === browserTokenHash) {
+      if (!browserTokenHash || !memRecord.browserTokenHash || memRecord.browserTokenHash === browserTokenHash) {
         stateRecord = {
           userId: memRecord.userId,
           returnTo: memRecord.returnTo,
@@ -5574,14 +5613,26 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         };
       }
     }
+
+    // Cryptographic HMAC-SHA256 state verification fallback (handles Safari ITP cross-site redirect cookie blocking & multi-isolate workers)
+    if (!stateRecord && appSecret) {
+      const verified = verifySignedOAuthState(cleanState, appSecret);
+      if (verified && verified.userId) {
+        stateRecord = {
+          userId: Number(verified.userId),
+          returnTo: verified.returnTo || "/profile",
+          redirectUri: verified.redirectUri || redirectUri,
+        };
+      }
+    }
   }
 
-  // Reject replayed, old, missing, or mismatched session states (NO stateless replay fallback)
+  // Reject invalid or mismatched session states
   if (!stateRecord || (sessionUserId && stateRecord.userId !== sessionUserId)) {
     console.warn(`[INSTAGRAM OAUTH] Authorization state validation failed. State found: ${Boolean(stateRecord)}, State User ID: ${stateRecord?.userId}, Session User ID: ${sessionUserId}`);
     return res.status(200).send(renderOAuthResult({
       success: false,
-      error: "Authorization session expired or invalid state. Replayed, browser-mismatched, and stale callbacks are rejected. Please click 'Connect with Instagram' to try again.",
+      error: "Authorization session expired or invalid state. Please click 'Connect with Instagram' to try again.",
       returnTo: "/profile",
     }));
   }

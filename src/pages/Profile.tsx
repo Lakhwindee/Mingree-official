@@ -73,6 +73,7 @@ export default function Profile() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const [isConnectingInstagram, setIsConnectingInstagram] = useState(false);
+  const [prefetchedIgAuthUrl, setPrefetchedIgAuthUrl] = useState<string | null>(null);
   const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false);
   const [isHandleModalOpen, setIsHandleModalOpen] = useState(false);
   const [handleToVerify, setHandleToVerify] = useState("");
@@ -228,16 +229,36 @@ export default function Profile() {
   };
 
   useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) {
+          const url = data.instagramOAuthUrl || data.authUrl;
+          if (url) setPrefetchedIgAuthUrl(url);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
     // Check URL parameters for errors or completion
     const params = new URLSearchParams(window.location.search);
     const igErr = params.get("instagram_error");
     if (igErr) {
       handleOAuthError(decodeURIComponent(igErr));
       window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (params.has("code") || params.has("error") || params.has("instagram_connected")) {
+    } else if (params.has("instagram_connected")) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      refreshAccountFromServer(true);
+    } else if (params.has("code") || params.has("error")) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     // Cross-window listeners: only refresh account if user explicitly launched an Instagram connect flow
@@ -309,6 +330,11 @@ export default function Profile() {
   const handleConnectInstagramOAuth = async () => {
     if (!user) return;
     setIsConnectingInstagram(true);
+
+    if (prefetchedIgAuthUrl) {
+      window.location.href = prefetchedIgAuthUrl;
+      return;
+    }
 
     try {
       const res = await fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" });
