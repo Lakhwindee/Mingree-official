@@ -1618,6 +1618,23 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     );
   }
 
+  if (!user && targetUserId && targetUserEmail) {
+    user = {
+      id: targetUserId,
+      email: targetUserEmail,
+      name: decoded.name || targetUserEmail.split("@")[0],
+      role: decoded.role || "creator",
+      handle: `@${targetUserEmail.split("@")[0]}`,
+      tier: decoded.role === "admin" ? "Admin" : (decoded.isInstagramVerified ? "Nano" : "Unlinked"),
+      status: "active",
+      isEmailVerified: true,
+      instagramUsername: decoded.instagramUsername || null,
+      isInstagramVerified: Boolean(decoded.isInstagramVerified),
+      instagramFollowers: Number(decoded.instagramFollowers || 0),
+      followers: Number(decoded.instagramFollowers || 0),
+    };
+  }
+
   if (!user) {
     return res.status(401).json({ error: "Unauthorized: User account not found" });
   }
@@ -5540,13 +5557,11 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     returnTo?: string;
   }) => {
     const isSuccess = result.success;
-    const destPath = result.returnTo || "/dashboard";
+    const destPath = result.returnTo || "/profile";
     const destUrl = isSuccess 
       ? `${destPath}${destPath.includes('?') ? '&' : '?'}instagram_connected=true&username=${encodeURIComponent(result.username || '')}`
       : `${destPath}${destPath.includes('?') ? '&' : '?'}instagram_error=${encodeURIComponent(result.error || 'Connection failed')}`;
-    const targetOrigin = (req.headers.host && (req.headers.host.includes("localhost") || req.headers.host.includes("127.0.0.1")))
-      ? `${(req.headers["x-forwarded-proto"] as string) || "http"}://${req.headers.host}`
-      : "https://mingree.com";
+    const safeHref = destUrl.replace(/"/g, "&quot;");
     return `
       <!DOCTYPE html>
       <html lang="en">
@@ -5566,9 +5581,10 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           <div class="card">
             <h1>${isSuccess ? "Instagram Connected!" : "Connection Failed"}</h1>
             <p>${isSuccess ? `@${result.username}` : (result.error || "An error occurred during verification.")}</p>
-            <button class="btn" onclick="finish()">Return to Mingree</button>
+            <a href="${safeHref}" class="btn" onclick="finish(); return false;">Return to Mingree</a>
           </div>
           <script>
+            var destUrl = ${JSON.stringify(destUrl)};
             var oauthPayload = {
               type: '${isSuccess ? "INSTAGRAM_OAUTH_SUCCESS" : "INSTAGRAM_OAUTH_ERROR"}',
               status: '${isSuccess ? "success" : "error"}',
@@ -5584,7 +5600,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
                 try { window.opener.postMessage(oauthPayload, "*"); } catch(e) {}
                 try { window.close(); return; } catch(e) {}
               }
-              window.location.href = '${destUrl}';
+              window.location.href = destUrl;
             }
             setTimeout(finish, 150);
           </script>
@@ -5703,7 +5719,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     }));
   }
 
-  const cleanCode = code.replace(/#_$/, "");
+  const cleanCode = String(code).split("#")[0].replace(/%23_$/i, "").trim();
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
   const userAgent = String(req.headers["user-agent"] || "unknown");
 
@@ -5756,12 +5772,12 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let igUserId = "";
     let igExchangeErrorDetail = "";
 
-    try {
+    const tryExchangeCode = async (candidateRedirectUri: string) => {
       const formBody = new URLSearchParams({
         client_id: appId,
         client_secret: appSecret,
         grant_type: "authorization_code",
-        redirect_uri: effectiveRedirectUri,
+        redirect_uri: candidateRedirectUri,
         code: cleanCode,
       }).toString();
 
@@ -5775,25 +5791,31 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       });
 
       const rawTokenText = await igTokenRes.text();
-      console.log(`[INSTAGRAM OAUTH] Official Instagram Token Status: ${igTokenRes.status} ${igTokenRes.statusText}`);
+      console.log(`[INSTAGRAM OAUTH] Official Instagram Token Status (${candidateRedirectUri}): ${igTokenRes.status}`);
       let tokenData: any = null;
       try {
         tokenData = JSON.parse(rawTokenText);
       } catch {}
 
       if (igTokenRes.ok && tokenData) {
-        // Meta Business Login for Instagram returns { data: [{ access_token, user_id, permissions }] } or direct { access_token, user_id }
         const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
         shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
         igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
-        console.log(`[INSTAGRAM OAUTH] ✓ Official Instagram token exchange successful! ID: ${igUserId}`);
+        return true;
       } else {
         igExchangeErrorDetail =
           tokenData?.error_message ||
           tokenData?.error?.message ||
           rawTokenText.slice(0, 240) ||
           `HTTP ${igTokenRes.status}`;
-        console.error(`[INSTAGRAM OAUTH] Official Instagram token exchange failed:`, igExchangeErrorDetail);
+        return false;
+      }
+    };
+
+    try {
+      const ok = await tryExchangeCode(effectiveRedirectUri);
+      if (!ok && effectiveRedirectUri !== redirectUri) {
+        await tryExchangeCode(redirectUri);
       }
     } catch (igErr: any) {
       igExchangeErrorDetail = igErr?.message || String(igErr);
@@ -5801,12 +5823,45 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     }
 
     if (!shortLivedAccessToken) {
+      // If user refreshed a stale callback URL or browser sent a duplicate request with an already-redeemed code
+      const isStaleOrRedeemedCode =
+        igExchangeErrorDetail.toLowerCase().includes("validating verification code") ||
+        igExchangeErrorDetail.toLowerCase().includes("invalid authorization code") ||
+        igExchangeErrorDetail.toLowerCase().includes("expired");
+
+      if (isStaleOrRedeemedCode && stateRecord.userId) {
+        if (isDatabaseConfigured) {
+          try {
+            const recentConn = await pool.query(
+              `SELECT username, followers FROM creator_profiles
+               WHERE user_id = $1 AND status = 'active' AND connected_at > now() - interval '2 minutes'
+               LIMIT 1`,
+              [stateRecord.userId]
+            );
+            if (recentConn.rows.length > 0 && recentConn.rows[0].username) {
+              console.log(`[INSTAGRAM OAUTH] Duplicate callback detected for user #${stateRecord.userId}; account @${recentConn.rows[0].username} already linked.`);
+              return res.status(200).send(renderOAuthResult({
+                success: true,
+                username: String(recentConn.rows[0].username),
+                followers: Number(recentConn.rows[0].followers) || 0,
+                returnTo: clientReturnTo,
+              }));
+            }
+          } catch {}
+        }
+
+        const freshState = createSignedOAuthState(stateRecord.userId, clientReturnTo, appSecret, redirectUri);
+        const freshAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(freshState)}&force_reauth=true`;
+        console.log(`[INSTAGRAM OAUTH] Stale/replayed code detected on callback refresh; auto-redirecting user #${stateRecord.userId} to fresh OAuth dialog`);
+        return res.redirect(302, freshAuthUrl);
+      }
+
       recordFailedAttempt(clientIp, stateRecord.userId);
       return res.status(200).send(renderOAuthResult({
         success: false,
         error: igExchangeErrorDetail
           ? `Instagram authorization error: ${igExchangeErrorDetail}`
-          : "Failed to exchange authorization code with Instagram. Please click 'Connect with Instagram' to try again.",
+          : "Failed to exchange authorization code with Instagram. Please click Connect with Instagram to try again.",
         returnTo: clientReturnTo,
       }));
     }
