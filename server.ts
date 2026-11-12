@@ -5321,26 +5321,23 @@ export async function saveCreatorProfilePicture(userId: number, username: string
     }
   }
 
-  // 2. Local static disk storage fallback (created lazily inside handler, no startup mkdir)
+  // 2. Base64 / local disk storage fallback (works across serverless Cloudflare Workers & Node)
   if (!finalUrl) {
     try {
       const response = await fetch(imageUrl);
       if (response.ok) {
+        const contentType = response.headers.get("content-type") || "image/jpeg";
         const arrayBuf = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
-        const avatarDir = path.join(process.cwd(), "public", "uploads", "avatars");
-        if (!fs.existsSync(avatarDir)) {
-          fs.mkdirSync(avatarDir, { recursive: true });
+        if (buffer.length > 0 && buffer.length <= 512 * 1024) {
+          finalUrl = `data:${contentType.split(";")[0]};base64,${buffer.toString("base64")}`;
+        } else {
+          finalUrl = imageUrl;
         }
-        const fileName = `creator_${userId}.jpg`;
-        const localPath = path.join(avatarDir, fileName);
-        fs.writeFileSync(localPath, buffer);
-        finalUrl = `/uploads/avatars/${fileName}`;
-        console.log(`[AVATAR STORAGE] ✓ Downloaded & saved profile picture to local disk: ${finalUrl}`);
       }
     } catch (fsErr: any) {
-      console.warn(`[AVATAR STORAGE] Local avatar file write warning:`, fsErr?.message || fsErr);
-      finalUrl = `/api/creators/${userId}/avatar`;
+      console.warn(`[AVATAR STORAGE] Avatar fetch warning:`, fsErr?.message || fsErr);
+      finalUrl = imageUrl;
     }
   }
 
@@ -5708,39 +5705,59 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     // 3. Exchange authorization code for access token server-side via official Instagram endpoint
     let shortLivedAccessToken = "";
     let igUserId = "";
+    let igExchangeErrorDetail = "";
 
     try {
+      const formBody = new URLSearchParams({
+        client_id: appId,
+        client_secret: appSecret,
+        grant_type: "authorization_code",
+        redirect_uri: effectiveRedirectUri,
+        code: cleanCode,
+      }).toString();
+
       const igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: appId,
-          client_secret: appSecret,
-          grant_type: "authorization_code",
-          redirect_uri: effectiveRedirectUri,
-          code: cleanCode,
-        }),
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Accept": "application/json",
+        },
+        body: formBody,
       });
 
+      const rawTokenText = await igTokenRes.text();
       console.log(`[INSTAGRAM OAUTH] Official Instagram Token Status: ${igTokenRes.status} ${igTokenRes.statusText}`);
-      if (igTokenRes.ok) {
-        const tokenData = await igTokenRes.json();
-        shortLivedAccessToken = tokenData.access_token || "";
-        igUserId = String(tokenData.user_id || "");
+      let tokenData: any = null;
+      try {
+        tokenData = JSON.parse(rawTokenText);
+      } catch {}
+
+      if (igTokenRes.ok && tokenData) {
+        // Meta Business Login for Instagram returns { data: [{ access_token, user_id, permissions }] } or direct { access_token, user_id }
+        const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
+        shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
+        igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
         console.log(`[INSTAGRAM OAUTH] ✓ Official Instagram token exchange successful! ID: ${igUserId}`);
       } else {
-        const igErr = await igTokenRes.text();
-        console.error(`[INSTAGRAM OAUTH] Official Instagram token exchange failed:`, igErr);
+        igExchangeErrorDetail =
+          tokenData?.error_message ||
+          tokenData?.error?.message ||
+          rawTokenText.slice(0, 240) ||
+          `HTTP ${igTokenRes.status}`;
+        console.error(`[INSTAGRAM OAUTH] Official Instagram token exchange failed:`, igExchangeErrorDetail);
       }
     } catch (igErr: any) {
-      console.error("[INSTAGRAM OAUTH] Official Instagram token network error:", igErr?.message || igErr);
+      igExchangeErrorDetail = igErr?.message || String(igErr);
+      console.error("[INSTAGRAM OAUTH] Official Instagram token network error:", igExchangeErrorDetail);
     }
 
     if (!shortLivedAccessToken) {
       recordFailedAttempt(clientIp, stateRecord.userId);
       return res.status(200).send(renderOAuthResult({
         success: false,
-        error: "Failed to exchange authorization code with Instagram. The authorization code may have expired or already been redeemed. Please try connecting again from Mingree.",
+        error: igExchangeErrorDetail
+          ? `Instagram authorization error: ${igExchangeErrorDetail}`
+          : "Failed to exchange authorization code with Instagram. Please click 'Connect with Instagram' to try again.",
         returnTo: clientReturnTo,
       }));
     }
@@ -5752,38 +5769,48 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let accountType = "BUSINESS";
     let profilePicUrl = "";
 
+    const extractProfileFields = (rawPayload: any) => {
+      if (!rawPayload) return;
+      const pObj = Array.isArray(rawPayload.data) && rawPayload.data.length > 0 ? rawPayload.data[0] : rawPayload;
+      if (pObj?.username) igUsername = String(pObj.username).trim();
+      if (pObj?.user_id || pObj?.id) igUserId = String(pObj.user_id || pObj.id).trim();
+      if (typeof pObj?.followers_count === "number") followersCount = pObj.followers_count;
+      if (typeof pObj?.media_count === "number") mediaCount = pObj.media_count;
+      if (pObj?.profile_picture_url) profilePicUrl = String(pObj.profile_picture_url).trim();
+      if (pObj?.account_type) accountType = String(pObj.account_type).trim();
+    };
+
     try {
       console.log(`[INSTAGRAM OAUTH] Fetching profile details from Graph API /me...`);
-      // Request exact required fields: user_id,username,profile_picture_url,followers_count,media_count
       const profileRes = await fetch(
-        `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
+        `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count,account_type&access_token=${encodeURIComponent(shortLivedAccessToken)}`
       );
       if (profileRes.ok) {
         const pData = await profileRes.json();
-        if (pData.username) igUsername = pData.username;
-        if (pData.user_id) igUserId = String(pData.user_id);
-        if (typeof pData.followers_count === "number") followersCount = pData.followers_count;
-        if (typeof pData.media_count === "number") mediaCount = pData.media_count;
-        if (pData.profile_picture_url) profilePicUrl = pData.profile_picture_url;
-        // Log without tokens whether profile_picture_url came back or not
-        console.log(`[INSTAGRAM OAUTH] Profile fetch: username=@${igUsername}, profile_picture_url returned=${Boolean(profilePicUrl)}`);
+        extractProfileFields(pData);
+        console.log(`[INSTAGRAM OAUTH] Profile fetch: username=@${igUsername}, followers=${followersCount}, media=${mediaCount}`);
       } else {
         const pErr = await profileRes.text();
-        console.warn(`[INSTAGRAM OAUTH] Graph API /me returned ${profileRes.status}:`, pErr);
-        console.log(`[INSTAGRAM OAUTH] Falling back to basic Graph API /me...`);
+        console.warn(`[INSTAGRAM OAUTH] Graph API /me (full) returned ${profileRes.status}:`, pErr);
+      }
+
+      if (!igUsername) {
+        const fallbackRes = await fetch(
+          `https://graph.instagram.com/me?fields=id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
+        );
+        if (fallbackRes.ok) {
+          const fData = await fallbackRes.json();
+          extractProfileFields(fData);
+        }
+      }
+
+      if (!igUsername) {
         const basicRes = await fetch(
-          `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
+          `https://graph.instagram.com/me?fields=id,username,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
         );
         if (basicRes.ok) {
           const bData = await basicRes.json();
-          if (bData.username) igUsername = bData.username;
-          if (bData.user_id) igUserId = String(bData.user_id);
-          if (typeof bData.media_count === "number") mediaCount = bData.media_count;
-          if (bData.profile_picture_url) profilePicUrl = bData.profile_picture_url;
-          console.log(`[INSTAGRAM OAUTH] Profile fetch (fallback): username=@${igUsername}, profile_picture_url returned=${Boolean(profilePicUrl)}`);
-        } else {
-          const bErr = await basicRes.text();
-          console.warn(`[INSTAGRAM OAUTH] Basic profile fetch returned ${basicRes.status}:`, bErr);
+          extractProfileFields(bData);
         }
       }
     } catch (profileErr: any) {
@@ -5793,7 +5820,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     if (!igUsername) {
       return res.status(200).send(renderOAuthResult({
         success: false,
-        error: "Failed to retrieve your Instagram username from Meta Graph API. Please ensure your account has granted required permissions and is an Instagram Professional account.",
+        error: "Failed to retrieve your Instagram username from Meta Graph API. Please ensure your account is an Instagram Professional (Creator or Business) account.",
         returnTo: clientReturnTo,
       }));
     }
@@ -5804,8 +5831,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       const longLivedRes = await fetch(`https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(appSecret)}&access_token=${encodeURIComponent(shortLivedAccessToken)}`);
       if (longLivedRes.ok) {
         const llData = await longLivedRes.json();
-        if (llData.access_token) {
-          finalAccessToken = llData.access_token;
+        const llEntry = Array.isArray(llData?.data) && llData.data.length > 0 ? llData.data[0] : llData;
+        if (llEntry?.access_token) {
+          finalAccessToken = llEntry.access_token;
           console.log("[INSTAGRAM OAUTH] Acquired 60-day long-lived access token");
         }
       }
@@ -6037,7 +6065,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
             medianViews,
             engagementRate,
             riskEval.riskScore,
-            riskEval.isBlocked ? "blocked" : (riskEval.riskLevel === "MEDIUM" ? "needs_review" : "active"),
+            riskEval.isBlocked ? "blocked" : "active",
             savedAvatarUrl || null,
             finalAccessToken,
             new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)

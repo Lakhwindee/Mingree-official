@@ -332,7 +332,9 @@ export default function Profile() {
     setIsConnectingInstagram(true);
 
     if (prefetchedIgAuthUrl) {
-      window.location.href = prefetchedIgAuthUrl;
+      const targetUrl = prefetchedIgAuthUrl;
+      setPrefetchedIgAuthUrl(null);
+      window.location.href = targetUrl;
       return;
     }
 
