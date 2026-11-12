@@ -131,9 +131,11 @@ export default function Signup() {
 
       if (data.devOtp) {
         setDevOtpCode(String(data.devOtp));
+        toast.info(`Verification code: ${data.devOtp}`, { duration: 15000 });
       }
       setOtp("");
-      toast.success(`A 6-digit SMS verification code has been sent to +91 ${cleanPhone.slice(-10)}`);
+      const successMsg = data.message || `Verification code sent to +91 ${cleanPhone.slice(-10)} and ${cleanEmail}`;
+      toast.success(successMsg);
 
       setStep("otp");
       setResendTimer(60);

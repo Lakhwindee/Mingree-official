@@ -185,121 +185,7 @@ async function acquireLock<T>(campaignId: number, fn: () => Promise<T>): Promise
 }
 
 export function getInitialSeedWorkspaces(): CampaignWorkspaceData[] {
-  return [
-    {
-      id: 1,
-      sponsorId: 2,
-      title: "New Song / Brand Promo Campaign",
-      brand: "Brand Partner",
-      brandLogo: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-      description: "Promote brand audio / product on Instagram Reels across top creator channels.",
-      genre: "Music & Lifestyle",
-      language: "Hindi & English",
-      contentTypes: ["Reel"],
-      promotionStyle: "Lyrics / Page promotion",
-      audioUrl: "https://instagram.com/reels/sample",
-      referenceVideoUrl: "",
-      productAssets: [],
-      payAmount: 1200,
-      totalBudget: 1290,
-      escrowHeld: 0,
-      committedPayouts: 0,
-      releasedPayouts: 1200,
-      totalSlots: 1,
-      reservedSlots: 1,
-      remainingSlots: 0,
-      bookingModel: "instant",
-      minFollowers: 1000,
-      minMedianViews: 1000,
-      targetCountries: ["India"],
-      targetCities: ["All"],
-      requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
-      requiredTags: ["#MingreePromotions"],
-      requiredMentions: ["@brandpartner"],
-      disclosureInstructions: "#ad | Paid Partnership",
-      minDurationSecs: 15,
-      deadline: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
-      status: "completed",
-      createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-      updatedAt: new Date().toISOString(),
-      briefVersions: [
-        {
-          version: 1,
-          timestamp: new Date(Date.now() - 3 * 86400000).toISOString(),
-          updatedBy: 2,
-          changesSummary: "Campaign initial creation",
-          diffs: [],
-          briefSnapshot: {
-            title: "New Song / Brand Promo Campaign",
-            description: "Promote brand audio / product on Instagram Reels across top creator channels.",
-            requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
-            requiredTags: ["#MingreePromotions"],
-            requiredMentions: ["@brandpartner"],
-            disclosureInstructions: "#ad | Paid Partnership",
-            audioUrl: "https://instagram.com/reels/sample",
-            deadline: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
-          },
-        },
-      ],
-      participants: [
-        {
-          id: 1,
-          campaignId: 1,
-          creatorId: 1,
-          creatorName: "Judge Saab",
-          creatorHandle: "@ijudgesaab",
-          creatorAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-          creatorFollowers: 15400,
-          creatorMedianViews: 8200,
-          status: "approved",
-          payoutAmount: 1200,
-          reservedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-          expiresAt: new Date(Date.now() + 11 * 86400000).toISOString(),
-          briefAcknowledgedVersion: 1,
-          submission: {
-            postUrl: "https://www.instagram.com/reel/sample123/",
-            audioConfirmed: true,
-            submittedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-            viewsCount: 14200,
-            likesCount: 980,
-            commentsCount: 65,
-            liveVerified: true,
-          },
-          revisions: [],
-          draftSubmission: null,
-          draftStatus: "none",
-        },
-      ],
-      messages: [
-        {
-          id: Date.now() - 200000,
-          campaignId: 1,
-          senderId: 2,
-          senderName: "Brand Partner",
-          senderRole: "sponsor",
-          senderAvatar: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-          recipientId: null,
-          content: "Welcome to the campaign workspace! Selected creators have been invited to reserve their ad slot.",
-          isAnnouncement: true,
-          createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
-          readBy: [2, 1],
-        },
-        {
-          id: Date.now() - 100000,
-          campaignId: 1,
-          senderId: 2,
-          senderName: "Brand Partner",
-          senderRole: "sponsor",
-          senderAvatar: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-          recipientId: 1,
-          content: "✅ Reel APPROVED! ₹1,200 has been released directly to Judge Saab's wallet balance. Great job!",
-          isAnnouncement: false,
-          createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-          readBy: [2, 1],
-        },
-      ],
-    },
-  ];
+  return [];
 }
 
 function loadWorkspacesFromSeed(): CampaignWorkspaceData[] {
@@ -307,22 +193,9 @@ function loadWorkspacesFromSeed(): CampaignWorkspaceData[] {
 }
 
 let workspacesCache: Map<number, CampaignWorkspaceData> = new Map(loadWorkspacesFromSeed().map((c) => [c.id, c]));
-let adminSettingsTableReady = false;
 
 async function ensureAdminSettingsTable(): Promise<void> {
-  if (!isDatabaseConfigured || adminSettingsTableReady) return;
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS admin_settings (
-        key text PRIMARY KEY,
-        value jsonb NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    adminSettingsTableReady = true;
-  } catch (err: any) {
-    console.warn("[ENSURE ADMIN_SETTINGS TABLE WARNING]", err?.message || err);
-  }
+  // Schema creation is handled exclusively via explicit migrations (`npm run db:migrate`).
 }
 
 let lastSettingsLoadTime = 0;
@@ -337,8 +210,6 @@ export async function ensureWorkspacesLoaded(force = false): Promise<CampaignWor
   if (!force && workspacesCache.size > 0 && now - lastSettingsLoadTime < 3000) {
     return loadAllWorkspaces();
   }
-
-  await ensureAdminSettingsTable();
 
   // 1. Merge persisted workspaces from PostgreSQL admin_settings table
   try {
@@ -1189,14 +1060,18 @@ export async function applyOrReserveSlot(params: {
 
     try {
       await pool.query(
-        `INSERT INTO campaign_slots (campaign_id, creator_id, price, fee_artist, fee_creator, creator_net, status, deadline)
-         VALUES ($1, $2, $3, 0.00, 0.00, $3, $4, $5)
-         ON CONFLICT (campaign_id, creator_id) DO UPDATE SET status = EXCLUDED.status, deadline = EXCLUDED.deadline`,
+        `INSERT INTO workspace_participants (campaign_id, creator_id, status, payout_amount, expires_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (campaign_id, creator_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           payout_amount = EXCLUDED.payout_amount,
+           expires_at = EXCLUDED.expires_at,
+           updated_at = now()`,
         [
           campaign.id,
           params.creator.id,
-          campaign.payAmount,
           initialStatus,
+          campaign.payAmount,
           new Date(Date.now() + 48 * 3600000)
         ]
       );
@@ -1206,7 +1081,7 @@ export async function applyOrReserveSlot(params: {
         [campaign.id]
       );
     } catch (pgErr: any) {
-      console.error("[PG CAMPAIGN SLOT INSERT ERROR]", pgErr.message);
+      console.error("[PG WORKSPACE PARTICIPANTS INSERT ERROR]", pgErr.message);
     }
 
     return {
@@ -1547,24 +1422,34 @@ export async function submitCreatorReel(params: {
     await saveSingleWorkspace(campaign);
 
     try {
-      const slotRes = await pool.query(
-        `SELECT id FROM campaign_slots WHERE campaign_id = $1 AND creator_id = $2`,
+      const partRes = await pool.query(
+        `SELECT id FROM workspace_participants WHERE campaign_id = $1 AND creator_id = $2`,
         [campaign.id, params.creatorId]
       );
-      const slotId = slotRes.rows.length > 0 ? slotRes.rows[0].id : null;
+      const participantId = partRes.rows.length > 0 ? partRes.rows[0].id : null;
       const mediaMatch = cleanUrl.match(/\/(reel|p)\/([A-Za-z0-9_-]+)/);
       const mediaId = mediaMatch ? mediaMatch[2] : `reel_${Date.now()}`;
 
       await pool.query(
-        `INSERT INTO submissions (slot_id, campaign_id, creator_id, post_url, post_media_id, audio_confirmed, views_count, likes_count, comments_count, status, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', now())`,
-        [slotId, campaign.id, params.creatorId, cleanUrl, mediaId, Boolean(params.audioConfirmed ?? true), estViews, estLikes, estComments]
+        `INSERT INTO submissions (participant_id, campaign_id, creator_id, post_url, post_media_id, audio_confirmed, views_count, likes_count, comments_count, status, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', now())
+         ON CONFLICT (participant_id) DO UPDATE SET
+           post_url = EXCLUDED.post_url,
+           post_media_id = EXCLUDED.post_media_id,
+           audio_confirmed = EXCLUDED.audio_confirmed,
+           views_count = EXCLUDED.views_count,
+           likes_count = EXCLUDED.likes_count,
+           comments_count = EXCLUDED.comments_count,
+           status = 'pending',
+           submitted_at = now(),
+           updated_at = now()`,
+        [participantId, campaign.id, params.creatorId, cleanUrl, mediaId, Boolean(params.audioConfirmed ?? true), estViews, estLikes, estComments]
       );
 
-      if (slotId) {
+      if (participantId) {
         await pool.query(
-          `UPDATE campaign_slots SET status = 'submitted' WHERE id = $1`,
-          [slotId]
+          `UPDATE workspace_participants SET status = 'content_submitted', updated_at = now() WHERE id = $1`,
+          [participantId]
         );
       }
     } catch (pgErr: any) {
@@ -1660,11 +1545,11 @@ export async function reviewReelSubmission(params: {
 
       try {
         await pool.query(
-          `UPDATE submissions SET status = 'approved', reviewed_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
+          `UPDATE submissions SET status = 'approved', reviewed_at = now(), updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
           [campaign.id, participant.creatorId]
         );
         await pool.query(
-          `UPDATE campaign_slots SET status = 'approved' WHERE campaign_id = $1 AND creator_id = $2`,
+          `UPDATE workspace_participants SET status = 'approved', completed_at = now(), updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
           [campaign.id, participant.creatorId]
         );
       } catch (pgErr: any) {
@@ -1708,8 +1593,12 @@ export async function reviewReelSubmission(params: {
 
       try {
         await pool.query(
-          `UPDATE submissions SET status = 'revision_requested', rejection_reason = $1, reviewed_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
+          `UPDATE submissions SET status = 'revision_requested', rejection_reason = $1, reviewed_at = now(), updated_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
           [params.revisionReason || "Revision requested", campaign.id, participant.creatorId]
+        );
+        await pool.query(
+          `UPDATE workspace_participants SET status = 'revision_requested', updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
+          [campaign.id, participant.creatorId]
         );
       } catch (pgErr: any) {
         console.error("[PG REVISION UPDATE ERROR]", pgErr.message);
@@ -1747,11 +1636,11 @@ export async function reviewReelSubmission(params: {
 
       try {
         await pool.query(
-          `UPDATE submissions SET status = 'rejected', rejection_reason = $1, reviewed_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
+          `UPDATE submissions SET status = 'rejected', rejection_reason = $1, reviewed_at = now(), updated_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
           [params.rejectionReason || "Requirements not met", campaign.id, participant.creatorId]
         );
         await pool.query(
-          `UPDATE campaign_slots SET status = 'cancelled' WHERE campaign_id = $1 AND creator_id = $2`,
+          `UPDATE workspace_participants SET status = 'rejected', updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
           [campaign.id, participant.creatorId]
         );
       } catch (pgErr: any) {
@@ -1897,6 +1786,26 @@ export async function postWorkspaceMessage(params: {
   campaign.messages.push(newMsg);
   campaign.updatedAt = new Date().toISOString();
   await saveSingleWorkspace(campaign);
+
+  try {
+    const msgRes = await pool.query(
+      `INSERT INTO workspace_messages (campaign_id, sender_id, recipient_id, content, is_announcement)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [campaign.id, params.sender.id, params.recipientId !== undefined ? params.recipientId : null, params.content.trim(), Boolean(isAnnouncement)]
+    );
+    if (msgRes.rows.length > 0) {
+      const dbMsgId = msgRes.rows[0].id;
+      await pool.query(
+        `INSERT INTO workspace_message_reads (message_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [dbMsgId, params.sender.id]
+      );
+    }
+  } catch (pgErr: any) {
+    console.error("[PG WORKSPACE MESSAGE INSERT ERROR]", pgErr.message);
+  }
 
   return newMsg;
 }

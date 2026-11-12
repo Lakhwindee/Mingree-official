@@ -3,6 +3,7 @@ import { wallets, ledgerEntries, paymentOrders, upiPayments, subscriptions, kyc 
 import { eq } from "drizzle-orm";
 import crypto from "crypto";
 import { recordSecurityEvent } from "./instagramSecurity";
+import { encryptPan, maskPan, isValidPan } from "./withdrawalsAndKyc";
 
 interface WalletState {
   userId: number;
@@ -32,48 +33,10 @@ export interface StoredPaymentOrder {
 }
 
 // Ephemeral in-memory fallback used ONLY when DATABASE_URL is not configured (e.g. offline test runner).
-// Never reads or writes local JSON files on disk.
-const memoryWallets: Record<number, WalletState> = {
-  1: { userId: 1, balance: 101200, escrowHeld: 0 },
-  2: { userId: 2, balance: 98710, escrowHeld: 25000 },
-  3: { userId: 3, balance: 100000, escrowHeld: 0 },
-  4: { userId: 4, balance: 100000, escrowHeld: 30000 },
-  20: { userId: 20, balance: 100000, escrowHeld: 0 },
-  99: { userId: 99, balance: 250000, escrowHeld: 0 },
-};
+// Never reads or writes local JSON files on disk, and never pre-seeds fake balances.
+const memoryWallets: Record<number, WalletState> = {};
 
-const memoryLedger: LedgerEntryRecord[] = [
-  {
-    id: 1,
-    userId: 2,
-    type: "escrow_lock",
-    amount: -1290,
-    balanceAfter: 98710,
-    refType: "choose_creators_campaign",
-    refId: "New Song / Brand Promo Campaign",
-    createdAt: "2026-04-16T08:49:10.303Z",
-  },
-  {
-    id: 2,
-    userId: 2,
-    type: "escrow_release",
-    amount: -1290,
-    balanceAfter: 98710,
-    refType: "campaign_slot_approval",
-    refId: "camp_1_part_1",
-    createdAt: "2026-04-16T09:10:02.075Z",
-  },
-  {
-    id: 3,
-    userId: 1,
-    type: "payout_received",
-    amount: 1200,
-    balanceAfter: 101200,
-    refType: "campaign_slot_approval",
-    refId: "camp_1_part_1",
-    createdAt: "2026-04-16T09:10:02.076Z",
-  },
-];
+const memoryLedger: LedgerEntryRecord[] = [];
 
 const memoryPaymentOrders: StoredPaymentOrder[] = [];
 
@@ -751,13 +714,15 @@ export async function processOrderPaymentSuccess(
       const currentEscrow = Number(walletRes.rows[0]?.escrow_held || 0);
       let finalBalance = currentBalance;
 
-      if (details?.pan || details?.gstin) {
+      if (details?.pan && isValidPan(details.pan)) {
+        const encPan = encryptPan(details.pan);
+        const mskPan = maskPan(details.pan);
         await client
           .query(
-            `INSERT INTO kyc (user_id, pan_encrypted, name, status)
-             VALUES ($1, $2, $3, 'active')
-             ON CONFLICT (user_id) DO NOTHING`,
-            [userId, details.pan || null, details.billingAddress || null]
+            `INSERT INTO kyc (user_id, pan_encrypted, pan_masked, full_name_on_pan, dob, status)
+             VALUES ($1, $2, $3, $4, '2000-01-01', 'active')
+             ON CONFLICT (user_id) DO UPDATE SET pan_encrypted = EXCLUDED.pan_encrypted, pan_masked = EXCLUDED.pan_masked`,
+            [userId, encPan, mskPan, (details as any)?.name || details.billingAddress || "Verified User"]
           )
           .catch(() => {});
       }
@@ -972,15 +937,16 @@ export async function approveUpiTopup(upiId: number, adminUserId: number): Promi
     const newBal = Math.round((currentBal + numAmount) * 100) / 100;
 
     await client.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBal.toFixed(2), targetUserId]);
+    const canonicalRefId = String(upiId);
     await client.query(
       `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
        VALUES ($1, 'upi_topup', $2, $3, 'upi_payment', $4)`,
-      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), paymentUtr]
+      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), canonicalRefId]
     );
     await client.query(
       `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
-       VALUES ($1, 'upi_topup', $2, $3, $4, 'upi_payment', $5, 'Approved UPI Top-Up')`,
-      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), currentEscrow.toFixed(2), paymentUtr]
+       VALUES ($1, 'upi_topup', $2, $3, $4, 'upi_payment', $5, $6)`,
+      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), currentEscrow.toFixed(2), canonicalRefId, `Approved UPI Top-Up (UTR: ${paymentUtr})`]
     );
 
     await client.query("COMMIT");

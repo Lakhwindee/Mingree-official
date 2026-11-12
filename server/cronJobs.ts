@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { db } from "./db";
-import { deals, campaigns, users, notifications, subscriptions, metricSnapshots, creatorProfiles, instagramFollowerHistory } from "../shared/schema";
+import { deals, campaigns, users, notifications, subscriptions, metricSnapshots, creatorProfiles } from "../shared/schema";
 import { eq, and, lte, sql } from "drizzle-orm";
 import { CONFIG } from "../shared/config";
 import { releaseEscrow, refundEscrow } from "./walletAndPayments";

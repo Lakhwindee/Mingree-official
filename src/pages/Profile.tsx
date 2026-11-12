@@ -311,25 +311,20 @@ export default function Profile() {
     setIsConnectingInstagram(true);
 
     try {
-      let urlToOpen = "";
-      try {
-        const res = await fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          urlToOpen = data.instagramOAuthUrl || data.authUrl;
-        }
-      } catch {}
-
-      if (!urlToOpen) {
-        const clientId = "3167123270152518";
-        const redirectUri = window.location.origin + "/api/instagram/callback";
-        const scope = "instagram_business_basic,instagram_business_manage_insights";
-        urlToOpen = `https://www.instagram.com/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}`;
+      const res = await fetch(`/api/instagram/auth-url?userId=${user.id}`, { credentials: "include" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to initialize Instagram authorization session");
       }
-
+      const data = await res.json();
+      const urlToOpen = data.instagramOAuthUrl || data.authUrl;
+      if (!urlToOpen) {
+        throw new Error(data.error || "Instagram OAuth is not configured on the server");
+      }
       window.location.href = urlToOpen;
     } catch (err: any) {
       console.warn("[Instagram OAuth Notice]", err);
+      toast.error(err.message || "Failed to connect to Instagram");
       setIsConnectingInstagram(false);
     }
   };

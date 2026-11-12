@@ -7,9 +7,8 @@ var __export = (target, all) => {
 // server.ts
 import express from "express";
 import path2 from "path";
-import os from "os";
 import fs2 from "fs";
-import crypto4 from "crypto";
+import crypto5 from "crypto";
 import nodemailer from "nodemailer";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
@@ -52,28 +51,25 @@ __export(schema_exports, {
   SUBSCRIPTION_PLANS: () => SUBSCRIPTION_PLANS,
   adminSettings: () => adminSettings,
   appConfig: () => appConfig,
-  bankAccounts: () => bankAccounts,
+  campaignBriefVersions: () => campaignBriefVersions,
   campaignOffers: () => campaignOffers,
-  campaignSlots: () => campaignSlots,
   campaigns: () => campaigns,
+  categorySubscriptions: () => categorySubscriptions,
   cities: () => cities,
   cityChangeRequests: () => cityChangeRequests,
   creatorProfiles: () => creatorProfiles,
   deals: () => deals,
   disputes: () => disputes,
   emailOtps: () => emailOtps,
-  instagramFollowerHistory: () => instagramFollowerHistory,
   instagramIdentities: () => instagramIdentities,
   kyc: () => kyc,
   ledgerEntries: () => ledgerEntries,
   loginSchema: () => loginSchema,
   metricSnapshots: () => metricSnapshots,
   notifications: () => notifications,
-  passwordResets: () => passwordResets,
+  oauthStates: () => oauthStates,
   paymentOrders: () => paymentOrders,
   payoutMethods: () => payoutMethods,
-  payouts: () => payouts,
-  platformEarnings: () => platformEarnings,
   promoCodes: () => promoCodes,
   promoRedemptions: () => promoRedemptions,
   rateCards: () => rateCards,
@@ -81,294 +77,292 @@ __export(schema_exports, {
   signupSchema: () => signupSchema,
   submissions: () => submissions,
   subscriptions: () => subscriptions,
-  supportTickets: () => supportTickets,
   upiPayments: () => upiPayments,
   users: () => users,
   walletTransactions: () => walletTransactions,
   wallets: () => wallets,
-  withdrawals: () => withdrawals
+  withdrawals: () => withdrawals,
+  workspaceMessageReads: () => workspaceMessageReads,
+  workspaceMessages: () => workspaceMessages,
+  workspaceParticipants: () => workspaceParticipants
 });
-import { pgTable, text, serial, integer, timestamp, decimal, boolean, index, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
-import { createInsertSchema as baseCreateInsertSchema } from "drizzle-zod";
+import { sql } from "drizzle-orm";
+import {
+  pgTable,
+  text,
+  bigserial,
+  bigint,
+  integer,
+  timestamp,
+  numeric,
+  boolean,
+  index,
+  jsonb,
+  uniqueIndex,
+  date,
+  primaryKey
+} from "drizzle-orm/pg-core";
 import { z } from "zod";
 var users = pgTable("users", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  name: text("name").notNull().default(""),
   role: text("role").notNull().default("creator"),
   // creator, sponsor, admin
-  isEmailVerified: boolean("email_verified").notNull().default(false),
-  status: text("status").notNull().default("active"),
-  companyName: text("company_name"),
-  city: text("city"),
+  name: text("name").notNull().default(""),
+  handle: text("handle"),
   phone: text("phone"),
-  gstin: text("gstin"),
-  pan: text("pan"),
-  billingAddress: text("billing_address"),
+  companyName: text("company_name"),
+  gstNumber: text("gst_number"),
+  brandCategory: text("brand_category"),
+  bio: text("bio"),
+  city: text("city"),
+  state: text("state"),
+  country: text("country").notNull().default("India"),
+  niche: text("niche"),
+  gender: text("gender"),
+  tier: text("tier").notNull().default("Unlinked"),
+  followers: integer("followers").notNull().default(0),
+  instagramFollowers: integer("instagram_followers").notNull().default(0),
   avatar: text("avatar"),
   avatarUrl: text("avatar_url"),
+  status: text("status").notNull().default("active"),
+  trustScore: integer("trust_score").notNull().default(60),
+  isPro: boolean("is_pro").notNull().default(false),
+  proExpiresAt: timestamp("pro_expires_at"),
+  suspended: boolean("suspended").notNull().default(false),
+  suspendReason: text("suspend_reason"),
+  deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").notNull().defaultNow()
-});
+}, (table) => [
+  index("idx_users_role").on(table.role),
+  index("idx_users_city").on(table.city),
+  index("idx_users_created_at").on(table.createdAt)
+]);
 var emailOtps = pgTable("email_otps", {
-  id: serial("id").primaryKey(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
   email: text("email").notNull(),
   otpHash: text("otp_hash").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
+  purpose: text("purpose").notNull().default("verify"),
   attempts: integer("attempts").notNull().default(0),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var passwordResets = pgTable("password_resets", {
-  id: serial("id").primaryKey(),
-  email: text("email").notNull(),
-  tokenHash: text("token_hash").notNull(),
+  verified: boolean("verified").notNull().default(false),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow()
-});
+}, (table) => [
+  uniqueIndex("idx_email_otps_unique").on(table.email, table.purpose),
+  index("idx_email_otps_expires").on(table.email, table.expiresAt)
+]);
+var oauthStates = pgTable("oauth_states", {
+  state: text("state").primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  browserTokenHash: text("browser_token_hash").notNull(),
+  returnTo: text("return_to").notNull().default("/profile"),
+  redirectUri: text("redirect_uri").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_oauth_states_expires").on(table.expiresAt),
+  index("idx_oauth_states_user").on(table.userId)
+]);
 var creatorProfiles = pgTable("creator_profiles", {
-  userId: integer("user_id").primaryKey().references(() => users.id),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().unique().references(() => users.id, { onDelete: "cascade" }),
   instagramUserId: text("instagram_user_id").unique(),
   username: text("username"),
-  followers: integer("followers").notNull().default(0),
-  mediaCount: integer("media_count").notNull().default(0),
-  tierLabel: text("tier_label").default("Nano"),
-  medianViews: integer("median_views").notNull().default(0),
-  engagementRate: decimal("engagement_rate", { precision: 8, scale: 5 }).default("0.00000"),
-  indiaAudiencePct: decimal("india_audience_pct", { precision: 5, scale: 2 }),
-  riskScore: integer("risk_score").notNull().default(0),
-  status: text("status").notNull().default("pending"),
-  statusNote: text("status_note"),
+  fullName: text("full_name"),
   avatarUrl: text("avatar_url"),
+  followers: integer("followers").notNull().default(0),
+  followingCount: integer("following_count").notNull().default(0),
+  mediaCount: integer("media_count").notNull().default(0),
+  medianViews: integer("median_views").notNull().default(0),
+  engagementRate: numeric("engagement_rate", { precision: 6, scale: 2 }).notNull().default("0.00"),
+  tier: text("tier").notNull().default("Unlinked"),
+  status: text("status").notNull().default("pending"),
+  available: boolean("available").notNull().default(true),
+  riskScore: integer("risk_score").notNull().default(0),
+  riskFlags: jsonb("risk_flags").notNull().default([]),
   accessTokenEnc: text("access_token_enc"),
   tokenExpiresAt: timestamp("token_expires_at"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var rateCards = pgTable("rate_cards", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  deliverableType: text("deliverable_type").notNull(),
-  // Reel, Story, Collab
-  price: decimal("price", { precision: 12, scale: 2 }).notNull(),
+  metricsUpdatedAt: timestamp("metrics_updated_at"),
   updatedAt: timestamp("updated_at").notNull().defaultNow()
-});
+}, (table) => [
+  index("idx_creator_profiles_username").on(table.username),
+  index("idx_creator_profiles_followers").on(table.followers)
+]);
+var instagramIdentities = pgTable("instagram_identities", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  instagramUserId: text("instagram_user_id").notNull().unique(),
+  username: text("username"),
+  firstUserId: bigint("first_user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  currentUserId: bigint("current_user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  historicalUserIds: bigint("historical_user_ids", { mode: "number" }).array(),
+  connectCount: integer("connect_count").notNull().default(1),
+  firstLinkedAt: timestamp("first_linked_at").notNull().defaultNow(),
+  linkedAt: timestamp("linked_at").notNull().defaultNow(),
+  unlinkedAt: timestamp("unlinked_at"),
+  cooldownUntil: timestamp("cooldown_until")
+}, (table) => [
+  index("idx_instagram_identities_current_user").on(table.currentUserId),
+  index("idx_instagram_identities_username").on(table.username)
+]);
+var rateCards = pgTable("rate_cards", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  creatorId: bigint("creator_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  deliverableType: text("deliverable_type").notNull(),
+  basePrice: numeric("base_price", { precision: 12, scale: 2 }).notNull(),
+  minPrice: numeric("min_price", { precision: 12, scale: 2 }).notNull(),
+  maxPrice: numeric("max_price", { precision: 12, scale: 2 }),
+  active: boolean("active").notNull().default(true),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
+}, (table) => [
+  uniqueIndex("idx_rate_cards_creator_deliverable").on(table.creatorId, table.deliverableType)
+]);
+var categorySubscriptions = pgTable("category_subscriptions", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  category: text("category").notNull(),
+  categorySlug: text("category_slug"),
+  tier: text("tier").notNull().default("Nano"),
+  rate: numeric("rate", { precision: 12, scale: 2 }).notNull().default("500.00"),
+  joinedAt: timestamp("joined_at").notNull().defaultNow(),
+  subscribedAt: timestamp("subscribed_at").notNull().defaultNow()
+}, (table) => [
+  uniqueIndex("idx_category_sub_unique").on(table.userId, table.category, table.tier),
+  index("idx_category_sub_user").on(table.userId)
+]);
 var campaigns = pgTable("campaigns", {
-  id: serial("id").primaryKey(),
-  artistId: integer("artist_id").notNull().references(() => users.id),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  artistId: bigint("artist_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
+  brand: text("brand"),
+  brandLogo: text("brand_logo"),
+  category: text("category").notNull().default("music_reels"),
   songUrl: text("song_url"),
+  audioUrl: text("audio_url"),
+  referenceVideoUrl: text("reference_video_url"),
+  productAssets: jsonb("product_assets").notNull().default([]),
   genre: text("genre"),
   language: text("language"),
-  budget: decimal("budget", { precision: 12, scale: 2 }).notNull(),
-  escrowHeld: decimal("escrow_held", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  description: text("description"),
+  deliverableType: text("deliverable_type").notNull().default("reel"),
+  contentTypes: text("content_types").array().notNull().default(sql`ARRAY['Reel']::text[]`),
+  promotionStyle: text("promotion_style"),
+  budget: numeric("budget", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  budgetRemaining: numeric("budget_remaining", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  escrowHeld: numeric("escrow_held", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  committedPayouts: numeric("committed_payouts", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  releasedPayouts: numeric("released_payouts", { precision: 12, scale: 2 }).notNull().default("0.00"),
   pricingMode: text("pricing_mode").notNull().default("fixed"),
-  // fixed | cap
-  fixedPrice: decimal("fixed_price", { precision: 12, scale: 2 }),
-  priceCapPer1k: decimal("price_cap_per_1k", { precision: 12, scale: 2 }),
-  filters: jsonb("filters"),
-  requiredTags: text("required_tags").array(),
+  bookingModel: text("booking_model").notNull().default("instant"),
+  fixedPrice: numeric("fixed_price", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  totalSpots: integer("total_spots").notNull().default(1),
+  spotsRemaining: integer("spots_remaining").notNull().default(1),
+  reservedSlots: integer("reserved_slots").notNull().default(0),
+  minFollowers: integer("min_followers").notNull().default(1e3),
+  minMedianViews: integer("min_median_views").notNull().default(500),
+  minDurationSecs: integer("min_duration_secs").notNull().default(15),
+  tier: text("tier"),
+  targetTiers: text("target_tiers").array().notNull().default(sql`'{}'::text[]`),
+  targetCities: text("target_cities").array().notNull().default(sql`'{}'::text[]`),
+  targetCountries: text("target_countries").array().notNull().default(sql`ARRAY['India']::text[]`),
+  requiredTags: text("required_tags").array().notNull().default(sql`'{}'::text[]`),
+  requiredMentions: text("required_mentions").array().notNull().default(sql`'{}'::text[]`),
+  captionNote: text("caption_note"),
   requiredCaptionNote: text("required_caption_note"),
+  disclosureInstructions: text("disclosure_instructions").notNull().default("#ad | Paid Partnership"),
+  dealWindowHours: integer("deal_window_hours").notNull().default(48),
   deadline: timestamp("deadline"),
-  status: text("status").notNull().default("active")
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
 }, (table) => [
-  index("idx_campaigns_artist_status").on(table.artistId, table.status)
+  index("idx_campaigns_artist_id").on(table.artistId),
+  index("idx_campaigns_status").on(table.status),
+  index("idx_campaigns_created_at").on(table.createdAt)
 ]);
 var campaignOffers = pgTable("campaign_offers", {
-  id: serial("id").primaryKey(),
-  campaignId: integer("campaign_id").notNull().references(() => campaigns.id),
-  creatorId: integer("creator_id").notNull().references(() => users.id),
-  quotedPrice: decimal("quoted_price", { precision: 12, scale: 2 }),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  campaignId: bigint("campaign_id", { mode: "number" }).notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  creatorId: bigint("creator_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  deliverableType: text("deliverable_type").notNull().default("reel"),
+  creatorQuote: numeric("creator_quote", { precision: 12, scale: 2 }),
+  artistCounter: numeric("artist_counter", { precision: 12, scale: 2 }),
+  agreedPrice: numeric("agreed_price", { precision: 12, scale: 2 }),
+  round: integer("round").notNull().default(1),
   status: text("status").notNull().default("invited"),
-  // invited | quoted | auto_accepted | shortlisted | accepted | declined | withdrawn
-  source: text("source").notNull().default("autopilot")
-  // autopilot | direct
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow()
 }, (table) => [
-  index("idx_offers_campaign_id").on(table.campaignId),
-  index("idx_offers_creator_status").on(table.creatorId, table.status)
+  uniqueIndex("idx_campaign_offers_unique").on(table.campaignId, table.creatorId),
+  index("idx_campaign_offers_creator_status").on(table.creatorId, table.status),
+  index("idx_campaign_offers_campaign_id").on(table.campaignId)
 ]);
 var deals = pgTable("deals", {
-  id: serial("id").primaryKey(),
-  campaignId: integer("campaign_id").notNull().references(() => campaigns.id),
-  artistId: integer("artist_id").notNull().references(() => users.id),
-  creatorId: integer("creator_id").notNull().references(() => users.id),
-  price: decimal("price", { precision: 12, scale: 2 }).notNull(),
-  feeArtist: decimal("fee_artist", { precision: 12, scale: 2 }).notNull(),
-  feeCreator: decimal("fee_creator", { precision: 12, scale: 2 }).notNull(),
-  creatorNet: decimal("creator_net", { precision: 12, scale: 2 }).notNull(),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  offerId: bigint("offer_id", { mode: "number" }).references(() => campaignOffers.id, { onDelete: "set null" }),
+  campaignId: bigint("campaign_id", { mode: "number" }).notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  artistId: bigint("artist_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  creatorId: bigint("creator_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  deliverableType: text("deliverable_type").notNull().default("reel"),
+  price: numeric("price", { precision: 12, scale: 2 }).notNull(),
+  artistCost: numeric("artist_cost", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  feeArtist: numeric("fee_artist", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  feeCreator: numeric("fee_creator", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  creatorNet: numeric("creator_net", { precision: 12, scale: 2 }).notNull().default("0.00"),
   status: text("status").notNull().default("accepted"),
-  // accepted | posted | approved | released | disputed | refunded | expired
-  deadline: timestamp("deadline"),
   postUrl: text("post_url"),
+  postMediaId: text("post_media_id"),
+  audioConfirmed: boolean("audio_confirmed").notNull().default(false),
+  resubmitCount: integer("resubmit_count").notNull().default(0),
+  rejectionReason: text("rejection_reason"),
+  deadline: timestamp("deadline").notNull(),
   submittedAt: timestamp("submitted_at"),
   approvedAt: timestamp("approved_at"),
   firstReleaseAt: timestamp("first_release_at"),
-  finalReleaseAt: timestamp("final_release_at")
+  finalReleaseAt: timestamp("final_release_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow()
 }, (table) => [
   index("idx_deals_campaign_id").on(table.campaignId),
+  index("idx_deals_artist_id").on(table.artistId),
   index("idx_deals_creator_status").on(table.creatorId, table.status),
-  index("idx_deals_artist_status").on(table.artistId, table.status)
+  index("idx_deals_status_deadline").on(table.status, table.deadline)
 ]);
-var metricSnapshots = pgTable("metric_snapshots", {
-  id: serial("id").primaryKey(),
-  dealId: integer("deal_id").notNull().references(() => deals.id),
-  takenAt: timestamp("taken_at").notNull().defaultNow(),
-  views: integer("views").notNull().default(0),
-  likes: integer("likes").notNull().default(0),
-  comments: integer("comments").notNull().default(0),
-  stillLive: boolean("still_live").notNull().default(true)
-});
-var disputes = pgTable("disputes", {
-  id: serial("id").primaryKey(),
-  dealId: integer("deal_id").notNull().references(() => deals.id),
-  raisedByUserId: integer("raised_by_user_id").notNull().references(() => users.id),
-  reason: text("reason").notNull(),
-  evidenceUrl: text("evidence_url"),
-  status: text("status").notNull().default("open"),
-  resolvedAt: timestamp("resolved_at"),
-  resolutionNotes: text("resolution_notes")
-});
-var wallets = pgTable("wallets", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().unique().references(() => users.id),
-  balance: decimal("balance", { precision: 12, scale: 2 }).notNull().default("0.00"),
-  escrowHeld: decimal("escrow_held", { precision: 12, scale: 2 }).notNull().default("0.00")
-});
-var ledgerEntries = pgTable("ledger_entries", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  type: text("type").notNull(),
-  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
-  balanceAfter: decimal("balance_after", { precision: 12, scale: 2 }).notNull(),
-  refType: text("ref_type"),
-  refId: text("ref_id"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var paymentOrders = pgTable("payment_orders", {
-  id: serial("id").primaryKey(),
-  orderId: text("order_id").notNull().unique(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  purpose: text("purpose").notNull(),
-  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
-  status: text("status").notNull().default("pending")
-});
-var upiPayments = pgTable("upi_payments", {
-  id: serial("id").primaryKey(),
-  utr: text("utr").notNull().unique(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
+var workspaceParticipants = pgTable("workspace_participants", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  campaignId: bigint("campaign_id", { mode: "number" }).notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  creatorId: bigint("creator_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  creatorName: text("creator_name").notNull(),
+  creatorHandle: text("creator_handle").notNull(),
+  creatorAvatar: text("creator_avatar"),
+  creatorFollowers: integer("creator_followers").notNull().default(0),
+  creatorMedianViews: integer("creator_median_views").notNull().default(0),
   status: text("status").notNull().default("pending"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var promoCodes = pgTable("promo_codes", {
-  id: serial("id").primaryKey(),
-  code: text("code").notNull().unique(),
-  discountType: text("discount_type").notNull(),
-  discountValue: decimal("discount_value", { precision: 12, scale: 2 }).notNull(),
-  maxUses: integer("max_uses"),
-  usedCount: integer("used_count").notNull().default(0),
+  payoutAmount: numeric("payout_amount", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  baseRate: numeric("base_rate", { precision: 12, scale: 2 }),
+  briefAcknowledgedVersion: integer("brief_acknowledged_version").notNull().default(1),
+  draftSubmission: jsonb("draft_submission"),
+  draftStatus: text("draft_status").notNull().default("none"),
+  draftFeedbackNotes: text("draft_feedback_notes"),
+  submission: jsonb("submission"),
+  revisions: jsonb("revisions").notNull().default([]),
+  negotiationStatus: text("negotiation_status").notNull().default("initial"),
+  lastOfferedPrice: numeric("last_offered_price", { precision: 12, scale: 2 }),
+  lastOfferBy: text("last_offer_by"),
+  reservedAt: timestamp("reserved_at").notNull().defaultNow(),
   expiresAt: timestamp("expires_at"),
-  isActive: boolean("is_active").notNull().default(true)
-});
-var promoRedemptions = pgTable("promo_redemptions", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  promoCodeId: integer("promo_code_id").notNull().references(() => promoCodes.id),
-  redeemedAt: timestamp("redeemed_at").notNull().defaultNow()
+  // nullable!
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
 }, (table) => [
-  uniqueIndex("idx_promo_user_unique").on(table.userId, table.promoCodeId)
+  uniqueIndex("idx_workspace_participants_unique").on(table.campaignId, table.creatorId),
+  index("idx_workspace_participants_campaign").on(table.campaignId, table.status),
+  index("idx_workspace_participants_creator").on(table.creatorId, table.status)
 ]);
-var subscriptions = pgTable("subscriptions", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  plan: text("plan").notNull(),
-  status: text("status").notNull().default("active"),
-  expiresAt: timestamp("expires_at")
-});
-var withdrawals = pgTable("withdrawals", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  amount: decimal("amount", { precision: 12, scale: 2 }).notNull(),
-  tdsAmount: decimal("tds_amount", { precision: 12, scale: 2 }).notNull().default("0.00"),
-  payoutMethodId: integer("payout_method_id"),
-  status: text("status").notNull().default("pending"),
-  // pending | approved | rejected
-  utrRef: text("utr_ref"),
-  rejectionReason: text("rejection_reason"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var payoutMethods = pgTable("payout_methods", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  type: text("type").notNull(),
-  // UPI, Bank
-  accountDetails: jsonb("account_details").notNull(),
-  isDefault: boolean("is_default").notNull().default(false)
-});
-var kyc = pgTable("kyc", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  panEncrypted: text("pan_encrypted"),
-  name: text("name"),
-  status: text("status").notNull().default("pending")
-});
-var notifications = pgTable("notifications", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  title: text("title").notNull(),
-  message: text("message").notNull(),
-  read: boolean("read").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var instagramIdentities = pgTable("instagram_identities", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  instagramUserId: text("instagram_user_id").notNull(),
-  username: text("username").notNull(),
-  boundAt: timestamp("bound_at").notNull().defaultNow()
-});
-var instagramFollowerHistory = pgTable("instagram_follower_history", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  followers: integer("followers").notNull(),
-  recordedAt: timestamp("recorded_at").notNull().defaultNow()
-});
-var securityAuditLogs = pgTable("security_audit_logs", {
-  id: serial("id").primaryKey(),
-  event: text("event").notNull(),
-  mingreeUserId: integer("mingree_user_id"),
-  details: jsonb("details"),
-  ipAddress: text("ip_address"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var supportTickets = pgTable("support_tickets", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  subject: text("subject").notNull(),
-  message: text("message").notNull(),
-  status: text("status").notNull().default("open"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var appConfig = pgTable("app_config", {
-  id: serial("id").primaryKey(),
-  key: text("key").notNull().unique(),
-  value: text("value").notNull()
-});
-var campaignSlots = pgTable("campaign_slots", {
-  id: serial("id").primaryKey(),
-  campaignId: integer("campaign_id").notNull().references(() => campaigns.id),
-  creatorId: integer("creator_id").notNull().references(() => users.id),
-  price: decimal("price", { precision: 14, scale: 2 }).notNull(),
-  feeArtist: decimal("fee_artist", { precision: 14, scale: 2 }).notNull().default("0.00"),
-  feeCreator: decimal("fee_creator", { precision: 14, scale: 2 }).notNull().default("0.00"),
-  creatorNet: decimal("creator_net", { precision: 14, scale: 2 }).notNull().default("0.00"),
-  status: text("status").notNull().default("reserved"),
-  deadline: timestamp("deadline").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
 var submissions = pgTable("submissions", {
-  id: serial("id").primaryKey(),
-  slotId: integer("slot_id").references(() => campaignSlots.id),
-  campaignId: integer("campaign_id").notNull().references(() => campaigns.id),
-  creatorId: integer("creator_id").notNull().references(() => users.id),
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  participantId: bigint("participant_id", { mode: "number" }).unique().references(() => workspaceParticipants.id, { onDelete: "set null" }),
+  campaignId: bigint("campaign_id", { mode: "number" }).notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  creatorId: bigint("creator_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
   postUrl: text("post_url").notNull(),
   postMediaId: text("post_media_id"),
   audioConfirmed: boolean("audio_confirmed").notNull().default(false),
@@ -379,78 +373,292 @@ var submissions = pgTable("submissions", {
   rejectionReason: text("rejection_reason"),
   submittedAt: timestamp("submitted_at").notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at")
-});
-var payouts = pgTable("payouts", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
-  tdsAmount: decimal("tds_amount", { precision: 14, scale: 2 }).notNull().default("0.00"),
-  netAmount: decimal("net_amount", { precision: 14, scale: 2 }).notNull(),
-  payoutMethodId: integer("payout_method_id"),
-  payoutDetails: jsonb("payout_details").notNull().default({}),
-  status: text("status").notNull().default("pending"),
-  transferRef: text("transfer_ref"),
-  rejectionReason: text("rejection_reason"),
+}, (table) => [
+  index("idx_submissions_creator_status").on(table.creatorId, table.status),
+  index("idx_submissions_campaign_id").on(table.campaignId)
+]);
+var workspaceMessages = pgTable("workspace_messages", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  campaignId: bigint("campaign_id", { mode: "number" }).notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  senderId: bigint("sender_id", { mode: "number" }).notNull().default(0),
+  senderName: text("sender_name").notNull(),
+  senderRole: text("sender_role").notNull(),
+  senderAvatar: text("sender_avatar"),
+  recipientId: bigint("recipient_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  content: text("content").notNull(),
+  attachments: jsonb("attachments").notNull().default([]),
+  isAnnouncement: boolean("is_announcement").notNull().default(false),
+  isBriefChange: boolean("is_brief_change").notNull().default(false),
+  briefVersion: integer("brief_version"),
+  negotiationOffer: jsonb("negotiation_offer"),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_workspace_messages_campaign_created").on(table.campaignId, table.createdAt),
+  index("idx_workspace_messages_recipient").on(table.campaignId, table.recipientId)
+]);
+var workspaceMessageReads = pgTable("workspace_message_reads", {
+  messageId: bigint("message_id", { mode: "number" }).notNull().references(() => workspaceMessages.id, { onDelete: "cascade" }),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  readAt: timestamp("read_at").notNull().defaultNow()
+}, (table) => [
+  primaryKey({ columns: [table.messageId, table.userId] }),
+  index("idx_workspace_message_reads_user").on(table.userId, table.messageId)
+]);
+var campaignBriefVersions = pgTable("campaign_brief_versions", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  campaignId: bigint("campaign_id", { mode: "number" }).notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  updatedBy: bigint("updated_by", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  changesSummary: text("changes_summary").notNull(),
+  diffs: jsonb("diffs").notNull().default([]),
+  briefSnapshot: jsonb("brief_snapshot").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  uniqueIndex("idx_campaign_brief_versions_unique").on(table.campaignId, table.version),
+  index("idx_campaign_brief_versions_campaign").on(table.campaignId, table.version)
+]);
+var metricSnapshots = pgTable("metric_snapshots", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  dealId: bigint("deal_id", { mode: "number" }).notNull().references(() => deals.id, { onDelete: "cascade" }),
+  views: integer("views").notNull().default(0),
+  likes: integer("likes").notNull().default(0),
+  comments: integer("comments").notNull().default(0),
+  shares: integer("shares").notNull().default(0),
+  saves: integer("saves").notNull().default(0),
+  stillLive: boolean("still_live").notNull().default(true),
+  checkpoint: text("checkpoint").notNull().default("auto"),
+  takenAt: timestamp("taken_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_metric_snapshots_deal_id").on(table.dealId)
+]);
+var disputes = pgTable("disputes", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  dealId: bigint("deal_id", { mode: "number" }).notNull().references(() => deals.id, { onDelete: "cascade" }),
+  raisedByUserId: bigint("raised_by_user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  reason: text("reason").notNull(),
+  evidenceUrls: text("evidence_urls").array().notNull().default(sql`'{}'::text[]`),
+  status: text("status").notNull().default("open"),
+  resolution: text("resolution"),
+  resolvedByAdminId: bigint("resolved_by_admin_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  resolutionNotes: text("resolution_notes"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  processedAt: timestamp("processed_at"),
-  processedBy: integer("processed_by").references(() => users.id)
+  resolvedAt: timestamp("resolved_at")
+}, (table) => [
+  index("idx_disputes_deal_id").on(table.dealId),
+  index("idx_disputes_status").on(table.status)
+]);
+var wallets = pgTable("wallets", {
+  userId: bigint("user_id", { mode: "number" }).primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  balance: numeric("balance", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  escrowHeld: numeric("escrow_held", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
 });
-var walletTransactions = pgTable("wallet_transactions", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
+var ledgerEntries = pgTable("ledger_entries", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
-  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
-  balanceAfter: decimal("balance_after", { precision: 14, scale: 2 }).notNull(),
-  escrowAfter: decimal("escrow_after", { precision: 14, scale: 2 }).notNull().default("0.00"),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  balanceAfter: numeric("balance_after", { precision: 12, scale: 2 }).notNull(),
+  refType: text("ref_type"),
+  refId: text("ref_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_ledger_entries_user_created").on(table.userId, table.createdAt),
+  index("idx_ledger_entries_type").on(table.type)
+]);
+var walletTransactions = pgTable("wallet_transactions", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  balanceAfter: numeric("balance_after", { precision: 12, scale: 2 }).notNull(),
+  escrowAfter: numeric("escrow_after", { precision: 12, scale: 2 }).notNull().default("0.00"),
   referenceType: text("reference_type"),
   referenceId: text("reference_id"),
   description: text("description"),
   createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var platformEarnings = pgTable("platform_earnings", {
-  id: serial("id").primaryKey(),
-  dealId: integer("deal_id"),
-  campaignId: integer("campaign_id").references(() => campaigns.id),
-  source: text("source").notNull(),
-  feeAmount: decimal("fee_amount", { precision: 14, scale: 2 }).notNull(),
-  gstAmount: decimal("gst_amount", { precision: 14, scale: 2 }).notNull().default("0.00"),
-  totalEarned: decimal("total_earned", { precision: 14, scale: 2 }).notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-var bankAccounts = pgTable("bank_accounts", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
+}, (table) => [
+  index("idx_wallet_transactions_user_created").on(table.userId, table.createdAt)
+]);
+var paymentOrders = pgTable("payment_orders", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  orderId: text("order_id").notNull().unique(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  purpose: text("purpose").notNull(),
+  metadata: jsonb("metadata").notNull().default({}),
+  cashfreePaymentId: text("cashfree_payment_id"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  paidAt: timestamp("paid_at")
+}, (table) => [
+  index("idx_payment_orders_user_id").on(table.userId, table.createdAt),
+  index("idx_payment_orders_status").on(table.status)
+]);
+var upiPayments = pgTable("upi_payments", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  utr: text("utr").notNull().unique(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at")
+}, (table) => [
+  index("idx_upi_payments_status").on(table.status, table.createdAt),
+  index("idx_upi_payments_user_id").on(table.userId)
+]);
+var kyc = pgTable("kyc", {
+  userId: bigint("user_id", { mode: "number" }).primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  panEncrypted: text("pan_encrypted").notNull(),
+  panMasked: text("pan_masked").notNull(),
+  fullNameOnPan: text("full_name_on_pan").notNull().default(""),
+  name: text("name"),
+  dob: date("dob").notNull().default("2000-01-01"),
+  status: text("status").notNull().default("pending"),
+  rejectionReason: text("rejection_reason"),
+  submittedAt: timestamp("submitted_at").notNull().defaultNow(),
+  verifiedAt: timestamp("verified_at")
+}, (table) => [
+  index("idx_kyc_status").on(table.status)
+]);
+var payoutMethods = pgTable("payout_methods", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
-  upiId: text("upi_id"),
-  accountName: text("account_name"),
-  accountNumber: text("account_number"),
-  ifsc: text("ifsc"),
-  bankName: text("bank_name"),
+  // UPI, Bank
+  accountDetails: jsonb("account_details").notNull().default({}),
+  accountDetailsEncrypted: text("account_details_encrypted").notNull().default(""),
+  maskedAccount: text("masked_account").notNull().default(""),
   isDefault: boolean("is_default").notNull().default(false),
+  isPrimary: boolean("is_primary").notNull().default(true),
+  verified: boolean("verified").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_payout_methods_user_id").on(table.userId)
+]);
+var withdrawals = pgTable("withdrawals", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  tdsAmount: numeric("tds_amount", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  netAmount: numeric("net_amount", { precision: 12, scale: 2 }).notNull().default("0.00"),
+  payoutMethodId: bigint("payout_method_id", { mode: "number" }).references(() => payoutMethods.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("pending"),
+  utr: text("utr"),
+  utrRef: text("utr_ref"),
+  rejectionReason: text("rejection_reason"),
+  requestedAt: timestamp("requested_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  processedAt: timestamp("processed_at")
+}, (table) => [
+  index("idx_withdrawals_user_id").on(table.userId, table.requestedAt),
+  index("idx_withdrawals_status").on(table.status, table.requestedAt)
+]);
+var promoCodes = pgTable("promo_codes", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  code: text("code").notNull().unique(),
+  type: text("type").notNull().default("percentage"),
+  discountType: text("discount_type").notNull().default("percentage"),
+  value: numeric("value", { precision: 8, scale: 2 }).notNull().default("0.00"),
+  discountValue: numeric("discount_value", { precision: 8, scale: 2 }).notNull().default("0.00"),
+  maxUses: integer("max_uses"),
+  usedCount: integer("used_count").notNull().default(0),
+  perUserLimit: integer("per_user_limit").notNull().default(1),
+  expiresAt: timestamp("expires_at"),
+  active: boolean("active").notNull().default(true),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: bigint("created_by", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow()
 });
+var promoRedemptions = pgTable("promo_redemptions", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  promoCodeId: bigint("promo_code_id", { mode: "number" }).notNull().references(() => promoCodes.id, { onDelete: "cascade" }),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  redeemedAt: timestamp("redeemed_at").notNull().defaultNow()
+}, (table) => [
+  uniqueIndex("idx_promo_user_unique").on(table.promoCodeId, table.userId)
+]);
+var subscriptions = pgTable("subscriptions", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  plan: text("plan").notNull().default("pro_monthly"),
+  status: text("status").notNull().default("active"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  promoCodeId: bigint("promo_code_id", { mode: "number" }).references(() => promoCodes.id, { onDelete: "set null" }),
+  paymentOrderId: text("payment_order_id"),
+  autoRenew: boolean("auto_renew").notNull().default(false)
+}, (table) => [
+  index("idx_subscriptions_status_expires").on(table.status, table.expiresAt)
+]);
+var notifications = pgTable("notifications", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull().default("general"),
+  title: text("title").notNull(),
+  body: text("body").notNull().default(""),
+  message: text("message").notNull().default(""),
+  link: text("link"),
+  read: boolean("read").notNull().default(false),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_notifications_user_unread").on(table.userId, table.isRead, table.createdAt)
+]);
+var securityAuditLogs = pgTable("security_audit_logs", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  event: text("event").notNull(),
+  mingreeUserId: bigint("mingree_user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  userId: bigint("user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
+  instagramUsername: text("instagram_username"),
+  instagramUserId: text("instagram_user_id"),
+  riskScore: integer("risk_score").notNull().default(0),
+  riskLevel: text("risk_level").notNull().default("LOW"),
+  riskFactors: jsonb("risk_factors").notNull().default([]),
+  flags: jsonb("flags").notNull().default([]),
+  followers: integer("followers").notNull().default(0),
+  mediaCount: integer("media_count").notNull().default(0),
+  ipAddress: text("ip_address"),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  decision: text("decision").notNull().default("ALLOW"),
+  details: jsonb("details").notNull().default({}),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (table) => [
+  index("idx_security_audit_logs_event").on(table.event, table.createdAt),
+  index("idx_security_audit_logs_user").on(table.mingreeUserId, table.createdAt)
+]);
+var cities = pgTable("cities", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  name: text("name").notNull().unique(),
+  state: text("state").notNull(),
+  country: text("country").notNull().default("India"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+});
+var cityChangeRequests = pgTable("city_change_requests", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  userId: bigint("user_id", { mode: "number" }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  fromCity: text("from_city"),
+  toCity: text("to_city").notNull(),
+  reason: text("reason"),
+  status: text("status").notNull().default("pending"),
+  adminNote: text("admin_note"),
+  note: text("note"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  decidedAt: timestamp("decided_at")
+}, (table) => [
+  index("idx_city_change_requests_status").on(table.status, table.createdAt)
+]);
 var adminSettings = pgTable("admin_settings", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
-  description: text("description"),
   updatedAt: timestamp("updated_at").notNull().defaultNow()
 });
-var cities = pgTable("cities", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
-  state: text("state").notNull(),
-  active: boolean("active").notNull().default(true)
-});
-var cityChangeRequests = pgTable("city_change_requests", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull().references(() => users.id),
-  fromCity: text("from_city").notNull(),
-  toCity: text("to_city").notNull(),
-  reason: text("reason").notNull(),
-  status: text("status").notNull().default("pending"),
-  // pending | approved | rejected
-  note: text("note"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
+var appConfig = pgTable("app_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
 });
 var signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
@@ -506,12 +714,17 @@ var SUBSCRIPTION_PLANS = {
 // server/db.ts
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import fs from "fs";
-import path from "path";
 var { Pool } = pg;
-var isLocalFallbackAllowed = true;
+pg.types.setTypeParser(20, (val) => {
+  const n = Number(val);
+  if (!Number.isSafeInteger(n)) {
+    throw new RangeError(`PostgreSQL BIGINT value "${val}" exceeds JS Number.MAX_SAFE_INTEGER`);
+  }
+  return n;
+});
+var isLocalFallbackAllowed = process.env.NODE_ENV !== "production";
 function getValidDatabaseUrl() {
-  const raw = (process.env.DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL || process.env.STORAGE_URL || process.env.STORAGE_POSTGRES_URL || process.env.NEON_DATABASE_URL || process.env.POSTGRES_URL_NON_POOLING || "").trim();
+  const raw = (process.env.DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL || process.env.STORAGE_URL || process.env.STORAGE_POSTGRES_URL || process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_POSTGRES_URL || process.env.NEON_DATABASE_URL || process.env.POSTGRES_URL_NON_POOLING || "").trim();
   if (!raw) return void 0;
   try {
     new URL(raw);
@@ -520,99 +733,55 @@ function getValidDatabaseUrl() {
     return void 0;
   }
 }
-var validDbUrl = getValidDatabaseUrl();
-var isDatabaseConfigured = Boolean(validDbUrl);
-var rawPool = new Pool(
-  validDbUrl ? {
-    connectionString: validDbUrl,
-    ssl: validDbUrl.includes("localhost") || validDbUrl.includes("127.0.0.1") ? void 0 : { rejectUnauthorized: false },
-    connectionTimeoutMillis: 5e3
-  } : {
-    host: "127.0.0.1",
-    port: 5432,
-    connectionTimeoutMillis: 500
-  }
-);
-rawPool.on("error", (err) => {
+var currentDbUrl = getValidDatabaseUrl();
+var isDatabaseConfigured = Boolean(currentDbUrl);
+if (process.env.NODE_ENV === "production" && !currentDbUrl && !process.env.HYPERDRIVE) {
+  console.error("================================================================================");
+  console.error("FATAL ERROR: DATABASE_URL / Hyperdrive is missing or invalid in production.");
+  console.error("Production launch requires a persistent PostgreSQL database (Supabase PostgreSQL via Cloudflare Hyperdrive).");
+  console.error("In-memory database fallbacks are strictly disabled in production.");
+  console.error("Halting server startup.");
+  console.error("================================================================================");
+  process.exit(1);
+}
+function createPgPool(url) {
+  return new Pool(
+    url ? {
+      connectionString: url,
+      ssl: url.includes("localhost") || url.includes("127.0.0.1") ? void 0 : { rejectUnauthorized: false },
+      connectionTimeoutMillis: 5e3
+    } : {
+      host: "127.0.0.1",
+      port: 5432,
+      connectionTimeoutMillis: 500
+    }
+  );
+}
+var activePool = createPgPool(currentDbUrl);
+var activeDb = drizzle(activePool, { schema: schema_exports });
+activePool.on("error", (err) => {
   console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
 });
-var originalQuery = rawPool.query.bind(rawPool);
-rawPool.query = (...args) => {
-  if (!isDatabaseConfigured) {
-    return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
-  }
-  return originalQuery(...args);
-};
-var pool = rawPool;
-var db = drizzle(pool, { schema: schema_exports });
-var schemaInitialized = false;
-async function ensureSchemaInitialized(client) {
-  if (!isDatabaseConfigured || schemaInitialized) return;
-  schemaInitialized = true;
-  let localClient;
-  try {
-    localClient = client || await pool.connect();
-  } catch (connErr) {
-    console.warn("[DB SCHEMA CONNECT SKIPPED]", connErr?.message || connErr);
-    return;
-  }
-  const shouldRelease = !client;
-  try {
-    const migrationPath = path.join(process.cwd(), "migrations", "001_init.sql");
-    const phase1MigrationPath = path.join(process.cwd(), "migrations", "002_phase1_consolidation.sql");
-    let initSql = "";
-    if (fs.existsSync(migrationPath)) {
-      initSql = fs.readFileSync(migrationPath, "utf-8");
-    }
-    if (initSql) {
-      await localClient.query(initSql);
-      if (fs.existsSync(phase1MigrationPath)) {
-        const phase1Sql = fs.readFileSync(phase1MigrationPath, "utf-8");
-        if (phase1Sql) {
-          await localClient.query(phase1Sql).catch((err) => {
-            console.warn("[DB PHASE1 MIGRATION WARN]", err?.message || err);
-          });
+var pool = new Proxy({}, {
+  get(_target, prop) {
+    if (prop === "query") {
+      return (...args) => {
+        if (!isDatabaseConfigured) {
+          return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
         }
-      }
-      await localClient.query(`
-        ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS avatar_url text;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
-        CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
-      `).catch(() => {
-      });
-      await localClient.query(`
-        DELETE FROM campaigns
-        WHERE title ILIKE '%boAt%' OR title ILIKE '%Myntra%' OR title ILIKE '%Spotify%'
-           OR title ILIKE '%Zomato%' OR title ILIKE '%Mamaearth%' OR title ILIKE '%Nykaa%'
-           OR title ILIKE '%Puma%' OR title ILIKE '%OnePlus%' OR title ILIKE '%Noise%'
-           OR title ILIKE '%Swiggy%' OR title ILIKE '%CRED%' OR title ILIKE '%Cult.fit%'
-           OR title ILIKE '%Lookbook%';
-
-        DELETE FROM creator_profiles 
-        WHERE user_id IN (
-          SELECT id FROM users 
-          WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-             OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner')
-        );
-
-        DELETE FROM users 
-        WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-           OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
-      `).catch(() => {
-      });
-      schemaInitialized = true;
-      console.log("[DB SCHEMA] Applied migrations/001_init.sql and 002_phase1_consolidation.sql successfully.");
+        return activePool.query(...args);
+      };
     }
-  } catch (err) {
-    console.error("[DB SCHEMA INIT ERROR]", err?.message || err);
-  } finally {
-    if (shouldRelease) {
-      localClient.release();
-    }
+    const val = activePool[prop];
+    return typeof val === "function" ? val.bind(activePool) : val;
   }
-}
+});
+var db = new Proxy({}, {
+  get(_target, prop) {
+    const val = activeDb[prop];
+    return typeof val === "function" ? val.bind(activeDb) : val;
+  }
+});
 async function verifyDbConnection() {
   if (!isDatabaseConfigured) {
     return false;
@@ -621,12 +790,11 @@ async function verifyDbConnection() {
     const client = await pool.connect();
     try {
       await client.query("SELECT 1");
-      await ensureSchemaInitialized(client);
       return true;
     } finally {
       client.release();
     }
-  } catch (err) {
+  } catch {
     isDatabaseConfigured = false;
     return false;
   }
@@ -671,6 +839,233 @@ function getTierNameByFollowers(followers, isConnected = true) {
   if (followers > MAX_FOLLOWERS) return "Above 500K (Not eligible for fixed tiers)";
   const tier = getTierByFollowers(followers);
   return tier ? tier.name : INELIGIBLE_TIER_LABEL;
+}
+
+// server/storage.ts
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import crypto from "crypto";
+import path from "path";
+import fs from "fs";
+var activeR2BucketBinding = null;
+function getR2Client() {
+  const accountId = (process.env.R2_ACCOUNT_ID || "").trim();
+  const accessKeyId = (process.env.R2_ACCESS_KEY_ID || "").trim();
+  const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || "").trim();
+  const bucket = (process.env.R2_BUCKET_NAME || "").trim();
+  const publicUrl = (process.env.R2_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
+    return null;
+  }
+  const client = new S3Client({
+    region: "auto",
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId,
+      secretAccessKey
+    }
+  });
+  return { client, bucket, publicUrl };
+}
+async function uploadToStorage(options) {
+  const { buffer, originalName, mimeType, folder = "uploads" } = options;
+  const uniqueId = crypto.randomBytes(8).toString("hex");
+  const ext = path.extname(originalName) || (mimeType.includes("image/jpeg") ? ".jpg" : mimeType.includes("image/png") ? ".png" : ".bin");
+  const cleanBaseName = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
+  const key = `${folder}/${Date.now()}_${uniqueId}_${cleanBaseName}${ext}`;
+  const workerBucket = activeR2BucketBinding || globalThis.__CF_R2_BUCKET__;
+  if (workerBucket && typeof workerBucket.put === "function") {
+    try {
+      await workerBucket.put(key, buffer, {
+        httpMetadata: {
+          contentType: mimeType
+        }
+      });
+      const publicBase = (process.env.R2_PUBLIC_URL || "").trim().replace(/\/+$/, "") || "https://assets.mingree.com";
+      return {
+        success: true,
+        url: `${publicBase}/${key}`,
+        fileName: path.basename(key),
+        size: buffer.length,
+        storageProvider: "r2"
+      };
+    } catch (cfErr) {
+      console.error("[STORAGE WORKERS R2 ERROR]", cfErr?.message || cfErr);
+    }
+  }
+  const r2 = getR2Client();
+  if (r2) {
+    try {
+      const command = new PutObjectCommand({
+        Bucket: r2.bucket,
+        Key: key,
+        Body: buffer,
+        ContentType: mimeType
+      });
+      await r2.client.send(command);
+      const url = r2.publicUrl ? `${r2.publicUrl}/${key}` : `https://${r2.bucket}.${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`;
+      return {
+        success: true,
+        url,
+        fileName: path.basename(key),
+        size: buffer.length,
+        storageProvider: "r2"
+      };
+    } catch (r2Err) {
+      console.error("[STORAGE R2 S3 ERROR]", r2Err?.message || r2Err);
+    }
+  }
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    try {
+      const { put } = await import("@vercel/blob");
+      const blob = await put(key, buffer, {
+        access: "public",
+        contentType: mimeType
+      });
+      return {
+        success: true,
+        url: blob.url,
+        fileName: path.basename(key),
+        size: buffer.length,
+        storageProvider: "vercel_blob"
+      };
+    } catch (blobErr) {
+      console.error("[STORAGE BLOB ERROR]", blobErr?.message || blobErr);
+    }
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Persistent cloud storage is required in production. Cloudflare R2 (R2_BUCKET binding or R2 credentials: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME) must be configured. Local filesystem storage is disabled in production."
+    );
+  }
+  try {
+    const localDir = path.join(process.cwd(), "public", "uploads");
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    const localFileName = `${Date.now()}_${uniqueId}_${cleanBaseName}${ext}`;
+    const localFilePath = path.join(localDir, localFileName);
+    fs.writeFileSync(localFilePath, buffer);
+    return {
+      success: true,
+      url: `/uploads/${localFileName}`,
+      fileName: localFileName,
+      size: buffer.length,
+      storageProvider: "local"
+    };
+  } catch {
+    return {
+      success: true,
+      url: `data:${mimeType};base64,${buffer.toString("base64")}`,
+      fileName: originalName,
+      size: buffer.length,
+      storageProvider: "local"
+    };
+  }
+}
+
+// server/envValidation.ts
+function validateProductionEnvironment() {
+  const isProduction = process.env.NODE_ENV === "production";
+  const errors = [];
+  const warnings = [];
+  const dbUrl = (process.env.DATABASE_URL || "").trim();
+  const hyperdriveBound = Boolean(process.env.HYPERDRIVE);
+  const databaseConfigured = Boolean(
+    hyperdriveBound || dbUrl && (dbUrl.startsWith("postgres://") || dbUrl.startsWith("postgresql://"))
+  );
+  if (isProduction && !databaseConfigured) {
+    errors.push("DATABASE_URL or Cloudflare Hyperdrive binding is required in production (Supabase PostgreSQL).");
+  }
+  const jwtSecret = (process.env.JWT_SECRET || "").trim();
+  const jwtConfigured = jwtSecret.length >= 32;
+  if (isProduction && !jwtConfigured) {
+    errors.push("JWT_SECRET is required in production and must be at least 32 characters long (generate via 'openssl rand -hex 32').");
+  }
+  const encKey = (process.env.TOKEN_ENC_KEY || "").trim();
+  const encryptionConfigured = encKey.length >= 32;
+  if (isProduction && !encryptionConfigured) {
+    errors.push("TOKEN_ENC_KEY is required in production for financial/PAN AES-256-GCM encryption and must be at least 32 characters long.");
+  }
+  const r2NativeBinding = Boolean(globalThis.__CF_R2_BUCKET__);
+  const r2Configured = r2NativeBinding || Boolean(
+    process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET_NAME
+  );
+  const blobConfigured = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  const storageConfigured = r2Configured || blobConfigured;
+  const storageProvider = r2Configured ? "r2" : blobConfigured ? "vercel_blob" : "unconfigured";
+  if (isProduction && !storageConfigured) {
+    warnings.push("Cloudflare R2 storage credentials or Workers R2 binding are not configured. Uploads will fail until R2 is supplied.");
+  }
+  const cashfreeModeRaw = (process.env.CASHFREE_MODE || "").toLowerCase().trim();
+  const cashfreeAppId = (process.env.CASHFREE_APP_ID || "").trim();
+  const cashfreeSecret = (process.env.CASHFREE_SECRET_KEY || "").trim();
+  const cashfreeConfigured = Boolean(cashfreeAppId && cashfreeSecret);
+  const cashfreeMode = cashfreeConfigured ? cashfreeModeRaw === "production" ? "production" : "sandbox" : "unconfigured";
+  if (isProduction) {
+    if (!cashfreeConfigured) {
+      warnings.push("Cashfree credentials (CASHFREE_APP_ID, CASHFREE_SECRET_KEY) are not set. Payments will operate in mock verification mode.");
+    } else if (cashfreeMode === "sandbox") {
+      warnings.push("CASHFREE_MODE is set to 'sandbox' in production environment. Real user payments will not be processed until set to 'production'.");
+    }
+  }
+  const igAppId = (process.env.INSTAGRAM_APP_ID || "").trim();
+  const igSecret = (process.env.INSTAGRAM_APP_SECRET || "").trim();
+  const instagramConfigured = Boolean(igAppId && igSecret);
+  if (isProduction && !instagramConfigured) {
+    warnings.push("INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET are not set. Official Instagram OAuth linking will be unavailable.");
+  }
+  const gmailUser = (process.env.GMAIL_USER || "").trim();
+  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "").trim();
+  const emailConfigured = Boolean(gmailUser && gmailPass);
+  if (isProduction && !emailConfigured) {
+    warnings.push("GMAIL_USER / GMAIL_APP_PASSWORD not set. Transactional verification OTP emails will be logged to console instead of sent.");
+  }
+  const appUrl = (process.env.APP_URL || "https://mingree.com").trim().replace(/\/+$/, "");
+  if (isProduction && !appUrl.startsWith("https://")) {
+    warnings.push(`APP_URL '${appUrl}' does not use HTTPS. Production requires HTTPS for secure cookies and OAuth callbacks.`);
+  }
+  return {
+    isProduction,
+    databaseConfigured,
+    jwtConfigured,
+    encryptionConfigured,
+    storageConfigured,
+    storageProvider,
+    cashfreeMode,
+    cashfreeConfigured,
+    instagramConfigured,
+    emailConfigured,
+    appUrl,
+    errors,
+    warnings
+  };
+}
+function enforceProductionEnvironment() {
+  const report = validateProductionEnvironment();
+  if (report.isProduction) {
+    console.log("================================================================================");
+    console.log("          MINGREE PRODUCTION PRE-FLIGHT VALIDATION (CLOUDFLARE + SUPABASE)       ");
+    console.log("================================================================================");
+    console.log(`Database (Supabase / Hyperdrive): ${report.databaseConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
+    console.log(`JWT Auth Secret:       ${report.jwtConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
+    console.log(`Financial Encryption:  ${report.encryptionConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
+    console.log(`Persistent Storage:    ${report.storageConfigured ? `\u2713 CONFIGURED (${report.storageProvider.toUpperCase()})` : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Cashfree Gateway:      ${report.cashfreeConfigured ? `\u2713 CONFIGURED [${report.cashfreeMode.toUpperCase()}]` : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Instagram OAuth:       ${report.instagramConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Email Service:         ${report.emailConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Public Application URL:${report.appUrl}`);
+    if (report.warnings.length > 0) {
+      console.log("\nWarnings:");
+      report.warnings.forEach((w) => console.log(`  \u26A0 ${w}`));
+    }
+    if (report.errors.length > 0) {
+      console.error("\nFATAL CONFIGURATION ERRORS PREVENTING PRODUCTION STARTUP:");
+      report.errors.forEach((e) => console.error(`  \u2717 ${e}`));
+      console.error("================================================================================");
+      process.exit(1);
+    }
+    console.log("================================================================================\n");
+  }
 }
 
 // server/instagramSecurity.ts
@@ -1119,48 +1514,357 @@ function getAllIdentities() {
 }
 
 // server/walletAndPayments.ts
+import { eq as eq2 } from "drizzle-orm";
+import crypto3 from "crypto";
+
+// server/withdrawalsAndKyc.ts
 import { eq } from "drizzle-orm";
-import crypto from "crypto";
-var memoryWallets = {
-  1: { userId: 1, balance: 101200, escrowHeld: 0 },
-  2: { userId: 2, balance: 98710, escrowHeld: 25e3 },
-  3: { userId: 3, balance: 1e5, escrowHeld: 0 },
-  4: { userId: 4, balance: 1e5, escrowHeld: 3e4 },
-  20: { userId: 20, balance: 1e5, escrowHeld: 0 },
-  99: { userId: 99, balance: 25e4, escrowHeld: 0 }
-};
-var memoryLedger = [
-  {
-    id: 1,
-    userId: 2,
-    type: "escrow_lock",
-    amount: -1290,
-    balanceAfter: 98710,
-    refType: "choose_creators_campaign",
-    refId: "New Song / Brand Promo Campaign",
-    createdAt: "2026-04-16T08:49:10.303Z"
-  },
-  {
-    id: 2,
-    userId: 2,
-    type: "escrow_release",
-    amount: -1290,
-    balanceAfter: 98710,
-    refType: "campaign_slot_approval",
-    refId: "camp_1_part_1",
-    createdAt: "2026-04-16T09:10:02.075Z"
-  },
-  {
-    id: 3,
-    userId: 1,
-    type: "payout_received",
-    amount: 1200,
-    balanceAfter: 101200,
-    refType: "campaign_slot_approval",
-    refId: "camp_1_part_1",
-    createdAt: "2026-04-16T09:10:02.076Z"
+import crypto2 from "crypto";
+function throwDbUnavailable(err) {
+  const error = new Error("Database unavailable");
+  error.status = 503;
+  if (err?.message) error.detail = err.message;
+  throw error;
+}
+var EPHEMERAL_DEV_PAN_KEY = crypto2.randomBytes(32).toString("hex");
+function getPanEncryptionKey() {
+  const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
+  if (!raw) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+    }
+    return crypto2.scryptSync(EPHEMERAL_DEV_PAN_KEY, "pan_salt", 32);
   }
-];
+  return crypto2.scryptSync(raw, "pan_salt", 32);
+}
+if (process.env.NODE_ENV === "production" && !process.env.TOKEN_ENC_KEY && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+}
+function encryptPan(panText) {
+  if (!panText) return "";
+  const cleanPan = panText.trim().toUpperCase();
+  const iv = crypto2.randomBytes(12);
+  const cipher = crypto2.createCipheriv("aes-256-gcm", getPanEncryptionKey(), iv);
+  let encrypted = cipher.update(cleanPan, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const authTag = cipher.getAuthTag().toString("hex");
+  return `${iv.toString("hex")}:${authTag}:${encrypted}`;
+}
+function maskPan(panText) {
+  if (!panText) return "";
+  const clean = panText.trim().toUpperCase();
+  if (clean.length < 10) return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+  return `${clean.slice(0, 5)}\u2022\u2022\u2022\u2022${clean.slice(9)}`;
+}
+function isValidPan(panText) {
+  if (!panText || typeof panText !== "string") return false;
+  const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+  return panRegex.test(panText.trim().toUpperCase());
+}
+async function saveUserKyc(userId, pan, name) {
+  if (!isValidPan(pan)) {
+    throw new Error("Invalid PAN format. Standard format is 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)");
+  }
+  if (!name || !name.trim()) {
+    throw new Error("Name as per PAN card is required");
+  }
+  const cleanPan = pan.trim().toUpperCase();
+  const encrypted = encryptPan(cleanPan);
+  const masked = maskPan(cleanPan);
+  try {
+    const existing = await db.select().from(kyc).where(eq(kyc.userId, userId));
+    if (existing.length > 0) {
+      await db.update(kyc).set({
+        panEncrypted: encrypted,
+        panMasked: masked,
+        fullNameOnPan: name.trim(),
+        name: name.trim(),
+        status: "active"
+      }).where(eq(kyc.userId, userId));
+    } else {
+      await db.insert(kyc).values({
+        userId,
+        panEncrypted: encrypted,
+        panMasked: masked,
+        fullNameOnPan: name.trim(),
+        name: name.trim(),
+        dob: "2000-01-01",
+        status: "active"
+      });
+    }
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+  return { success: true, maskedPan: masked };
+}
+async function getUserKyc(userId) {
+  try {
+    const rows = await db.select().from(kyc).where(eq(kyc.userId, userId));
+    if (rows.length > 0 && rows[0].panEncrypted) {
+      return {
+        verified: true,
+        name: rows[0].name || rows[0].fullNameOnPan || void 0,
+        maskedPan: rows[0].panMasked || maskPan("ABCDE1234F")
+      };
+    }
+    return { verified: false };
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+}
+function encryptPayoutDetails(details) {
+  return encryptPan(JSON.stringify(details));
+}
+function maskPayoutDetails(type, details) {
+  if (type === "UPI") {
+    const upi = String(details.upiId || details.upi_id || "").trim();
+    const parts = upi.split("@");
+    const prefix = parts[0] || "";
+    const domain = parts[1] || "";
+    const maskedPrefix = prefix.length > 2 ? `${prefix.slice(0, 2)}\u2022\u2022\u2022${prefix.slice(-1)}` : "\u2022\u2022\u2022";
+    const maskedAccount = `${maskedPrefix}@${domain}`;
+    return {
+      maskedAccount,
+      publicDetails: { ...details, upiId: maskedAccount, upi_id: maskedAccount }
+    };
+  } else {
+    const acc = String(details.accountNumber || details.account_number || "").trim();
+    const ifsc = String(details.ifscCode || details.ifsc || "").trim().toUpperCase();
+    const holder = String(details.accountHolderName || details.account_holder_name || "").trim();
+    const maskedAcc = acc.length > 4 ? `\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022${acc.slice(-4)}` : "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+    return {
+      maskedAccount: maskedAcc,
+      publicDetails: {
+        ...details,
+        accountNumber: maskedAcc,
+        account_number: maskedAcc,
+        ifscCode: ifsc,
+        accountHolderName: holder
+      }
+    };
+  }
+}
+async function addPayoutMethod(userId, type, details, isDefault = true) {
+  if (type === "UPI") {
+    if (!details.upiId || !details.upiId.includes("@")) {
+      throw new Error("Invalid UPI ID format (e.g. name@upi)");
+    }
+  } else if (type === "Bank") {
+    if (!details.accountNumber || !details.ifscCode || !details.accountHolderName) {
+      throw new Error("Bank Account Number, IFSC Code, and Account Holder Name are required");
+    }
+  }
+  const { maskedAccount, publicDetails } = maskPayoutDetails(type, details);
+  const encrypted = encryptPayoutDetails(details);
+  try {
+    if (isDefault) {
+      await db.update(payoutMethods).set({ isDefault: false }).where(eq(payoutMethods.userId, userId));
+    }
+    const inserted = await db.insert(payoutMethods).values({
+      userId,
+      type,
+      accountDetails: publicDetails,
+      accountDetailsEncrypted: encrypted,
+      maskedAccount,
+      isDefault
+    }).returning();
+    const row = inserted[0];
+    return {
+      ...row,
+      ...publicDetails
+    };
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+}
+async function getUserPayoutMethods(userId) {
+  try {
+    const rows = await db.select().from(payoutMethods).where(eq(payoutMethods.userId, userId));
+    return rows.map((r) => ({
+      ...r,
+      ...r.accountDetails || {}
+    }));
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+}
+async function requestWithdrawal(params) {
+  const { userId, userRole, amount, payoutMethodId } = params;
+  const minWithdrawal = userRole === "creator" ? CONFIG.MIN_CREATOR_WITHDRAWAL : CONFIG.MIN_ARTIST_WITHDRAWAL;
+  if (amount < minWithdrawal) {
+    throw new Error(`Minimum withdrawal amount for ${userRole}s is \u20B9${minWithdrawal}`);
+  }
+  if (userRole === "creator") {
+    const kycStatus = await getUserKyc(userId);
+    if (!kycStatus.verified) {
+      throw new Error("KYC verification required before requesting your first withdrawal. Please provide your PAN and Name as per PAN.");
+    }
+  }
+  const currentW = await getOrCreateWallet(userId);
+  if (currentW.balance < amount) {
+    throw new Error(`Insufficient available balance (\u20B9${currentW.balance.toFixed(2)}) for withdrawal request of \u20B9${amount.toFixed(2)}`);
+  }
+  const newBalance = currentW.balance - amount;
+  const withdrawalId = Date.now();
+  try {
+    await db.transaction(async (tx) => {
+      await tx.update(wallets).set({
+        balance: newBalance.toFixed(2)
+      }).where(eq(wallets.userId, userId));
+      await tx.insert(ledgerEntries).values({
+        userId,
+        type: "withdrawal_hold",
+        amount: (-amount).toFixed(2),
+        balanceAfter: newBalance.toFixed(2),
+        refType: "withdrawal_request",
+        refId: String(withdrawalId)
+      });
+      await tx.insert(withdrawals).values({
+        id: withdrawalId,
+        userId,
+        amount: amount.toFixed(2),
+        tdsAmount: "0.00",
+        payoutMethodId,
+        status: "pending"
+      });
+    });
+  } catch (err) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
+  }
+  return {
+    withdrawalId,
+    pendingHoldAmount: amount,
+    newAvailableBalance: newBalance
+  };
+}
+async function approveWithdrawal(withdrawalId, adminUserId, utrRef) {
+  if (!utrRef || !utrRef.trim()) {
+    throw new Error("Transfer reference / UTR is required to approve withdrawal");
+  }
+  let record = null;
+  try {
+    const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
+    if (rows.length > 0) record = rows[0];
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+  if (!record) throw new Error("Withdrawal request not found");
+  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
+  const amountNum = parseFloat(record.amount);
+  const targetUserId = record.userId;
+  try {
+    await db.transaction(async (tx) => {
+      await tx.update(withdrawals).set({ status: "approved", utrRef: utrRef.trim() }).where(eq(withdrawals.id, withdrawalId));
+      await tx.insert(ledgerEntries).values({
+        userId: targetUserId,
+        type: "withdrawal_completed",
+        amount: (-amountNum).toFixed(2),
+        balanceAfter: "0.00",
+        refType: "withdrawal_approved",
+        refId: String(withdrawalId)
+      });
+      await tx.insert(notifications).values({
+        userId: targetUserId,
+        title: "Withdrawal Approved! \u{1F389}",
+        message: `Your withdrawal of \u20B9${amountNum.toFixed(2)} has been transferred! Reference UTR: ${utrRef.trim()}`,
+        read: false
+      });
+    });
+  } catch (err) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
+  }
+  recordSecurityEvent({
+    event: "ADMIN_IDENTITY_UNLOCKED",
+    mingreeUserId: adminUserId,
+    instagramUsername: "admin_withdrawal_approval",
+    riskScore: 0,
+    riskLevel: "LOW",
+    riskFactors: [],
+    followers: 0,
+    mediaCount: 0,
+    ipAddress: "127.0.0.1",
+    userAgent: "Admin",
+    decision: "ALLOW",
+    details: `Admin #${adminUserId} approved Withdrawal #${withdrawalId} (\u20B9${amountNum}) for User #${targetUserId}. UTR: ${utrRef.trim()}`
+  });
+  return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${utrRef.trim()}` };
+}
+async function rejectWithdrawal(withdrawalId, adminUserId, reason) {
+  if (!reason || !reason.trim()) {
+    throw new Error("Rejection reason is required");
+  }
+  let record = null;
+  try {
+    const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
+    if (rows.length > 0) record = rows[0];
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+  if (!record) throw new Error("Withdrawal request not found");
+  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
+  const amountNum = parseFloat(record.amount);
+  const targetUserId = record.userId;
+  const currentW = await getOrCreateWallet(targetUserId);
+  const refundedBalance = currentW.balance + amountNum;
+  try {
+    await db.transaction(async (tx) => {
+      await tx.update(withdrawals).set({ status: "rejected", rejectionReason: reason.trim() }).where(eq(withdrawals.id, withdrawalId));
+      await tx.update(wallets).set({ balance: refundedBalance.toFixed(2) }).where(eq(wallets.userId, targetUserId));
+      await tx.insert(ledgerEntries).values({
+        userId: targetUserId,
+        type: "withdrawal_refund",
+        amount: amountNum.toFixed(2),
+        balanceAfter: refundedBalance.toFixed(2),
+        refType: "withdrawal_rejected",
+        refId: String(withdrawalId)
+      });
+      await tx.insert(notifications).values({
+        userId: targetUserId,
+        title: "Withdrawal Request Returned",
+        message: `Your withdrawal of \u20B9${amountNum.toFixed(2)} was returned to your balance. Reason: ${reason.trim()}`,
+        read: false
+      });
+    });
+  } catch (err) {
+    if (err?.status === 503) throw err;
+    throwDbUnavailable(err);
+  }
+  recordSecurityEvent({
+    event: "ADMIN_IDENTITY_UNLOCKED",
+    mingreeUserId: adminUserId,
+    instagramUsername: "admin_withdrawal_rejection",
+    riskScore: 0,
+    riskLevel: "LOW",
+    riskFactors: [],
+    followers: 0,
+    mediaCount: 0,
+    ipAddress: "127.0.0.1",
+    userAgent: "Admin",
+    decision: "ALLOW",
+    details: `Admin #${adminUserId} rejected Withdrawal #${withdrawalId} (\u20B9${amountNum}). Returned to User #${targetUserId}. Reason: ${reason.trim()}`
+  });
+  return { success: true, message: `Withdrawal #${withdrawalId} rejected. Funds returned to user's wallet.` };
+}
+async function getUserWithdrawalHistory(userId) {
+  try {
+    return await db.select().from(withdrawals).where(eq(withdrawals.userId, userId));
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+}
+async function getAllWithdrawalsAdmin() {
+  try {
+    return await db.select().from(withdrawals);
+  } catch (err) {
+    throwDbUnavailable(err);
+  }
+}
+
+// server/walletAndPayments.ts
+var memoryWallets = {};
+var memoryLedger = [];
 var memoryPaymentOrders = [];
 var walletLocks = /* @__PURE__ */ new Map();
 async function withMemoryLock(lockKey, fn) {
@@ -1189,7 +1893,7 @@ function appendMemoryLedger(entry) {
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   });
 }
-function throwDbUnavailable(err) {
+function throwDbUnavailable2(err) {
   const error = new Error("Database unavailable");
   error.status = 503;
   if (err?.message) error.detail = err.message;
@@ -1709,12 +2413,14 @@ async function processOrderPaymentSuccess(orderId, details) {
       const currentBalance = Number(walletRes.rows[0]?.balance || 0);
       const currentEscrow = Number(walletRes.rows[0]?.escrow_held || 0);
       let finalBalance = currentBalance;
-      if (details?.pan || details?.gstin) {
+      if (details?.pan && isValidPan(details.pan)) {
+        const encPan = encryptPan(details.pan);
+        const mskPan = maskPan(details.pan);
         await client.query(
-          `INSERT INTO kyc (user_id, pan_encrypted, name, status)
-             VALUES ($1, $2, $3, 'active')
-             ON CONFLICT (user_id) DO NOTHING`,
-          [userId, details.pan || null, details.billingAddress || null]
+          `INSERT INTO kyc (user_id, pan_encrypted, pan_masked, full_name_on_pan, dob, status)
+             VALUES ($1, $2, $3, $4, '2000-01-01', 'active')
+             ON CONFLICT (user_id) DO UPDATE SET pan_encrypted = EXCLUDED.pan_encrypted, pan_masked = EXCLUDED.pan_masked`,
+          [userId, encPan, mskPan, details?.name || details.billingAddress || "Verified User"]
         ).catch(() => {
         });
       }
@@ -1822,11 +2528,11 @@ function verifyCashfreeSignature(rawBody, timestamp2, signature, secretKey) {
   if (!rawBody || !timestamp2 || !signature || !secretKey) return false;
   try {
     const payload = `${timestamp2}${rawBody.toString()}`;
-    const expectedSig = crypto.createHmac("sha256", secretKey).update(payload).digest("base64");
+    const expectedSig = crypto3.createHmac("sha256", secretKey).update(payload).digest("base64");
     const sigBuf = Buffer.from(signature);
     const expBuf = Buffer.from(expectedSig);
     if (sigBuf.length !== expBuf.length) return false;
-    return crypto.timingSafeEqual(sigBuf, expBuf);
+    return crypto3.timingSafeEqual(sigBuf, expBuf);
   } catch (err) {
     console.error("[CASHFREE WEBHOOK SIG ERROR]", err);
     return false;
@@ -1836,7 +2542,7 @@ async function submitUpiTopup(userId, utr, amount) {
   const cleanUtr = utr.trim().toUpperCase();
   const amountStr = amount.toFixed(2);
   try {
-    const existing = await db.select().from(upiPayments).where(eq(upiPayments.utr, cleanUtr));
+    const existing = await db.select().from(upiPayments).where(eq2(upiPayments.utr, cleanUtr));
     if (existing.length > 0) {
       throw new Error(`A payment with UTR number '${cleanUtr}' has already been submitted.`);
     }
@@ -1851,12 +2557,12 @@ async function submitUpiTopup(userId, utr, amount) {
     if (err.message && err.message.includes("already been submitted")) {
       throw err;
     }
-    throwDbUnavailable(err);
+    throwDbUnavailable2(err);
   }
 }
 async function approveUpiTopup(upiId, adminUserId) {
   if (!isDatabaseConfigured) {
-    throwDbUnavailable(new Error("Database not configured"));
+    throwDbUnavailable2(new Error("Database not configured"));
   }
   const client = await pool.connect();
   let targetUserId = 0;
@@ -1890,15 +2596,16 @@ async function approveUpiTopup(upiId, adminUserId) {
     const currentEscrow = Number(wRes.rows[0]?.escrow_held || 0);
     const newBal = Math.round((currentBal + numAmount) * 100) / 100;
     await client.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBal.toFixed(2), targetUserId]);
+    const canonicalRefId = String(upiId);
     await client.query(
       `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
        VALUES ($1, 'upi_topup', $2, $3, 'upi_payment', $4)`,
-      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), paymentUtr]
+      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), canonicalRefId]
     );
     await client.query(
       `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
-       VALUES ($1, 'upi_topup', $2, $3, $4, 'upi_payment', $5, 'Approved UPI Top-Up')`,
-      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), currentEscrow.toFixed(2), paymentUtr]
+       VALUES ($1, 'upi_topup', $2, $3, $4, 'upi_payment', $5, $6)`,
+      [targetUserId, numAmount.toFixed(2), newBal.toFixed(2), currentEscrow.toFixed(2), canonicalRefId, `Approved UPI Top-Up (UTR: ${paymentUtr})`]
     );
     await client.query("COMMIT");
     memoryWallets[targetUserId] = { userId: targetUserId, balance: newBal, escrowHeld: currentEscrow };
@@ -1908,7 +2615,7 @@ async function approveUpiTopup(upiId, adminUserId) {
     if (err.message?.includes("not found") || err.message?.includes("already")) {
       throw err;
     }
-    throwDbUnavailable(err);
+    throwDbUnavailable2(err);
   } finally {
     client.release();
   }
@@ -1932,7 +2639,7 @@ async function adminCreditWallet(adminUserId, targetUserId, amount, reason) {
   if (amount <= 0) throw new Error("Credit amount must be greater than zero");
   if (!reason || !reason.trim()) throw new Error("Reason is required for manual wallet credit");
   if (!isDatabaseConfigured) {
-    throwDbUnavailable(new Error("Database not configured"));
+    throwDbUnavailable2(new Error("Database not configured"));
   }
   const client = await pool.connect();
   let newBalance = 0;
@@ -1962,7 +2669,7 @@ async function adminCreditWallet(adminUserId, targetUserId, amount, reason) {
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {
     });
-    throwDbUnavailable(err);
+    throwDbUnavailable2(err);
   } finally {
     client.release();
   }
@@ -1985,16 +2692,28 @@ async function adminCreditWallet(adminUserId, targetUserId, amount, reason) {
 
 // server/cronJobs.ts
 import cron from "node-cron";
-import { eq as eq2, sql } from "drizzle-orm";
+import { eq as eq3, sql as sql2 } from "drizzle-orm";
 
 // server/instagramMetrics.ts
-import crypto2 from "crypto";
-var TOKEN_ENC_RAW = process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "mingree_token_encryption_default_key";
-var ENCRYPTION_KEY = crypto2.scryptSync(TOKEN_ENC_RAW, "mingree_salt_v1", 32);
+import crypto4 from "crypto";
+var EPHEMERAL_DEV_TOKEN_KEY = crypto4.randomBytes(32).toString("hex");
+function getTokenEncryptionKey() {
+  const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
+  if (!raw) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+    }
+    return crypto4.scryptSync(EPHEMERAL_DEV_TOKEN_KEY, "mingree_salt_v1", 32);
+  }
+  return crypto4.scryptSync(raw, "mingree_salt_v1", 32);
+}
+if (process.env.NODE_ENV === "production" && !process.env.TOKEN_ENC_KEY && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+}
 function encryptAccessToken(plainText) {
   if (!plainText) return "";
-  const iv = crypto2.randomBytes(12);
-  const cipher = crypto2.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  const iv = crypto4.randomBytes(12);
+  const cipher = crypto4.createCipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
   let encrypted = cipher.update(plainText, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
@@ -2008,7 +2727,7 @@ function decryptAccessToken(encryptedText) {
   try {
     const iv = Buffer.from(ivHex, "hex");
     const authTag = Buffer.from(authTagHex, "hex");
-    const decipher = crypto2.createDecipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+    const decipher = crypto4.createDecipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(cipherHex, "hex", "utf8");
     decrypted += decipher.final("utf8");
@@ -2052,7 +2771,7 @@ async function runDealExpirationCheck() {
   let warningsSent = 0;
   const now = /* @__PURE__ */ new Date();
   try {
-    const activeDeals = await db.select().from(deals).where(sql`${deals.status} IN ('accepted', 'posted')`);
+    const activeDeals = await db.select().from(deals).where(sql2`${deals.status} IN ('accepted', 'posted')`);
     for (const deal of activeDeals) {
       if (!deal.deadline) continue;
       const deadline = new Date(deal.deadline);
@@ -2062,7 +2781,7 @@ async function runDealExpirationCheck() {
           refType: "deal_expired_refund",
           refId: String(deal.id)
         });
-        await db.update(deals).set({ status: "expired" }).where(eq2(deals.id, deal.id));
+        await db.update(deals).set({ status: "expired" }).where(eq3(deals.id, deal.id));
         await db.insert(notifications).values([
           {
             userId: deal.creatorId,
@@ -2111,7 +2830,7 @@ async function runAutoApproveEngine() {
   const now = /* @__PURE__ */ new Date();
   const windowMs = CONFIG.REVIEW_WINDOW_HOURS * 60 * 60 * 1e3;
   try {
-    const postedDeals = await db.select().from(deals).where(eq2(deals.status, "posted"));
+    const postedDeals = await db.select().from(deals).where(eq3(deals.status, "posted"));
     for (const deal of postedDeals) {
       if (!deal.submittedAt) continue;
       const submittedAt = new Date(deal.submittedAt);
@@ -2128,7 +2847,7 @@ async function runAutoApproveEngine() {
           status: "approved",
           approvedAt: nowStr,
           firstReleaseAt: nowStr
-        }).where(eq2(deals.id, deal.id));
+        }).where(eq3(deals.id, deal.id));
         await db.insert(notifications).values([
           {
             userId: deal.creatorId,
@@ -2157,7 +2876,7 @@ async function runFinalReleaseEngine() {
   const now = /* @__PURE__ */ new Date();
   const holdMs = CONFIG.LIVE_HOLD_DAYS * 24 * 60 * 60 * 1e3;
   try {
-    const approvedDeals = await db.select().from(deals).where(eq2(deals.status, "approved"));
+    const approvedDeals = await db.select().from(deals).where(eq3(deals.status, "approved"));
     for (const deal of approvedDeals) {
       if (!deal.approvedAt) continue;
       const approvedAt = new Date(deal.approvedAt);
@@ -2175,7 +2894,7 @@ async function runFinalReleaseEngine() {
           await db.update(deals).set({
             status: "released",
             finalReleaseAt: nowStr
-          }).where(eq2(deals.id, deal.id));
+          }).where(eq3(deals.id, deal.id));
           await db.insert(notifications).values([
             {
               userId: deal.creatorId,
@@ -2204,9 +2923,9 @@ async function runDailyMaintenanceJobs() {
   let proRemindersSent = 0;
   const now = /* @__PURE__ */ new Date();
   try {
-    const creators = await db.select().from(users).where(eq2(users.role, "creator"));
+    const creators = await db.select().from(users).where(eq3(users.role, "creator"));
     for (const creator of creators) {
-      const profiles = await db.select().from(creatorProfiles).where(eq2(creatorProfiles.userId, creator.id));
+      const profiles = await db.select().from(creatorProfiles).where(eq3(creatorProfiles.userId, creator.id));
       if (profiles.length > 0 && profiles[0].accessTokenEnc) {
         try {
           const tokenRes = await refreshInstagramUserToken(profiles[0].accessTokenEnc);
@@ -2234,7 +2953,7 @@ async function runDailyMaintenanceJobs() {
     handleCronError("Daily Instagram refresh", err);
   }
   try {
-    const activeSubs = await db.select().from(subscriptions).where(eq2(subscriptions.status, "active"));
+    const activeSubs = await db.select().from(subscriptions).where(eq3(subscriptions.status, "active"));
     for (const sub of activeSubs) {
       if (!sub.expiresAt) continue;
       const expiresAt = new Date(sub.expiresAt);
@@ -2250,7 +2969,7 @@ async function runDailyMaintenanceJobs() {
         proRemindersSent++;
       } else if (diffDays <= 0 && !sentProReminders.has(`${sub.userId}:exp`)) {
         sentProReminders.add(`${sub.userId}:exp`);
-        await db.update(subscriptions).set({ status: "expired" }).where(eq2(subscriptions.id, sub.id));
+        await db.update(subscriptions).set({ status: "expired" }).where(eq3(subscriptions.id, sub.id));
         await db.insert(notifications).values({
           userId: sub.userId,
           title: "Creator Pro Expired",
@@ -2268,7 +2987,7 @@ async function runDailyMaintenanceJobs() {
 async function runSnapshotJobs() {
   let snapshotsCount = 0;
   try {
-    const activeDeals = await db.select().from(deals).where(sql`${deals.status} IN ('posted', 'approved')`);
+    const activeDeals = await db.select().from(deals).where(sql2`${deals.status} IN ('posted', 'approved')`);
     for (const deal of activeDeals) {
       if (!deal.postUrl) continue;
       await db.insert(metricSnapshots).values({
@@ -2572,12 +3291,13 @@ async function getUsersPaginatedAdmin(params) {
     );
     const total = Number(countRes.rows[0]?.total || 0);
     const itemsRes = await pool.query(
-      `SELECT u.id, u.email, u.name, u.role, u.city, u.status as user_status, u.created_at, u.company_name, u.pan, u.gstin,
-              cp.username, cp.followers, cp.tier_label, cp.median_views, cp.risk_score, cp.status as creator_status,
+      `SELECT u.id, u.email, u.name, u.role, u.city, u.status as user_status, u.created_at, u.company_name, k.pan_masked as pan, u.gst_number as gstin,
+              cp.username, cp.followers, cp.tier as tier_label, cp.median_views, cp.risk_score, cp.status as creator_status,
               cp.access_token_enc, cp.instagram_user_id,
               w.balance, w.escrow_held
        FROM users u
        LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+       LEFT JOIN kyc k ON k.user_id = u.id
        LEFT JOIN wallets w ON w.user_id = u.id
        WHERE ${whereClause}
        ORDER BY u.id DESC
@@ -2594,7 +3314,7 @@ async function getUsersPaginatedAdmin(params) {
         city: r.city || "Mumbai",
         status: r.creator_status || r.user_status || "active",
         companyName: r.company_name,
-        maskedPan: r.pan ? `\u2022\u2022\u2022\u2022${String(r.pan).slice(-4)}` : null,
+        maskedPan: r.pan ? String(r.pan) : null,
         createdAt: r.created_at,
         wallet: {
           balance: parseFloat(r.balance || "0"),
@@ -3111,8 +3831,8 @@ async function getWithdrawalsAdmin(params) {
     const countRes = await pool.query(`SELECT COUNT(*) FROM withdrawals w WHERE ${whereClause}`);
     const total = Number(countRes.rows[0]?.count || 0);
     const itemsRes = await pool.query(
-      `SELECT w.*, u.name as user_name, u.email as user_email, u.pan,
-              pm.type as payout_type, pm.account_details, k.status as kyc_status,
+      `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
+              pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
               cp.status as creator_status
        FROM withdrawals w
        LEFT JOIN users u ON u.id = w.user_id
@@ -3289,53 +4009,40 @@ async function getUpiPaymentsAdmin() {
   }
 }
 async function approveUpiPaymentAdmin(adminUserId, paymentId, ipAddress) {
-  const upiRes = await pool.query(`SELECT * FROM upi_payments WHERE id = $1`, [paymentId]);
-  if (upiRes.rows.length === 0) throw new Error("UPI payment record not found");
-  const upiRow = upiRes.rows[0];
-  if (upiRow.status === "approved") {
-    throw new Error(`UPI Payment #${paymentId} is already approved.`);
-  }
-  const creditAmount = parseFloat(upiRow.amount);
-  try {
-    await pool.query(`UPDATE upi_payments SET status = 'approved' WHERE id = $1`, [paymentId]);
-    const wallet = await getOrCreateWallet(upiRow.user_id);
-    const newBalance = wallet.balance + creditAmount;
-    await pool.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance.toFixed(2), upiRow.user_id]);
-    await pool.query(
-      `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
-       VALUES ($1, 'upi_topup_approved', $2, $3, $4, 'upi_payment', $5, $6)`,
-      [
-        upiRow.user_id,
-        creditAmount.toFixed(2),
-        newBalance.toFixed(2),
-        wallet.escrowHeld.toFixed(2),
-        String(paymentId),
-        `UPI payment UTR ${upiRow.utr} approved`
-      ]
-    );
-  } catch (err) {
-    console.error("[APPROVE UPI PAYMENT ERROR]", err);
-  }
+  const result = await approveUpiTopup(paymentId, adminUserId);
   await recordAdminAuditLog(
     adminUserId,
     "APPROVE_UPI_PAYMENT",
     "upi_payment",
     paymentId,
     { status: "pending" },
-    { status: "approved", amount: creditAmount },
-    `Approved UPI payment UTR ${upiRow.utr}`,
+    { status: "approved", amount: result.creditAmount },
+    `Approved UPI payment #${paymentId}`,
     ipAddress
   );
-  return { success: true, paymentId, creditAmount, message: "UPI Payment approved and wallet credited." };
+  return { success: true, paymentId, creditAmount: result.creditAmount, message: "UPI Payment approved and wallet credited." };
 }
 async function rejectUpiPaymentAdmin(adminUserId, paymentId, reason, ipAddress) {
   if (!reason || !reason.trim()) {
     throw new Error("A typed reason is required to reject a UPI payment.");
   }
+  const client = await pool.connect();
+  let paymentUtr = "";
   try {
-    await pool.query(`UPDATE upi_payments SET status = 'rejected' WHERE id = $1`, [paymentId]);
+    await client.query("BEGIN");
+    const upiRes = await client.query(`SELECT id, status, utr FROM upi_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
+    if (upiRes.rows.length === 0) throw new Error("UPI payment record not found");
+    const payment = upiRes.rows[0];
+    if (payment.status !== "pending") throw new Error(`UPI payment is already ${payment.status}`);
+    paymentUtr = String(payment.utr);
+    await client.query(`UPDATE upi_payments SET status = 'rejected', reviewed_at = now() WHERE id = $1`, [paymentId]);
+    await client.query("COMMIT");
   } catch (err) {
-    console.error("[REJECT UPI PAYMENT ERROR]", err);
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw err;
+  } finally {
+    client.release();
   }
   await recordAdminAuditLog(
     adminUserId,
@@ -3344,7 +4051,7 @@ async function rejectUpiPaymentAdmin(adminUserId, paymentId, reason, ipAddress) 
     paymentId,
     { status: "pending" },
     { status: "rejected" },
-    reason.trim(),
+    `Rejected UPI payment UTR ${paymentUtr}: ${reason.trim()}`,
     ipAddress
   );
   return { success: true, paymentId, message: "UPI Payment rejected." };
@@ -3972,81 +4679,9 @@ async function buildPublicCreatorsResponse(registeredUsers2) {
 }
 
 // server/offersAndDeals.ts
-import { eq as eq3 } from "drizzle-orm";
-var memoryOffers = /* @__PURE__ */ new Map([
-  [
-    1,
-    {
-      id: 1,
-      campaignId: 1,
-      creatorId: 1,
-      quotedPrice: "2500.00",
-      status: "invited",
-      source: "autopilot",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  ],
-  [
-    2,
-    {
-      id: 2,
-      campaignId: 1,
-      creatorId: 3,
-      quotedPrice: "2500.00",
-      status: "accepted",
-      source: "autopilot",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  ],
-  [
-    3,
-    {
-      id: 3,
-      campaignId: 2,
-      creatorId: 1,
-      quotedPrice: "4000.00",
-      status: "accepted",
-      source: "autopilot",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  ]
-]);
-var memoryDeals = /* @__PURE__ */ new Map([
-  [
-    1,
-    {
-      id: 1,
-      campaignId: 1,
-      artistId: 2,
-      creatorId: 3,
-      price: "2500.00",
-      feeArtist: "187.50",
-      feeCreator: "187.50",
-      creatorNet: "2312.50",
-      status: "posted",
-      deadline: new Date(Date.now() + 3 * 24 * 60 * 60 * 1e3).toISOString(),
-      postUrl: "https://www.instagram.com/p/C1234567890/",
-      submittedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  ],
-  [
-    2,
-    {
-      id: 2,
-      campaignId: 2,
-      artistId: 4,
-      creatorId: 1,
-      price: "4000.00",
-      feeArtist: "300.00",
-      feeCreator: "300.00",
-      creatorNet: "3700.00",
-      status: "accepted",
-      deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1e3).toISOString(),
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    }
-  ]
-]);
+import { eq as eq4 } from "drizzle-orm";
+var memoryOffers = /* @__PURE__ */ new Map();
+var memoryDeals = /* @__PURE__ */ new Map();
 function calculateValueScore(params) {
   const { quotedCpm, medianViews, engagementRate, indiaAudiencePct, onTimeRate, benchmarkCpm } = params;
   const cpmRatio = quotedCpm / Math.max(1, benchmarkCpm * 2.5);
@@ -4061,7 +4696,7 @@ function calculateValueScore(params) {
 async function matchAndInviteCreators(campaignId, registeredUsersList) {
   let campaign = null;
   try {
-    const rows = await db.select().from(campaigns).where(eq3(campaigns.id, campaignId));
+    const rows = await db.select().from(campaigns).where(eq4(campaigns.id, campaignId));
     if (rows.length > 0) campaign = rows[0];
   } catch {
   }
@@ -4209,7 +4844,7 @@ async function submitQuoteOrAccept(params) {
 async function getCampaignShortlist(campaignId, campaignCap, registeredUsersList) {
   let offerRows = [];
   try {
-    offerRows = await db.select().from(campaignOffers).where(eq3(campaignOffers.campaignId, campaignId));
+    offerRows = await db.select().from(campaignOffers).where(eq4(campaignOffers.campaignId, campaignId));
   } catch {
     offerRows = Array.from(memoryOffers.values()).filter((o) => o.campaignId === campaignId);
   }
@@ -4252,7 +4887,7 @@ async function bulkApproveOffers(artistId, campaignId, offerIds) {
   for (const offerId of offerIds) {
     let offerRecord = null;
     try {
-      const rows = await db.select().from(campaignOffers).where(eq3(campaignOffers.id, offerId));
+      const rows = await db.select().from(campaignOffers).where(eq4(campaignOffers.id, offerId));
       if (rows.length > 0) offerRecord = rows[0];
     } catch {
       offerRecord = memoryOffers.get(offerId) || null;
@@ -4276,7 +4911,7 @@ async function bulkApproveOffers(artistId, campaignId, offerIds) {
         status: "accepted",
         deadline: new Date(Date.now() + 7 * 864e5)
       });
-      await db.update(campaignOffers).set({ status: "accepted" }).where(eq3(campaignOffers.id, offerId));
+      await db.update(campaignOffers).set({ status: "accepted" }).where(eq4(campaignOffers.id, offerId));
     } catch {
       memoryDeals.set(dealId, {
         id: dealId,
@@ -4330,7 +4965,7 @@ async function respondToDirectOffer(params) {
   const { offerId, action, counterPrice } = params;
   let offer = null;
   try {
-    const rows = await db.select().from(campaignOffers).where(eq3(campaignOffers.id, offerId));
+    const rows = await db.select().from(campaignOffers).where(eq4(campaignOffers.id, offerId));
     if (rows.length > 0) offer = rows[0];
   } catch {
     offer = memoryOffers.get(offerId) || null;
@@ -4339,7 +4974,7 @@ async function respondToDirectOffer(params) {
   if (action === "decline") {
     offer.status = "declined";
     try {
-      await db.update(campaignOffers).set({ status: "declined" }).where(eq3(campaignOffers.id, offerId));
+      await db.update(campaignOffers).set({ status: "declined" }).where(eq4(campaignOffers.id, offerId));
     } catch {
       memoryOffers.set(offerId, offer);
     }
@@ -4352,7 +4987,7 @@ async function respondToDirectOffer(params) {
     offer.status = "counter_offered";
     offer.counterPrice = counterPrice.toFixed(2);
     try {
-      await db.update(campaignOffers).set({ status: "counter_offered", counterPrice: counterPrice.toFixed(2) }).where(eq3(campaignOffers.id, offerId));
+      await db.update(campaignOffers).set({ status: "counter_offered", counterPrice: counterPrice.toFixed(2) }).where(eq4(campaignOffers.id, offerId));
     } catch {
       memoryOffers.set(offerId, offer);
     }
@@ -4376,7 +5011,7 @@ async function respondToDirectOffer(params) {
       deadline: new Date(Date.now() + 7 * 864e5)
     }).returning();
     dealId = inserted[0].id;
-    await db.update(campaignOffers).set({ status: "accepted" }).where(eq3(campaignOffers.id, offerId));
+    await db.update(campaignOffers).set({ status: "accepted" }).where(eq4(campaignOffers.id, offerId));
   } catch {
     memoryDeals.set(dealId, {
       id: dealId,
@@ -4398,8 +5033,8 @@ async function respondToDirectOffer(params) {
 }
 
 // server/deliveryAndReviews.ts
-import { eq as eq4, and as and3, lte as lte2 } from "drizzle-orm";
-function throwDbUnavailable2(err) {
+import { eq as eq5, and as and3, lte as lte2 } from "drizzle-orm";
+function throwDbUnavailable3(err) {
   const error = new Error("Database unavailable");
   error.status = 503;
   if (err?.message) error.detail = err.message;
@@ -4423,10 +5058,10 @@ async function submitDealWork(params) {
   }
   let deal = null;
   try {
-    const rows = await db.select().from(deals).where(eq4(deals.id, dealId));
+    const rows = await db.select().from(deals).where(eq5(deals.id, dealId));
     if (rows.length > 0) deal = rows[0];
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   if (!deal) throw new Error("Deal record not found");
   if (deal.creatorId !== creatorId) throw new Error("Unauthorized: You are not the assigned creator for this deal");
@@ -4443,9 +5078,9 @@ async function submitDealWork(params) {
       postUrl: postUrl.trim(),
       submittedAt: nowStr,
       status: "posted"
-    }).where(eq4(deals.id, dealId));
+    }).where(eq5(deals.id, dealId));
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   return {
     success: true,
@@ -4457,10 +5092,10 @@ async function reviewDealSubmission(params) {
   const { dealId, artistId, action, audioConfirmed, rejectionReason, rejectionNotes } = params;
   let deal = null;
   try {
-    const rows = await db.select().from(deals).where(eq4(deals.id, dealId));
+    const rows = await db.select().from(deals).where(eq5(deals.id, dealId));
     if (rows.length > 0) deal = rows[0];
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   if (!deal) throw new Error("Deal not found");
   if (deal.artistId !== artistId) throw new Error("Unauthorized: You do not own this campaign deal");
@@ -4482,9 +5117,9 @@ async function reviewDealSubmission(params) {
       await db.update(deals).set({
         status: "rejected",
         rejectionReason: `${rejectionReason}${rejectionNotes ? `: ${rejectionNotes}` : ""}`
-      }).where(eq4(deals.id, dealId));
+      }).where(eq5(deals.id, dealId));
     } catch (err) {
-      throwDbUnavailable2(err);
+      throwDbUnavailable3(err);
     }
     return {
       success: true,
@@ -4505,10 +5140,10 @@ async function reviewDealSubmission(params) {
       approvedAt: nowStr,
       firstReleaseAt: nowStr,
       audioConfirmed: Boolean(audioConfirmed)
-    }).where(eq4(deals.id, dealId));
+    }).where(eq5(deals.id, dealId));
   } catch (err) {
     if (err?.status === 503) throw err;
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   return {
     success: true,
@@ -4522,9 +5157,9 @@ async function runAutoApproveEngine2() {
   const cutoffTime = new Date(Date.now() - reviewWindowMs);
   let pendingDeals = [];
   try {
-    pendingDeals = await db.select().from(deals).where(and3(eq4(deals.status, "posted"), lte2(deals.submittedAt, cutoffTime)));
+    pendingDeals = await db.select().from(deals).where(and3(eq5(deals.status, "posted"), lte2(deals.submittedAt, cutoffTime)));
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   let count = 0;
   for (const deal of pendingDeals) {
@@ -4547,9 +5182,9 @@ async function runFinalReleaseEngine2() {
   const cutoffTime = new Date(Date.now() - holdMs);
   let approvedDeals = [];
   try {
-    approvedDeals = await db.select().from(deals).where(and3(eq4(deals.status, "approved"), lte2(deals.firstReleaseAt, cutoffTime)));
+    approvedDeals = await db.select().from(deals).where(and3(eq5(deals.status, "approved"), lte2(deals.firstReleaseAt, cutoffTime)));
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   let releasedCount = 0;
   let refundedCount = 0;
@@ -4570,7 +5205,7 @@ async function runFinalReleaseEngine2() {
         await db.update(deals).set({
           status: "released",
           finalReleaseAt: nowStr
-        }).where(eq4(deals.id, deal.id));
+        }).where(eq5(deals.id, deal.id));
         await db.insert(metricSnapshots).values({
           dealId: deal.id,
           views: 18500,
@@ -4579,7 +5214,7 @@ async function runFinalReleaseEngine2() {
           stillLive: true
         });
       } catch (err) {
-        throwDbUnavailable2(err);
+        throwDbUnavailable3(err);
       }
       releasedCount++;
     } else {
@@ -4590,9 +5225,9 @@ async function runFinalReleaseEngine2() {
         });
       }
       try {
-        await db.update(deals).set({ status: "refunded" }).where(eq4(deals.id, deal.id));
+        await db.update(deals).set({ status: "refunded" }).where(eq5(deals.id, deal.id));
       } catch (err) {
-        throwDbUnavailable2(err);
+        throwDbUnavailable3(err);
       }
       recordSecurityEvent({
         event: "ADMIN_IDENTITY_UNLOCKED",
@@ -4618,17 +5253,17 @@ async function raiseDispute(params) {
   if (!reason || !reason.trim()) throw new Error("Dispute reason is required");
   let deal = null;
   try {
-    const rows = await db.select().from(deals).where(eq4(deals.id, dealId));
+    const rows = await db.select().from(deals).where(eq5(deals.id, dealId));
     if (rows.length > 0) deal = rows[0];
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   if (!deal) throw new Error("Deal not found");
   if (deal.status === "released" || deal.status === "refunded") {
     throw new Error("Cannot open dispute on a completed or fully refunded deal.");
   }
   try {
-    await db.update(deals).set({ status: "disputed" }).where(eq4(deals.id, dealId));
+    await db.update(deals).set({ status: "disputed" }).where(eq5(deals.id, dealId));
     const inserted = await db.insert(disputes).values({
       dealId,
       raisedByUserId,
@@ -4638,25 +5273,25 @@ async function raiseDispute(params) {
     }).returning();
     return { disputeId: inserted[0].id, message: "Dispute opened. Remaining escrow frozen pending admin review." };
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
 }
 async function resolveDispute(params) {
   const { disputeId, adminUserId, resolution, resolutionNotes } = params;
   let dispute = null;
   try {
-    const rows = await db.select().from(disputes).where(eq4(disputes.id, disputeId));
+    const rows = await db.select().from(disputes).where(eq5(disputes.id, disputeId));
     if (rows.length > 0) dispute = rows[0];
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   if (!dispute) throw new Error("Dispute record not found");
   let deal = null;
   try {
-    const rows = await db.select().from(deals).where(eq4(deals.id, dispute.dealId));
+    const rows = await db.select().from(deals).where(eq5(deals.id, dispute.dealId));
     if (rows.length > 0) deal = rows[0];
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   if (!deal) throw new Error("Associated deal not found");
   const creatorNetNum = parseFloat(deal.creatorNet || "0");
@@ -4685,10 +5320,10 @@ async function resolveDispute(params) {
       status: "resolved",
       resolvedAt: nowStr,
       resolutionNotes: resolutionNotes || `Admin resolved: ${resolution}`
-    }).where(eq4(disputes.id, disputeId));
-    await db.update(deals).set({ status: deal.status }).where(eq4(deals.id, deal.id));
+    }).where(eq5(disputes.id, disputeId));
+    await db.update(deals).set({ status: deal.status }).where(eq5(deals.id, deal.id));
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   recordSecurityEvent({
     event: "ADMIN_IDENTITY_UNLOCKED",
@@ -4710,9 +5345,9 @@ async function checkExpiredDeals() {
   const now = /* @__PURE__ */ new Date();
   let expiredList = [];
   try {
-    expiredList = await db.select().from(deals).where(and3(eq4(deals.status, "accepted"), lte2(deals.deadline, now)));
+    expiredList = await db.select().from(deals).where(and3(eq5(deals.status, "accepted"), lte2(deals.deadline, now)));
   } catch (err) {
-    throwDbUnavailable2(err);
+    throwDbUnavailable3(err);
   }
   let count = 0;
   for (const deal of expiredList) {
@@ -4724,292 +5359,13 @@ async function checkExpiredDeals() {
       });
     }
     try {
-      await db.update(deals).set({ status: "expired" }).where(eq4(deals.id, deal.id));
+      await db.update(deals).set({ status: "expired" }).where(eq5(deals.id, deal.id));
     } catch (err) {
-      throwDbUnavailable2(err);
+      throwDbUnavailable3(err);
     }
     count++;
   }
   return { expiredCount: count };
-}
-
-// server/withdrawalsAndKyc.ts
-import { eq as eq5 } from "drizzle-orm";
-import crypto3 from "crypto";
-function throwDbUnavailable3(err) {
-  const error = new Error("Database unavailable");
-  error.status = 503;
-  if (err?.message) error.detail = err.message;
-  throw error;
-}
-var ENC_KEY = crypto3.scryptSync(process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "mingree_pan_key_v1", "pan_salt", 32);
-function encryptPan(panText) {
-  if (!panText) return "";
-  const cleanPan = panText.trim().toUpperCase();
-  const iv = crypto3.randomBytes(12);
-  const cipher = crypto3.createCipheriv("aes-256-gcm", ENC_KEY, iv);
-  let encrypted = cipher.update(cleanPan, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  const authTag = cipher.getAuthTag().toString("hex");
-  return `${iv.toString("hex")}:${authTag}:${encrypted}`;
-}
-function maskPan(panText) {
-  if (!panText) return "";
-  const clean = panText.trim().toUpperCase();
-  if (clean.length < 10) return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
-  return `${clean.slice(0, 5)}\u2022\u2022\u2022\u2022${clean.slice(9)}`;
-}
-function isValidPan(panText) {
-  if (!panText || typeof panText !== "string") return false;
-  const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
-  return panRegex.test(panText.trim().toUpperCase());
-}
-async function saveUserKyc(userId, pan, name) {
-  if (!isValidPan(pan)) {
-    throw new Error("Invalid PAN format. Standard format is 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)");
-  }
-  if (!name || !name.trim()) {
-    throw new Error("Name as per PAN card is required");
-  }
-  const cleanPan = pan.trim().toUpperCase();
-  const encrypted = encryptPan(cleanPan);
-  const masked = maskPan(cleanPan);
-  try {
-    const existing = await db.select().from(kyc).where(eq5(kyc.userId, userId));
-    if (existing.length > 0) {
-      await db.update(kyc).set({ panEncrypted: encrypted, name: name.trim(), status: "active" }).where(eq5(kyc.userId, userId));
-    } else {
-      await db.insert(kyc).values({
-        userId,
-        panEncrypted: encrypted,
-        name: name.trim(),
-        status: "active"
-      });
-    }
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-  return { success: true, maskedPan: masked };
-}
-async function getUserKyc(userId) {
-  try {
-    const rows = await db.select().from(kyc).where(eq5(kyc.userId, userId));
-    if (rows.length > 0 && rows[0].panEncrypted) {
-      return {
-        verified: true,
-        name: rows[0].name || void 0,
-        maskedPan: "ABCDE\u2022\u2022\u2022\u2022F"
-      };
-    }
-    return { verified: false };
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-}
-async function addPayoutMethod(userId, type, details, isDefault = true) {
-  if (type === "UPI") {
-    if (!details.upiId || !details.upiId.includes("@")) {
-      throw new Error("Invalid UPI ID format (e.g. name@upi)");
-    }
-  } else if (type === "Bank") {
-    if (!details.accountNumber || !details.ifscCode || !details.accountHolderName) {
-      throw new Error("Bank Account Number, IFSC Code, and Account Holder Name are required");
-    }
-  }
-  try {
-    if (isDefault) {
-      await db.update(payoutMethods).set({ isDefault: false }).where(eq5(payoutMethods.userId, userId));
-    }
-    const inserted = await db.insert(payoutMethods).values({
-      userId,
-      type,
-      accountDetails: details,
-      isDefault
-    }).returning();
-    return inserted[0];
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-}
-async function getUserPayoutMethods(userId) {
-  try {
-    return await db.select().from(payoutMethods).where(eq5(payoutMethods.userId, userId));
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-}
-async function requestWithdrawal(params) {
-  const { userId, userRole, amount, payoutMethodId } = params;
-  const minWithdrawal = userRole === "creator" ? CONFIG.MIN_CREATOR_WITHDRAWAL : CONFIG.MIN_ARTIST_WITHDRAWAL;
-  if (amount < minWithdrawal) {
-    throw new Error(`Minimum withdrawal amount for ${userRole}s is \u20B9${minWithdrawal}`);
-  }
-  if (userRole === "creator") {
-    const kycStatus = await getUserKyc(userId);
-    if (!kycStatus.verified) {
-      throw new Error("KYC verification required before requesting your first withdrawal. Please provide your PAN and Name as per PAN.");
-    }
-  }
-  const currentW = await getOrCreateWallet(userId);
-  if (currentW.balance < amount) {
-    throw new Error(`Insufficient available balance (\u20B9${currentW.balance.toFixed(2)}) for withdrawal request of \u20B9${amount.toFixed(2)}`);
-  }
-  const newBalance = currentW.balance - amount;
-  const withdrawalId = Date.now();
-  try {
-    await db.transaction(async (tx) => {
-      await tx.update(wallets).set({
-        balance: newBalance.toFixed(2)
-      }).where(eq5(wallets.userId, userId));
-      await tx.insert(ledgerEntries).values({
-        userId,
-        type: "withdrawal_hold",
-        amount: (-amount).toFixed(2),
-        balanceAfter: newBalance.toFixed(2),
-        refType: "withdrawal_request",
-        refId: String(withdrawalId)
-      });
-      await tx.insert(withdrawals).values({
-        id: withdrawalId,
-        userId,
-        amount: amount.toFixed(2),
-        tdsAmount: "0.00",
-        payoutMethodId,
-        status: "pending"
-      });
-    });
-  } catch (err) {
-    if (err?.status === 503) throw err;
-    throwDbUnavailable3(err);
-  }
-  return {
-    withdrawalId,
-    pendingHoldAmount: amount,
-    newAvailableBalance: newBalance
-  };
-}
-async function approveWithdrawal(withdrawalId, adminUserId, utrRef) {
-  if (!utrRef || !utrRef.trim()) {
-    throw new Error("Transfer reference / UTR is required to approve withdrawal");
-  }
-  let record = null;
-  try {
-    const rows = await db.select().from(withdrawals).where(eq5(withdrawals.id, withdrawalId));
-    if (rows.length > 0) record = rows[0];
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-  if (!record) throw new Error("Withdrawal request not found");
-  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
-  const amountNum = parseFloat(record.amount);
-  const targetUserId = record.userId;
-  try {
-    await db.transaction(async (tx) => {
-      await tx.update(withdrawals).set({ status: "approved", utrRef: utrRef.trim() }).where(eq5(withdrawals.id, withdrawalId));
-      await tx.insert(ledgerEntries).values({
-        userId: targetUserId,
-        type: "withdrawal_completed",
-        amount: (-amountNum).toFixed(2),
-        balanceAfter: "0.00",
-        refType: "withdrawal_approved",
-        refId: utrRef.trim()
-      });
-      await tx.insert(notifications).values({
-        userId: targetUserId,
-        title: "Withdrawal Approved! \u{1F389}",
-        message: `Your withdrawal of \u20B9${amountNum.toFixed(2)} has been transferred! Reference UTR: ${utrRef.trim()}`,
-        read: false
-      });
-    });
-  } catch (err) {
-    if (err?.status === 503) throw err;
-    throwDbUnavailable3(err);
-  }
-  recordSecurityEvent({
-    event: "ADMIN_IDENTITY_UNLOCKED",
-    mingreeUserId: adminUserId,
-    instagramUsername: "admin_withdrawal_approval",
-    riskScore: 0,
-    riskLevel: "LOW",
-    riskFactors: [],
-    followers: 0,
-    mediaCount: 0,
-    ipAddress: "127.0.0.1",
-    userAgent: "Admin",
-    decision: "ALLOW",
-    details: `Admin #${adminUserId} approved Withdrawal #${withdrawalId} (\u20B9${amountNum}) for User #${targetUserId}. UTR: ${utrRef.trim()}`
-  });
-  return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${utrRef.trim()}` };
-}
-async function rejectWithdrawal(withdrawalId, adminUserId, reason) {
-  if (!reason || !reason.trim()) {
-    throw new Error("Rejection reason is required");
-  }
-  let record = null;
-  try {
-    const rows = await db.select().from(withdrawals).where(eq5(withdrawals.id, withdrawalId));
-    if (rows.length > 0) record = rows[0];
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-  if (!record) throw new Error("Withdrawal request not found");
-  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
-  const amountNum = parseFloat(record.amount);
-  const targetUserId = record.userId;
-  const currentW = await getOrCreateWallet(targetUserId);
-  const refundedBalance = currentW.balance + amountNum;
-  try {
-    await db.transaction(async (tx) => {
-      await tx.update(withdrawals).set({ status: "rejected", rejectionReason: reason.trim() }).where(eq5(withdrawals.id, withdrawalId));
-      await tx.update(wallets).set({ balance: refundedBalance.toFixed(2) }).where(eq5(wallets.userId, targetUserId));
-      await tx.insert(ledgerEntries).values({
-        userId: targetUserId,
-        type: "withdrawal_refund",
-        amount: amountNum.toFixed(2),
-        balanceAfter: refundedBalance.toFixed(2),
-        refType: "withdrawal_rejected",
-        refId: reason.trim()
-      });
-      await tx.insert(notifications).values({
-        userId: targetUserId,
-        title: "Withdrawal Request Returned",
-        message: `Your withdrawal of \u20B9${amountNum.toFixed(2)} was returned to your balance. Reason: ${reason.trim()}`,
-        read: false
-      });
-    });
-  } catch (err) {
-    if (err?.status === 503) throw err;
-    throwDbUnavailable3(err);
-  }
-  recordSecurityEvent({
-    event: "ADMIN_IDENTITY_UNLOCKED",
-    mingreeUserId: adminUserId,
-    instagramUsername: "admin_withdrawal_rejection",
-    riskScore: 0,
-    riskLevel: "LOW",
-    riskFactors: [],
-    followers: 0,
-    mediaCount: 0,
-    ipAddress: "127.0.0.1",
-    userAgent: "Admin",
-    decision: "ALLOW",
-    details: `Admin #${adminUserId} rejected Withdrawal #${withdrawalId} (\u20B9${amountNum}). Returned to User #${targetUserId}. Reason: ${reason.trim()}`
-  });
-  return { success: true, message: `Withdrawal #${withdrawalId} rejected. Funds returned to user's wallet.` };
-}
-async function getUserWithdrawalHistory(userId) {
-  try {
-    return await db.select().from(withdrawals).where(eq5(withdrawals.userId, userId));
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
-}
-async function getAllWithdrawalsAdmin() {
-  try {
-    return await db.select().from(withdrawals);
-  } catch (err) {
-    throwDbUnavailable3(err);
-  }
 }
 
 // shared/fees.ts
@@ -5037,7 +5393,7 @@ function calculatePlatformFees(basePrice, isProCreator = false) {
 }
 
 // server/promoAndInvoices.ts
-import { eq as eq6, and as and4, sql as sql3 } from "drizzle-orm";
+import { eq as eq6, and as and4, sql as sql4 } from "drizzle-orm";
 var memoryPromosMap = /* @__PURE__ */ new Map([
   [
     "LAUNCH50",
@@ -5124,7 +5480,7 @@ async function applyAndRedeemPromoCode(code, userId) {
   const promoId = validation.promo.id;
   try {
     await db.transaction(async (tx) => {
-      await tx.update(promoCodes).set({ usedCount: sql3`${promoCodes.usedCount} + 1` }).where(eq6(promoCodes.id, promoId));
+      await tx.update(promoCodes).set({ usedCount: sql4`${promoCodes.usedCount} + 1` }).where(eq6(promoCodes.id, promoId));
       await tx.insert(promoRedemptions).values({
         userId,
         promoCodeId: promoId
@@ -5256,141 +5612,13 @@ async function acquireLock(campaignId, fn) {
   }
 }
 function getInitialSeedWorkspaces() {
-  return [
-    {
-      id: 1,
-      sponsorId: 2,
-      title: "New Song / Brand Promo Campaign",
-      brand: "Brand Partner",
-      brandLogo: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-      description: "Promote brand audio / product on Instagram Reels across top creator channels.",
-      genre: "Music & Lifestyle",
-      language: "Hindi & English",
-      contentTypes: ["Reel"],
-      promotionStyle: "Lyrics / Page promotion",
-      audioUrl: "https://instagram.com/reels/sample",
-      referenceVideoUrl: "",
-      productAssets: [],
-      payAmount: 1200,
-      totalBudget: 1290,
-      escrowHeld: 0,
-      committedPayouts: 0,
-      releasedPayouts: 1200,
-      totalSlots: 1,
-      reservedSlots: 1,
-      remainingSlots: 0,
-      bookingModel: "instant",
-      minFollowers: 1e3,
-      minMedianViews: 1e3,
-      targetCountries: ["India"],
-      targetCities: ["All"],
-      requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
-      requiredTags: ["#MingreePromotions"],
-      requiredMentions: ["@brandpartner"],
-      disclosureInstructions: "#ad | Paid Partnership",
-      minDurationSecs: 15,
-      deadline: new Date(Date.now() + 7 * 864e5).toISOString().split("T")[0],
-      status: "completed",
-      createdAt: new Date(Date.now() - 3 * 864e5).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      briefVersions: [
-        {
-          version: 1,
-          timestamp: new Date(Date.now() - 3 * 864e5).toISOString(),
-          updatedBy: 2,
-          changesSummary: "Campaign initial creation",
-          diffs: [],
-          briefSnapshot: {
-            title: "New Song / Brand Promo Campaign",
-            description: "Promote brand audio / product on Instagram Reels across top creator channels.",
-            requiredCaptionNote: "Promote brand audio / product on Instagram Reels across top creator channels.",
-            requiredTags: ["#MingreePromotions"],
-            requiredMentions: ["@brandpartner"],
-            disclosureInstructions: "#ad | Paid Partnership",
-            audioUrl: "https://instagram.com/reels/sample",
-            deadline: new Date(Date.now() + 7 * 864e5).toISOString().split("T")[0]
-          }
-        }
-      ],
-      participants: [
-        {
-          id: 1,
-          campaignId: 1,
-          creatorId: 1,
-          creatorName: "Judge Saab",
-          creatorHandle: "@ijudgesaab",
-          creatorAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-          creatorFollowers: 15400,
-          creatorMedianViews: 8200,
-          status: "approved",
-          payoutAmount: 1200,
-          reservedAt: new Date(Date.now() - 3 * 864e5).toISOString(),
-          expiresAt: new Date(Date.now() + 11 * 864e5).toISOString(),
-          briefAcknowledgedVersion: 1,
-          submission: {
-            postUrl: "https://www.instagram.com/reel/sample123/",
-            audioConfirmed: true,
-            submittedAt: new Date(Date.now() - 1 * 864e5).toISOString(),
-            viewsCount: 14200,
-            likesCount: 980,
-            commentsCount: 65,
-            liveVerified: true
-          },
-          revisions: [],
-          draftSubmission: null,
-          draftStatus: "none"
-        }
-      ],
-      messages: [
-        {
-          id: Date.now() - 2e5,
-          campaignId: 1,
-          senderId: 2,
-          senderName: "Brand Partner",
-          senderRole: "sponsor",
-          senderAvatar: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-          recipientId: null,
-          content: "Welcome to the campaign workspace! Selected creators have been invited to reserve their ad slot.",
-          isAnnouncement: true,
-          createdAt: new Date(Date.now() - 3 * 864e5).toISOString(),
-          readBy: [2, 1]
-        },
-        {
-          id: Date.now() - 1e5,
-          campaignId: 1,
-          senderId: 2,
-          senderName: "Brand Partner",
-          senderRole: "sponsor",
-          senderAvatar: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
-          recipientId: 1,
-          content: "\u2705 Reel APPROVED! \u20B91,200 has been released directly to Judge Saab's wallet balance. Great job!",
-          isAnnouncement: false,
-          createdAt: new Date(Date.now() - 1 * 864e5).toISOString(),
-          readBy: [2, 1]
-        }
-      ]
-    }
-  ];
+  return [];
 }
 function loadWorkspacesFromSeed() {
   return getInitialSeedWorkspaces();
 }
 var workspacesCache = new Map(loadWorkspacesFromSeed().map((c) => [c.id, c]));
-var adminSettingsTableReady = false;
 async function ensureAdminSettingsTable() {
-  if (!isDatabaseConfigured || adminSettingsTableReady) return;
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS admin_settings (
-        key text PRIMARY KEY,
-        value jsonb NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `);
-    adminSettingsTableReady = true;
-  } catch (err) {
-    console.warn("[ENSURE ADMIN_SETTINGS TABLE WARNING]", err?.message || err);
-  }
 }
 var lastSettingsLoadTime = 0;
 var lastFullReconcileTime = 0;
@@ -5402,7 +5630,6 @@ async function ensureWorkspacesLoaded(force = false) {
   if (!force && workspacesCache.size > 0 && now - lastSettingsLoadTime < 3e3) {
     return loadAllWorkspaces();
   }
-  await ensureAdminSettingsTable();
   try {
     const settingsRes = await pool.query(
       `SELECT value FROM admin_settings WHERE key = 'campaign_workspaces_v2'`
@@ -6115,14 +6342,18 @@ async function applyOrReserveSlot(params) {
     await saveSingleWorkspace(campaign);
     try {
       await pool.query(
-        `INSERT INTO campaign_slots (campaign_id, creator_id, price, fee_artist, fee_creator, creator_net, status, deadline)
-         VALUES ($1, $2, $3, 0.00, 0.00, $3, $4, $5)
-         ON CONFLICT (campaign_id, creator_id) DO UPDATE SET status = EXCLUDED.status, deadline = EXCLUDED.deadline`,
+        `INSERT INTO workspace_participants (campaign_id, creator_id, status, payout_amount, expires_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (campaign_id, creator_id) DO UPDATE SET
+           status = EXCLUDED.status,
+           payout_amount = EXCLUDED.payout_amount,
+           expires_at = EXCLUDED.expires_at,
+           updated_at = now()`,
         [
           campaign.id,
           params.creator.id,
-          campaign.payAmount,
           initialStatus,
+          campaign.payAmount,
           new Date(Date.now() + 48 * 36e5)
         ]
       );
@@ -6131,7 +6362,7 @@ async function applyOrReserveSlot(params) {
         [campaign.id]
       );
     } catch (pgErr) {
-      console.error("[PG CAMPAIGN SLOT INSERT ERROR]", pgErr.message);
+      console.error("[PG WORKSPACE PARTICIPANTS INSERT ERROR]", pgErr.message);
     }
     return {
       success: true,
@@ -6392,22 +6623,32 @@ async function submitCreatorReel(params) {
     campaign.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await saveSingleWorkspace(campaign);
     try {
-      const slotRes = await pool.query(
-        `SELECT id FROM campaign_slots WHERE campaign_id = $1 AND creator_id = $2`,
+      const partRes = await pool.query(
+        `SELECT id FROM workspace_participants WHERE campaign_id = $1 AND creator_id = $2`,
         [campaign.id, params.creatorId]
       );
-      const slotId = slotRes.rows.length > 0 ? slotRes.rows[0].id : null;
+      const participantId = partRes.rows.length > 0 ? partRes.rows[0].id : null;
       const mediaMatch = cleanUrl.match(/\/(reel|p)\/([A-Za-z0-9_-]+)/);
       const mediaId = mediaMatch ? mediaMatch[2] : `reel_${Date.now()}`;
       await pool.query(
-        `INSERT INTO submissions (slot_id, campaign_id, creator_id, post_url, post_media_id, audio_confirmed, views_count, likes_count, comments_count, status, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', now())`,
-        [slotId, campaign.id, params.creatorId, cleanUrl, mediaId, Boolean(params.audioConfirmed ?? true), estViews, estLikes, estComments]
+        `INSERT INTO submissions (participant_id, campaign_id, creator_id, post_url, post_media_id, audio_confirmed, views_count, likes_count, comments_count, status, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', now())
+         ON CONFLICT (participant_id) DO UPDATE SET
+           post_url = EXCLUDED.post_url,
+           post_media_id = EXCLUDED.post_media_id,
+           audio_confirmed = EXCLUDED.audio_confirmed,
+           views_count = EXCLUDED.views_count,
+           likes_count = EXCLUDED.likes_count,
+           comments_count = EXCLUDED.comments_count,
+           status = 'pending',
+           submitted_at = now(),
+           updated_at = now()`,
+        [participantId, campaign.id, params.creatorId, cleanUrl, mediaId, Boolean(params.audioConfirmed ?? true), estViews, estLikes, estComments]
       );
-      if (slotId) {
+      if (participantId) {
         await pool.query(
-          `UPDATE campaign_slots SET status = 'submitted' WHERE id = $1`,
-          [slotId]
+          `UPDATE workspace_participants SET status = 'content_submitted', updated_at = now() WHERE id = $1`,
+          [participantId]
         );
       }
     } catch (pgErr) {
@@ -6477,11 +6718,11 @@ async function reviewReelSubmission(params) {
       await saveSingleWorkspace(campaign);
       try {
         await pool.query(
-          `UPDATE submissions SET status = 'approved', reviewed_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
+          `UPDATE submissions SET status = 'approved', reviewed_at = now(), updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
           [campaign.id, participant.creatorId]
         );
         await pool.query(
-          `UPDATE campaign_slots SET status = 'approved' WHERE campaign_id = $1 AND creator_id = $2`,
+          `UPDATE workspace_participants SET status = 'approved', completed_at = now(), updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
           [campaign.id, participant.creatorId]
         );
       } catch (pgErr) {
@@ -6523,8 +6764,12 @@ Please make the requested adjustments and resubmit your updated Reel link.`,
       await saveSingleWorkspace(campaign);
       try {
         await pool.query(
-          `UPDATE submissions SET status = 'revision_requested', rejection_reason = $1, reviewed_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
+          `UPDATE submissions SET status = 'revision_requested', rejection_reason = $1, reviewed_at = now(), updated_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
           [params.revisionReason || "Revision requested", campaign.id, participant.creatorId]
+        );
+        await pool.query(
+          `UPDATE workspace_participants SET status = 'revision_requested', updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
+          [campaign.id, participant.creatorId]
         );
       } catch (pgErr) {
         console.error("[PG REVISION UPDATE ERROR]", pgErr.message);
@@ -6556,11 +6801,11 @@ Please make the requested adjustments and resubmit your updated Reel link.`,
       await saveSingleWorkspace(campaign);
       try {
         await pool.query(
-          `UPDATE submissions SET status = 'rejected', rejection_reason = $1, reviewed_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
+          `UPDATE submissions SET status = 'rejected', rejection_reason = $1, reviewed_at = now(), updated_at = now() WHERE campaign_id = $2 AND creator_id = $3`,
           [params.rejectionReason || "Requirements not met", campaign.id, participant.creatorId]
         );
         await pool.query(
-          `UPDATE campaign_slots SET status = 'cancelled' WHERE campaign_id = $1 AND creator_id = $2`,
+          `UPDATE workspace_participants SET status = 'rejected', updated_at = now() WHERE campaign_id = $1 AND creator_id = $2`,
           [campaign.id, participant.creatorId]
         );
       } catch (pgErr) {
@@ -6666,6 +6911,25 @@ async function postWorkspaceMessage(params) {
   campaign.messages.push(newMsg);
   campaign.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   await saveSingleWorkspace(campaign);
+  try {
+    const msgRes = await pool.query(
+      `INSERT INTO workspace_messages (campaign_id, sender_id, recipient_id, content, is_announcement)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [campaign.id, params.sender.id, params.recipientId !== void 0 ? params.recipientId : null, params.content.trim(), Boolean(isAnnouncement)]
+    );
+    if (msgRes.rows.length > 0) {
+      const dbMsgId = msgRes.rows[0].id;
+      await pool.query(
+        `INSERT INTO workspace_message_reads (message_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [dbMsgId, params.sender.id]
+      );
+    }
+  } catch (pgErr) {
+    console.error("[PG WORKSPACE MESSAGE INSERT ERROR]", pgErr.message);
+  }
   return newMsg;
 }
 function getWorkspaceMessages(params) {
@@ -6923,8 +7187,16 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (error) => {
   console.error("[UNCAUGHT EXCEPTION]", error);
 });
-if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
-  console.warn("[STARTUP] DATABASE_URL is not set in production environment. Continuing with in-memory fallback storage.");
+var isDirectStartup = Boolean(
+  typeof process !== "undefined" && process.argv?.[1] && (process.argv[1].endsWith("server.ts") || process.argv[1].endsWith("server.cjs") || process.argv[1].endsWith("server.js"))
+);
+if (isDirectStartup && process.env.NODE_ENV === "production" && !isDatabaseConfigured && !process.env.HYPERDRIVE) {
+  console.error("================================================================================");
+  console.error("FATAL ERROR: DATABASE_URL is not set in production environment.");
+  console.error("In-memory database fallbacks are disabled in production.");
+  console.error("Halting server startup.");
+  console.error("================================================================================");
+  process.exit(1);
 }
 var app = express();
 var PORT = process.env.RENDER ? Number(process.env.PORT) || 3e3 : 3e3;
@@ -7018,7 +7290,6 @@ app.use((req, res, next) => {
 });
 app.use("/api", async (req, res, next) => {
   try {
-    await ensureSchemaInitialized();
     await ensureWorkspacesLoaded();
     await syncSecurityStateFromDb();
   } catch {
@@ -7032,32 +7303,27 @@ var upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }
 });
-app.post("/api/upload", upload.single("file"), (req, res) => {
+app.post("/api/upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
   try {
-    const tmpDir = path2.join(os.tmpdir(), "uploads");
-    if (!fs2.existsSync(tmpDir)) {
-      fs2.mkdirSync(tmpDir, { recursive: true });
-    }
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const fileName = uniqueSuffix + "-" + req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const filePath = path2.join(tmpDir, fileName);
-    fs2.writeFileSync(filePath, req.file.buffer);
-    const fileUrl = `/uploads/${fileName}`;
+    const result = await uploadToStorage({
+      buffer: req.file.buffer,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      folder: "uploads"
+    });
     return res.json({
       success: true,
-      url: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
-      fileName: req.file.originalname,
-      size: req.file.size
+      url: result.url,
+      fileName: result.fileName,
+      size: result.size,
+      storageProvider: result.storageProvider
     });
   } catch (err) {
-    return res.json({
-      success: true,
-      url: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
-      fileName: req.file.originalname,
-      size: req.file.size
+    return res.status(500).json({
+      error: err?.message || "File upload failed"
     });
   }
 });
@@ -7196,7 +7462,7 @@ function deleteOtpRecord(identifier) {
 }
 var verifiedSignupEmails = /* @__PURE__ */ new Set();
 function generateOtp() {
-  return crypto4.randomInt(1e5, 1e6).toString();
+  return crypto5.randomInt(1e5, 1e6).toString();
 }
 async function sendEmailOtp(toEmail, otp, userName) {
   const creds = getEmailCredentials();
@@ -7252,23 +7518,36 @@ app.get("/api/auth/email-status", (req, res) => {
     user: creds ? creds.user : null
   });
 });
-var OTP_SIGNING_SECRET = process.env.JWT_SECRET || "mingree_jwt_secret_v6_production_key";
+var EPHEMERAL_DEV_SIGNING_SECRET = crypto5.randomBytes(32).toString("hex");
+function getOtpSigningSecret() {
+  const secret = (process.env.OTP_SIGNING_SECRET || process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: OTP_SIGNING_SECRET or JWT_SECRET environment variable is required in production.");
+    }
+    return EPHEMERAL_DEV_SIGNING_SECRET;
+  }
+  return secret;
+}
+if (process.env.NODE_ENV === "production" && !process.env.OTP_SIGNING_SECRET && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: OTP_SIGNING_SECRET or JWT_SECRET environment variable is required in production.");
+}
 function createSignedOtpToken(email, otpHash, expiresAt) {
   const payload = Buffer.from(JSON.stringify({ email, otpHash, expiresAt })).toString("base64url");
-  const sig = crypto4.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const sig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 function verifySignedOtpToken(token, email, otp) {
   if (!token || typeof token !== "string" || !token.includes(".")) return { valid: false };
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return { valid: false };
-  const expectedSig = crypto4.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const expectedSig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   if (sig !== expectedSig) return { valid: false };
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     if (decoded.email !== email) return { valid: false };
     if (Date.now() > Number(decoded.expiresAt)) return { valid: false, expired: true };
-    const submittedHash = crypto4.createHash("sha256").update(otp).digest("hex");
+    const submittedHash = crypto5.createHash("sha256").update(otp).digest("hex");
     return { valid: submittedHash === decoded.otpHash };
   } catch {
     return { valid: false };
@@ -7277,14 +7556,14 @@ function verifySignedOtpToken(token, email, otp) {
 function createVerifiedEmailToken(email) {
   const expiresAt = Date.now() + 30 * 60 * 1e3;
   const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt })).toString("base64url");
-  const sig = crypto4.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const sig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 function isEmailVerifiedByToken(token, email) {
   if (!token || typeof token !== "string" || !token.includes(".")) return false;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return false;
-  const expectedSig = crypto4.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const expectedSig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   if (sig !== expectedSig) return false;
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
@@ -7379,7 +7658,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
   const cleanEmail = email.toLowerCase().trim();
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const rawOtp = generateOtp();
-  const otpHash = crypto4.createHash("sha256").update(rawOtp).digest("hex");
+  const otpHash = crypto5.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1e3;
   setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
   if (cleanPhone) {
@@ -7387,22 +7666,34 @@ app.post("/api/auth/send-otp", async (req, res) => {
   }
   const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
   let smsSent = false;
+  let emailSent = false;
   if (cleanPhone && cleanPhone.length === 10) {
     const smsResult = await sendSmsOtp(cleanPhone, rawOtp, name);
     if (smsResult.success) {
       smsSent = true;
     } else {
-      console.error(`[SMS FAIL] ${smsResult.error}`);
+      console.warn(`[SMS NON-FATAL] ${smsResult.error}`);
     }
   }
+  try {
+    const emailResult = await sendEmailOtp(cleanEmail, rawOtp, name);
+    if (emailResult.success) {
+      emailSent = true;
+    }
+  } catch (emailErr) {
+    console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
+  }
+  const isDevOrTest = process.env.NODE_ENV !== "production" || !smsSent && !emailSent;
   return res.json({
-    message: smsSent ? `SMS OTP sent successfully to +91 ${cleanPhone}` : `OTP generated successfully`,
+    message: smsSent ? `SMS OTP sent successfully to +91 ${cleanPhone}` : emailSent ? `Verification code sent to ${cleanEmail}` : `Verification code generated successfully`,
     smsSent,
+    emailSent,
     otpToken,
+    devOtp: isDevOrTest ? rawOtp : void 0,
     expiresIn: 600
   });
 });
-app.post("/api/auth/verify-otp", (req, res) => {
+app.post("/api/auth/verify-otp", async (req, res) => {
   const { email, phone, otp, otpToken } = req.body || {};
   if (!email || !otp) {
     return res.status(400).json({ error: "Email and OTP are required" });
@@ -7411,20 +7702,12 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const cleanOtp = String(otp).trim();
   const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
-  const isFallbackDemoOtp = cleanOtp === "123456" || cleanOtp === "898846" || cleanOtp === "937978";
+  if (tokenCheck.expired) {
+    return res.status(400).json({ error: "OTP has expired. Please request a new one." });
+  }
   let record = getOtpRecord(cleanEmail);
   if (!record && cleanPhone) {
     record = getOtpRecord(cleanPhone);
-  }
-  let isOtpValid = tokenCheck.valid || isFallbackDemoOtp;
-  if (!isOtpValid && record) {
-    const submittedHash = crypto4.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash === record.otpHash) {
-      isOtpValid = true;
-    }
-  }
-  if (!isOtpValid) {
-    return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
   }
   if (record) {
     if (Date.now() > record.expiresAt) {
@@ -7437,13 +7720,21 @@ app.post("/api/auth/verify-otp", (req, res) => {
       if (cleanPhone) deleteOtpRecord(cleanPhone);
       return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
     }
-    const submittedHash = crypto4.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash !== record.otpHash && !isFallbackDemoOtp) {
+  }
+  let isOtpValid = tokenCheck.valid;
+  if (!isOtpValid && record) {
+    const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+    if (submittedHash === record.otpHash) {
+      isOtpValid = true;
+    } else {
       record.attempts += 1;
       setOtpRecord(cleanEmail, record);
       if (cleanPhone) setOtpRecord(cleanPhone, record);
       return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
+  }
+  if (!isOtpValid) {
+    return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
   }
   deleteOtpRecord(cleanEmail);
   if (cleanPhone) deleteOtpRecord(cleanPhone);
@@ -7452,7 +7743,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail || cleanPhone && u.phone && u.phone.includes(cleanPhone));
   if (user) {
     user.isEmailVerified = true;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(user);
   }
   return res.json({ success: true, verifiedToken, message: "Verification successful" });
 });
@@ -7480,7 +7771,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     }
   }
   const rawOtp = generateOtp();
-  const otpHash = crypto4.createHash("sha256").update(rawOtp).digest("hex");
+  const otpHash = crypto5.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1e3;
   setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
   const creds = getEmailCredentials();
@@ -7519,7 +7810,7 @@ app.post("/api/auth/verify-reset-otp", (req, res) => {
     deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
   }
-  const submittedHash = crypto4.createHash("sha256").update(cleanOtp).digest("hex");
+  const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
   if (submittedHash !== record.otpHash) {
     record.attempts += 1;
     setOtpRecord(cleanEmail, record);
@@ -7550,7 +7841,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
   }
-  const submittedHash = crypto4.createHash("sha256").update(cleanOtp).digest("hex");
+  const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
   if (submittedHash !== record.otpHash) {
     record.attempts += 1;
     setOtpRecord(cleanEmail, record);
@@ -7568,31 +7859,45 @@ app.post("/api/auth/reset-password", async (req, res) => {
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (user) {
     user.passwordHash = newHash;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(user);
   }
   return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
 });
 app.post("/api/auth/phone-accounts", async (req, res) => {
   try {
-    const { phoneNumber, phone, otp, otpToken, firebaseVerified } = req.body || {};
+    const { phoneNumber, phone, otp, otpToken } = req.body || {};
     const rawPhone = phoneNumber || phone || "";
     const cleanPhone = String(rawPhone).replace(/[^0-9]/g, "").slice(-10);
     if (!cleanPhone || cleanPhone.length !== 10) {
       return res.status(400).json({ error: "Please provide a valid 10-digit mobile number." });
     }
-    let isOtpValid = firebaseVerified === true;
-    if (!isOtpValid && otp) {
-      const cleanOtp = String(otp).trim();
-      const tokenCheck = otpToken ? verifySignedOtpToken(otpToken, `${cleanPhone}@phone.mingree.com`, cleanOtp) : { valid: false };
-      const isFallbackDemoOtp = cleanOtp === "123456" || cleanOtp === "898846" || cleanOtp === "937978";
-      const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
-      if (tokenCheck.valid || isFallbackDemoOtp) {
+    if (!otp || !String(otp).trim()) {
+      return res.status(400).json({ error: "Verification OTP is required." });
+    }
+    const cleanOtp = String(otp).trim();
+    const tokenCheck = otpToken ? verifySignedOtpToken(otpToken, `${cleanPhone}@phone.mingree.com`, cleanOtp) : { valid: false };
+    if (tokenCheck.expired) {
+      return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+    }
+    const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
+    let isOtpValid = tokenCheck.valid;
+    if (!isOtpValid && record) {
+      if (Date.now() > record.expiresAt) {
+        deleteOtpRecord(cleanPhone);
+        deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+        return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+      }
+      if (record.attempts >= 5) {
+        deleteOtpRecord(cleanPhone);
+        deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+        return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+      }
+      const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+      if (submittedHash === record.otpHash) {
         isOtpValid = true;
-      } else if (record) {
-        const submittedHash = crypto4.createHash("sha256").update(cleanOtp).digest("hex");
-        if (submittedHash === record.otpHash) {
-          isOtpValid = true;
-        }
+      } else {
+        record.attempts += 1;
+        setOtpRecord(cleanPhone, record);
       }
     }
     if (!isOtpValid) {
@@ -7685,7 +7990,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
     let isAuthorized = false;
     if (resetVerificationToken) {
       try {
-        const decoded = jwt.verify(resetVerificationToken, JWT_SECRET);
+        const decoded = jwt.verify(resetVerificationToken, getJwtSecret());
         if (decoded && decoded.phone === cleanPhone && decoded.purpose === "phone_password_reset") {
           isAuthorized = true;
         }
@@ -7694,14 +7999,14 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
     }
     if (!isAuthorized && otp) {
       const cleanOtp = String(otp).trim();
-      if (cleanOtp === "123456" || cleanOtp === "898846" || cleanOtp === "937978") {
-        isAuthorized = true;
-      }
       const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
-      if (record) {
-        const submittedHash = crypto4.createHash("sha256").update(cleanOtp).digest("hex");
+      if (record && Date.now() <= record.expiresAt && record.attempts < 5) {
+        const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
         if (submittedHash === record.otpHash) {
           isAuthorized = true;
+        } else {
+          record.attempts += 1;
+          setOtpRecord(cleanPhone, record);
         }
       }
     }
@@ -7763,7 +8068,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
     });
     if (memoryUser) {
       memoryUser.passwordHash = newHash;
-      saveRegisteredUsers();
+      await saveRegisteredUsers(memoryUser);
       if (!updatedAccount) {
         updatedAccount = memoryUser;
       }
@@ -7805,33 +8110,13 @@ function getInstagramRedirectUri(allowEmpty = false) {
   console.log(`[INSTAGRAM OAUTH] redirect_uri used: ${redirectUri}`);
   return redirectUri;
 }
-var INTERNAL_SESSION_SECRET = crypto4.randomBytes(32).toString("hex");
+var INTERNAL_SESSION_SECRET = crypto5.randomBytes(32).toString("hex");
 function createSignedOAuthState(userId, returnTo, appSecret, redirectUri) {
-  const nonce = crypto4.randomBytes(12).toString("hex");
+  const nonce = crypto5.randomBytes(12).toString("hex");
   const payload = Buffer.from(JSON.stringify({ userId, returnTo, redirectUri, ts: Date.now() })).toString("base64url");
   const secretKey = appSecret || INTERNAL_SESSION_SECRET;
-  const signature = crypto4.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
+  const signature = crypto5.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   return `${nonce}.${payload}.${signature}`;
-}
-function verifySignedOAuthState(stateStr, appSecret) {
-  if (!stateStr || typeof stateStr !== "string") return null;
-  const parts = stateStr.split(".");
-  if (parts.length !== 3) return null;
-  const [nonce, payload, signature] = parts;
-  const secretKey = appSecret || INTERNAL_SESSION_SECRET;
-  const expectedSig = crypto4.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
-  if (signature !== expectedSig) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
-    if (Date.now() - data.ts > 36e5) return null;
-    return {
-      userId: Number(data.userId) || 1,
-      returnTo: typeof data.returnTo === "string" ? data.returnTo : "/dashboard",
-      redirectUri: typeof data.redirectUri === "string" ? data.redirectUri : void 0
-    };
-  } catch {
-    return null;
-  }
 }
 var SECRET_KEYS_SET = /* @__PURE__ */ new Set([
   "gmail_app_password",
@@ -7858,7 +8143,20 @@ var authRateLimiter = rateLimit({
   message: { error: "Too many authentication requests. Please try again in 15 minutes." }
 });
 app.use("/api/auth", authRateLimiter);
-var JWT_SECRET = process.env.JWT_SECRET || "mingree_jwt_secret_v6_production_key";
+function getJwtSecret() {
+  const secret = (process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: JWT_SECRET environment variable is required in production.");
+    }
+    return EPHEMERAL_DEV_SIGNING_SECRET;
+  }
+  return secret;
+}
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: JWT_SECRET environment variable is required in production.");
+}
+var JWT_SECRET = getJwtSecret();
 var COOKIE_NAME = "auth_token";
 function setAuthTokenCookie(res, user) {
   const token = jwt.sign(
@@ -7873,7 +8171,7 @@ function setAuthTokenCookie(res, user) {
       reach: user.reach || (user.instagramFollowers ? Math.round(user.instagramFollowers * 2.2) : null),
       medianViews: user.medianViews || (user.instagramFollowers ? Math.round(user.instagramFollowers * 0.45) : null)
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: "7d" }
   );
   res.cookie(COOKIE_NAME, token, {
@@ -7898,7 +8196,7 @@ async function requireAuth(req, res, next) {
   }
   let decoded;
   try {
-    decoded = jwt.verify(token, JWT_SECRET);
+    decoded = jwt.verify(token, getJwtSecret());
   } catch {
     return res.status(401).json({ error: "Unauthorized: Invalid or expired authentication token" });
   }
@@ -8053,8 +8351,8 @@ app.post("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) =>
   }
   return res.json({ success: true, key });
 });
-var ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
-var ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+var ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
+var ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
 function sanitizeUser(user) {
   if (!user) return null;
   const safe = { ...user };
@@ -8063,222 +8361,47 @@ function sanitizeUser(user) {
   delete safe.instagramAccessToken;
   return safe;
 }
-var defaultAccounts = [
-  {
-    id: 99,
-    email: ADMIN_EMAIL,
-    passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-    name: "Mingree Administrator",
-    role: "admin",
-    handle: "@admin",
-    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-    tier: "Admin",
-    isEmailVerified: true
-  },
-  {
-    id: 1,
-    email: "riyasen.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Riya Sen",
-    displayName: "Riya Sen",
-    accountName: "Riya Sen",
-    role: "creator",
-    handle: "@riyasen.official",
-    instagramUsername: "riyasen.official",
-    instagramFollowers: 94200,
-    followers: 94200,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
-    tier: "mid",
-    city: "Mumbai",
-    medianViews: 52400,
-    reach: 248500,
-    engagementRate: 5.2,
-    indiaAudiencePct: 96,
-    completedDeals: 24,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  },
-  {
-    id: 2,
-    email: "aarohi.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Aarohi Mehta",
-    displayName: "Aarohi Mehta",
-    accountName: "Aarohi Mehta",
-    role: "creator",
-    handle: "@aarohimehta_",
-    instagramUsername: "aarohimehta_",
-    instagramFollowers: 142e3,
-    followers: 142e3,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300",
-    tier: "upper_mid",
-    city: "Delhi",
-    medianViews: 89e3,
-    reach: 38e4,
-    engagementRate: 4.9,
-    indiaAudiencePct: 94,
-    completedDeals: 31,
-    onTimeRate: 98,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  },
-  {
-    id: 3,
-    email: "tanvi.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Tanvi Kapoor",
-    displayName: "Tanvi Kapoor",
-    accountName: "Tanvi Kapoor",
-    role: "creator",
-    handle: "@tanvikapoor.fit",
-    instagramUsername: "tanvikapoor.fit",
-    instagramFollowers: 78500,
-    followers: 78500,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=300",
-    tier: "mid",
-    city: "Bangalore",
-    medianViews: 44200,
-    reach: 195e3,
-    engagementRate: 5.6,
-    indiaAudiencePct: 95,
-    completedDeals: 19,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  },
-  {
-    id: 4,
-    email: "simran.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Simran Kaur",
-    displayName: "Simran Kaur",
-    accountName: "Simran Kaur",
-    role: "creator",
-    handle: "@simrankaur_vibes",
-    instagramUsername: "simrankaur_vibes",
-    instagramFollowers: 185e3,
-    followers: 185e3,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300",
-    tier: "upper_mid",
-    city: "Chandigarh",
-    medianViews: 112e3,
-    reach: 49e4,
-    engagementRate: 6.1,
-    indiaAudiencePct: 97,
-    completedDeals: 42,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  },
-  {
-    id: 5,
-    email: "kavya.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Kavya Nair",
-    displayName: "Kavya Nair",
-    accountName: "Kavya Nair",
-    role: "creator",
-    handle: "@kavyanair_daily",
-    instagramUsername: "kavyanair_daily",
-    instagramFollowers: 62e3,
-    followers: 62e3,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
-    tier: "mid",
-    city: "Kochi",
-    medianViews: 38500,
-    reach: 16e4,
-    engagementRate: 5.4,
-    indiaAudiencePct: 95,
-    completedDeals: 16,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  },
-  {
-    id: 20,
-    email: "sponsor@mingree.in",
-    passwordHash: bcrypt.hashSync("sponsor123", 10),
-    name: "Brand Partner",
-    displayName: "Brand Partner",
-    companyName: "Brand Partner",
-    role: "sponsor",
-    handle: "@brandpartner",
-    avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-    avatarUrl: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-    tier: "Brand Partner",
-    city: "Mumbai",
-    isEmailVerified: true,
-    status: "active",
-    createdAt: (/* @__PURE__ */ new Date()).toISOString()
-  }
-];
-var registeredUsers = [...defaultAccounts];
+var registeredUsers = [];
 global.registeredUsers = registeredUsers;
 function loadRegisteredUsers() {
-  for (const acc of defaultAccounts) {
-    const existing = registeredUsers.find((u) => u.email.toLowerCase() === acc.email.toLowerCase() || u.id === acc.id);
-    if (!existing) {
-      registeredUsers.push({ ...acc });
-    }
-  }
   for (const user of registeredUsers) {
     if (user.password && !user.passwordHash) {
       user.passwordHash = bcrypt.hashSync(user.password, 10);
       delete user.password;
     }
   }
-  let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL || u.role === "admin");
-  if (!adminUser) {
-    adminUser = {
-      id: 99,
-      email: ADMIN_EMAIL,
-      passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-      name: "Mingree Administrator",
-      role: "admin",
-      handle: "@admin",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-      tier: "Admin",
-      isEmailVerified: true,
-      status: "active"
-    };
-    registeredUsers.push(adminUser);
-  } else {
-    adminUser.email = ADMIN_EMAIL;
-    adminUser.role = "admin";
-    adminUser.isEmailVerified = true;
-    if (process.env.ADMIN_PASSWORD) {
-      adminUser.passwordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10);
+  if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+    let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL);
+    if (!adminUser) {
+      adminUser = {
+        id: 99,
+        email: ADMIN_EMAIL,
+        passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
+        name: "Mingree Administrator",
+        role: "admin",
+        handle: "@admin",
+        tier: "Admin",
+        isEmailVerified: true,
+        status: "active"
+      };
+      registeredUsers.push(adminUser);
+    } else {
+      adminUser.email = ADMIN_EMAIL;
+      adminUser.role = "admin";
+      adminUser.isEmailVerified = true;
+      adminUser.passwordHash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
     }
   }
 }
-function saveRegisteredUsers() {
+async function saveRegisteredUsers(targetUser) {
   global.registeredUsers = registeredUsers;
   if (!isDatabaseConfigured) return;
-  for (const u of registeredUsers) {
+  const usersToPersist = targetUser ? [targetUser] : registeredUsers;
+  for (const u of usersToPersist) {
     if (!u || !u.email || !u.passwordHash) continue;
-    pool.query(
-      `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, company_name, city, phone, avatar, avatar_url)
+    try {
+      await pool.query(
+        `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, company_name, city, phone, avatar, avatar_url)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (email) DO UPDATE SET
            password_hash = EXCLUDED.password_hash,
@@ -8291,22 +8414,26 @@ function saveRegisteredUsers() {
            phone = EXCLUDED.phone,
            avatar = EXCLUDED.avatar,
            avatar_url = EXCLUDED.avatar_url`,
-      [
-        Number(u.id),
-        u.email,
-        u.passwordHash,
-        u.name || "",
-        u.role || "creator",
-        Boolean(u.isEmailVerified),
-        u.status || "active",
-        u.companyName || null,
-        u.city || null,
-        u.phone || null,
-        u.avatar || null,
-        u.avatarUrl || u.avatar || null
-      ]
-    ).catch(() => {
-    });
+        [
+          Number(u.id),
+          u.email,
+          u.passwordHash,
+          u.name || "",
+          u.role || "creator",
+          Boolean(u.isEmailVerified),
+          u.status || "active",
+          u.companyName || null,
+          u.city || null,
+          u.phone || null,
+          u.avatar || null,
+          u.avatarUrl || u.avatar || null
+        ]
+      );
+    } catch (err) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[DB USER PERSIST ERROR]", err?.message || err);
+      }
+    }
   }
 }
 loadRegisteredUsers();
@@ -8464,7 +8591,7 @@ app.post("/api/auth/signup", async (req, res) => {
     };
   }
   registeredUsers.push(newUser);
-  saveRegisteredUsers();
+  await saveRegisteredUsers(newUser);
   setAuthTokenCookie(res, newUser);
   return res.json(sanitizeUser(newUser));
 });
@@ -8501,14 +8628,11 @@ app.post("/api/auth/login", async (req, res) => {
         console.error("[LOGIN DB ERROR]", err.message);
       }
     }
-    const isAdminEmail = cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
-    if (isAdminEmail) {
+    const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
+    if (isAdminEmail && ADMIN_PASSWORD) {
       if (foundUser) {
         foundUser.role = "admin";
         foundUser.isEmailVerified = true;
-        if (!foundUser.passwordHash) {
-          foundUser.passwordHash = bcrypt.hashSync("admin123", 10);
-        }
       } else {
         foundUser = {
           id: 99,
@@ -8536,8 +8660,8 @@ app.post("/api/auth/login", async (req, res) => {
     if (!isUserAdmin && isPortalAdmin) {
       return res.status(401).json({ error: "Invalid email or password for Admin Portal." });
     }
-    const isAdminPass = isAdminEmail && (String(password) === "admin123" || String(password) === ADMIN_PASSWORD);
-    const isPasswordValid = isAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
+    const isEnvAdminPass = isAdminEmail && Boolean(ADMIN_PASSWORD) && String(password) === ADMIN_PASSWORD;
+    const isPasswordValid = isEnvAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
     if (!isPasswordValid) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
@@ -8654,7 +8778,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         };
         registeredUsers.push(foundUser);
-        saveRegisteredUsers();
+        await saveRegisteredUsers(foundUser);
       }
     }
     setAuthTokenCookie(res, foundUser);
@@ -8717,7 +8841,14 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
   let authoritativeUser = null;
   if (isDatabaseConfigured) {
     try {
-      const dbRes = await pool.query("SELECT id, email, name, role, email_verified, status, company_name, gstin, pan, billing_address, avatar, avatar_url, city, created_at FROM users WHERE id = $1", [targetId]);
+      const dbRes = await pool.query(
+        `SELECT u.id, u.email, u.name, u.role, u.email_verified, u.status, u.company_name, u.gstin,
+                k.pan_masked AS pan, u.billing_address, u.avatar, u.avatar_url, u.city, u.created_at
+         FROM users u
+         LEFT JOIN kyc k ON k.user_id = u.id
+         WHERE u.id = $1`,
+        [targetId]
+      );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = 0;
@@ -8825,10 +8956,10 @@ app.put("/api/users/:id/profile", requireAuth, async (req, res) => {
       }
     }
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json(sanitizeUser(user));
 });
-app.put("/api/users/:id/city", requireAuth, (req, res) => {
+app.put("/api/users/:id/city", requireAuth, async (req, res) => {
   const targetId = Number(req.params.id);
   if (req.user.id !== targetId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -8836,7 +8967,7 @@ app.put("/api/users/:id/city", requireAuth, (req, res) => {
   const user = req.user;
   const { city } = req.body;
   if (city !== void 0) user.city = city;
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json(sanitizeUser(user));
 });
 app.put("/api/users/:id/instagram", requireAuth, async (req, res) => {
@@ -8857,7 +8988,7 @@ app.put("/api/users/:id/instagram", requireAuth, async (req, res) => {
     user.instagramAccessToken = null;
     user.instagramUserId = null;
     user.instagramTokenExpiresAt = null;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(user);
     return res.json(sanitizeUser(user));
   }
   const cleanHandle = String(instagramUsername).trim().replace(/^@+/, "");
@@ -8889,7 +9020,7 @@ app.put("/api/users/:id/instagram", requireAuth, async (req, res) => {
     regUser.instagramVerificationStatus = "verified";
     regUser.tier = tierName;
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   try {
     await pool.query(
       `UPDATE users SET handle = COALESCE(handle, $1), followers = $2, tier = $3 WHERE id = $4`,
@@ -9054,12 +9185,12 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req, res) =>
     regUser.avatarUrl = null;
     regUser.avatar_url = null;
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   setAuthTokenCookie(res, user);
   console.log(`[INSTAGRAM] Creator ${targetId} disconnected Instagram account cleanly`);
   return res.json(sanitizeUser(user));
 });
-app.post("/api/instagram/reset-all", async (req, res) => {
+app.post("/api/instagram/reset-all", requireAuth, requireRole("admin"), async (req, res) => {
   for (const u of registeredUsers) {
     u.instagramUsername = null;
     u.instagramProfileUrl = null;
@@ -9072,11 +9203,11 @@ app.post("/api/instagram/reset-all", async (req, res) => {
     u.instagramUserId = null;
     u.instagramTokenExpiresAt = null;
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers();
   try {
     await pool.query(
       `UPDATE creator_profiles
-       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', encrypted_access_token = NULL, token_expires_at = NULL`
+       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL`
     );
   } catch (err) {
     console.error("[RESET ALL ERROR]", err.message);
@@ -9087,21 +9218,21 @@ app.post("/api/instagram/reset-all", async (req, res) => {
 app.post("/api/users/:id/instagram/refresh", requireAuth, (req, res) => {
   return res.json(sanitizeUser(req.user));
 });
-app.post(["/api/users/:id/instagram/generate-code", "/api/users/:id/instagram/verification-code"], requireAuth, (req, res) => {
+app.post(["/api/users/:id/instagram/generate-code", "/api/users/:id/instagram/verification-code"], requireAuth, async (req, res) => {
   const user = req.user;
   const code = `MG-${Math.floor(1e4 + Math.random() * 9e4)}`;
   user.instagramVerificationCode = code;
   user.instagramVerificationStatus = "pending";
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json({ code, status: "pending", user: sanitizeUser(user) });
 });
-app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit"], requireAuth, (req, res) => {
+app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit"], requireAuth, async (req, res) => {
   const user = req.user;
   user.instagramVerificationStatus = "pending";
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json({ success: true, status: "pending", message: "Submitted for verification review" });
 });
-app.post("/api/users/:id/avatar", requireAuth, (req, res) => {
+app.post("/api/users/:id/avatar", requireAuth, async (req, res) => {
   const targetId = Number(req.params.id);
   if (req.user.id !== targetId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -9111,7 +9242,7 @@ app.post("/api/users/:id/avatar", requireAuth, (req, res) => {
     req.user.avatar = avatar;
     const existing = registeredUsers.find((u) => u.id === req.user.id);
     if (existing) existing.avatar = avatar;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(req.user);
   }
   res.json(sanitizeUser(req.user));
 });
@@ -9125,11 +9256,11 @@ app.get(["/api/users/:id/subscription", "/api/subscription"], requireAuth, (req,
     isActive: isPro
   });
 });
-app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], requireAuth, (req, res) => {
+app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], requireAuth, async (req, res) => {
   const user = req.user;
   user.subscriptionPlan = "free";
   user.subscriptionExpiresAt = null;
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json({ success: true, message: "Subscription cancelled successfully", plan: "free", isActive: false });
 });
 app.get(["/api/users/:id/rate-card", "/api/creators/:id/rate-card"], requireAuth, async (req, res) => {
@@ -10198,6 +10329,19 @@ app.delete("/api/reservations/:id", requireAuth, async (req, res) => {
     found = true;
   }
   if (found) {
+    try {
+      await pool.query(
+        `UPDATE workspace_participants SET status = 'withdrawn', updated_at = now()
+         WHERE (id = $1 OR (creator_id = $2 AND campaign_id = $1)) AND status IN ('applied', 'reserved')`,
+        [reservationId, userId]
+      );
+      await pool.query(
+        `UPDATE campaigns SET spots_remaining = spots_remaining + 1 WHERE id = $1`,
+        [reservationId]
+      );
+    } catch (pgErr) {
+      console.error("[PG RESERVATION CANCEL ERROR]", pgErr.message);
+    }
     return res.json({ success: true, message: "Reservation cancelled" });
   }
   return res.status(404).json({ error: "Reservation not found" });
@@ -10875,7 +11019,7 @@ app.post("/api/campaigns/:id/close", requireAuth, requireRole("sponsor", "admin"
     refundedAmount: unspentAmount.toFixed(2)
   });
 });
-app.put("/api/users/:id/shipping-address", requireAuth, (req, res) => {
+app.put("/api/users/:id/shipping-address", requireAuth, async (req, res) => {
   const targetId = Number(req.params.id);
   if (req.user.id !== targetId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -10887,10 +11031,10 @@ app.put("/api/users/:id/shipping-address", requireAuth, (req, res) => {
   user.shippingState = shippingState ?? user.shippingState;
   user.shippingPincode = shippingPincode ?? user.shippingPincode;
   user.shippingPhone = shippingPhone ?? user.shippingPhone;
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json(sanitizeUser(user));
 });
-app.get("/api/instagram/config", (req, res) => {
+app.get("/api/instagram/config", requireAuth, requireRole("admin"), (req, res) => {
   const { appId, appSecret } = getInstagramCredentials();
   let redirectUri = "";
   try {
@@ -10905,13 +11049,10 @@ app.get("/api/instagram/config", (req, res) => {
     redirectUri
   });
 });
-app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
-  const { appId, appSecret, redirectUri: customRedirectUri } = req.body || {};
+app.post(["/api/instagram/config", "/api/instagram/configure"], requireAuth, requireRole("admin"), (req, res) => {
+  const { appId, redirectUri: customRedirectUri } = req.body || {};
   const settings = loadSettings();
   if (typeof appId === "string" && appId.trim()) settings.instagram_app_id = appId.trim();
-  if (typeof appSecret === "string" && appSecret.trim() && !appSecret.startsWith("\u2022") && !appSecret.startsWith("\u2022\u2022\u2022\u2022")) {
-    settings.instagram_app_secret = appSecret.trim();
-  }
   if (typeof customRedirectUri === "string" && customRedirectUri.trim()) settings.instagram_redirect_uri = customRedirectUri.trim();
   saveSettings(settings);
   const creds = getInstagramCredentials();
@@ -10929,18 +11070,13 @@ app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
     redirectUri
   });
 });
-app.get("/api/instagram/login", (req, res) => {
+app.get("/api/instagram/login", requireAuth, (req, res) => {
   const { appId, appSecret } = getInstagramCredentials();
   const redirectUri = getInstagramRedirectUri();
   const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
-  let userId = Number(req.query.userId) || 1;
-  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      if (decoded?.id) userId = decoded.id;
-    } catch {
-    }
+  const userId = Number(req.user.id);
+  if (req.query.userId !== void 0 && Number(req.query.userId) !== userId) {
+    return res.status(403).json({ error: "Forbidden: Cannot initiate Instagram OAuth for another user ID" });
   }
   const clientIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
   const rateCheck = checkRateLimitAndFarming(clientIp, userId);
@@ -11440,17 +11576,11 @@ async function saveCreatorProfilePicture(userId, username, imageUrl) {
   }
   return finalUrl;
 }
-app.get("/api/instagram/auth-url", (req, res) => {
-  let userId = Number(req.query.userId);
-  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      if (decoded?.id) userId = decoded.id;
-    } catch {
-    }
+app.get("/api/instagram/auth-url", requireAuth, async (req, res) => {
+  const userId = Number(req.user.id);
+  if (req.query.userId !== void 0 && Number(req.query.userId) !== userId) {
+    return res.status(403).json({ error: "Forbidden: Cannot generate Instagram OAuth URL for another user ID" });
   }
-  if (!userId) userId = 1;
   const { appId, appSecret } = getInstagramCredentials();
   let redirectUri = "";
   try {
@@ -11469,14 +11599,33 @@ app.get("/api/instagram/auth-url", (req, res) => {
   }
   const returnTo = typeof req.query.return_to === "string" ? req.query.return_to : "/profile";
   const state = createSignedOAuthState(userId, returnTo, appSecret, redirectUri);
+  const browserToken = crypto5.randomBytes(32).toString("hex");
+  const browserTokenHash = crypto5.createHash("sha256").update(browserToken).digest("hex");
+  res.cookie("mingree_ig_oauth_bind", browserToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 15 * 60 * 1e3
+  });
+  try {
+    await pool.query(
+      `INSERT INTO oauth_states (state, user_id, browser_token_hash, redirect_uri, return_to, expires_at)
+       VALUES ($1, $2, $3, $4, $5, now() + interval '15 minutes')`,
+      [state, userId, browserTokenHash, redirectUri, returnTo]
+    );
+  } catch (pgErr) {
+    console.error("[PG OAUTH STATE INSERT ERROR]", pgErr.message);
+  }
   instagramOAuthStates.set(state, {
     userId,
     createdAt: Date.now(),
     returnTo,
-    redirectUri
+    redirectUri,
+    browserTokenHash
   });
   const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}&force_reauth=true`;
-  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated with force_reauth=true for client: ${appId}`);
+  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated with browser-binding for client: ${appId}`);
   res.json({
     authUrl,
     instagramOAuthUrl: authUrl,
@@ -11565,14 +11714,42 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     } catch {
     }
   }
+  const browserToken = req.cookies?.["mingree_ig_oauth_bind"];
+  res.clearCookie("mingree_ig_oauth_bind", { path: "/" });
   if (typeof state === "string" && state.trim()) {
-    if (instagramOAuthStates.has(state)) {
-      stateRecord = instagramOAuthStates.get(state);
-      instagramOAuthStates.delete(state);
-    } else {
-      const verified = verifySignedOAuthState(state, appSecret);
-      if (verified) {
-        stateRecord = { userId: verified.userId, returnTo: verified.returnTo, redirectUri: verified.redirectUri };
+    const cleanState = state.trim();
+    const browserTokenHash = browserToken ? crypto5.createHash("sha256").update(browserToken).digest("hex") : "";
+    try {
+      const dbState = await pool.query(
+        `DELETE FROM oauth_states
+         WHERE state = $1 AND expires_at > now()
+         RETURNING user_id, browser_token_hash, return_to, redirect_uri`,
+        [cleanState]
+      );
+      if (dbState.rows.length > 0) {
+        const row = dbState.rows[0];
+        if (browserTokenHash && row.browser_token_hash === browserTokenHash) {
+          stateRecord = {
+            userId: Number(row.user_id),
+            returnTo: row.return_to,
+            redirectUri: row.redirect_uri
+          };
+        } else {
+          console.warn(`[INSTAGRAM OAUTH] Browser binding token mismatch for state: ${cleanState}`);
+        }
+      }
+    } catch (pgErr) {
+      console.error("[PG OAUTH STATE ATOMIC CONSUME ERROR]", pgErr.message);
+    }
+    if (!stateRecord && instagramOAuthStates.has(cleanState)) {
+      const memRecord = instagramOAuthStates.get(cleanState);
+      instagramOAuthStates.delete(cleanState);
+      if (!memRecord.browserTokenHash || memRecord.browserTokenHash === browserTokenHash) {
+        stateRecord = {
+          userId: memRecord.userId,
+          returnTo: memRecord.returnTo,
+          redirectUri: memRecord.redirectUri
+        };
       }
     }
   }
@@ -11580,7 +11757,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     console.warn(`[INSTAGRAM OAUTH] Authorization state validation failed. State found: ${Boolean(stateRecord)}, State User ID: ${stateRecord?.userId}, Session User ID: ${sessionUserId}`);
     return res.status(200).send(renderOAuthResult({
       success: false,
-      error: "Authorization session expired or invalid state. Replayed and stale callbacks are rejected. Please click 'Connect with Instagram' to try again.",
+      error: "Authorization session expired or invalid state. Replayed, browser-mismatched, and stale callbacks are rejected. Please click 'Connect with Instagram' to try again.",
       returnTo: "/profile"
     }));
   }
@@ -12050,7 +12227,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       targetUser.instagramUserId = igUserId;
       targetUser.instagramAccessToken = finalAccessToken;
       targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1e3).toISOString();
-      saveRegisteredUsers();
+      await saveRegisteredUsers(targetUser);
     }
     console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
     if (targetUser) {
@@ -12133,7 +12310,7 @@ app.post("/api/creator/sync-insights", requireAuth, async (req, res) => {
         console.warn("[SYNC INSIGHTS] Profile picture refresh error:", syncPicErr?.message || syncPicErr);
       }
     }
-    saveRegisteredUsers();
+    await saveRegisteredUsers(targetUser);
     try {
       await pool.query(
         `UPDATE creator_profiles SET median_views = $1, engagement_rate = $2 WHERE user_id = $3`,
@@ -12464,7 +12641,7 @@ app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req
   const idx = registeredUsers.findIndex((u) => u.id === targetUserId);
   if (idx !== -1) {
     registeredUsers.splice(idx, 1);
-    saveRegisteredUsers();
+    await saveRegisteredUsers();
   }
   try {
     await pool.query("DELETE FROM users WHERE id = $1", [targetUserId]);
@@ -12473,11 +12650,15 @@ app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req
   res.json({ success: true, message: `User ${targetUserId} deleted successfully` });
 });
 app.post("/api/admin/users/clear-all", requireAuth, requireRole("admin"), async (req, res) => {
-  registeredUsers = registeredUsers.filter((u) => u.role === "admin" || u.email && u.email.toLowerCase() === ADMIN_EMAIL);
+  registeredUsers = registeredUsers.filter((u) => u.role === "admin" || ADMIN_EMAIL && u.email && u.email.toLowerCase() === ADMIN_EMAIL);
   global.registeredUsers = registeredUsers;
-  saveRegisteredUsers();
+  await saveRegisteredUsers();
   try {
-    await pool.query("DELETE FROM users WHERE role != 'admin' AND LOWER(email) != LOWER($1)", [ADMIN_EMAIL]);
+    if (ADMIN_EMAIL) {
+      await pool.query("DELETE FROM users WHERE role != 'admin' AND LOWER(email) != LOWER($1)", [ADMIN_EMAIL]);
+    } else {
+      await pool.query("DELETE FROM users WHERE role != 'admin'");
+    }
   } catch {
   }
   res.json({ success: true, message: "All non-admin test users have been deleted successfully" });
@@ -12825,10 +13006,9 @@ app.post("/api/admin/upi-payments/:id/approve", requireAuth, requireRole("admin"
   }
 });
 function getCashfreeCredentials() {
-  const settings = loadSettings();
-  const appId = (process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "").trim();
-  const secretKey = (process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || "").trim();
-  const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production" || secretKey.startsWith("cfsk_ma_prod_");
+  const appId = (process.env.CASHFREE_APP_ID || "").trim();
+  const secretKey = (process.env.CASHFREE_SECRET_KEY || "").trim();
+  const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || secretKey.startsWith("cfsk_ma_prod_");
   return { appId, secretKey, isProd };
 }
 app.get("/api/cashfree/config", (req, res) => {
@@ -13634,7 +13814,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
       deliverable,
       subtotal,
       total,
-      nonce: crypto4.randomBytes(8).toString("hex"),
+      nonce: crypto5.randomBytes(8).toString("hex"),
       exp: Date.now() + 15 * 60 * 1e3
     };
     const billId = Buffer.from(JSON.stringify(billTokenData)).toString("base64");
@@ -13892,16 +14072,71 @@ app.get("/api/categories", (req, res) => {
     description: c.description
   })));
 });
-app.get("/api/users/:userId/category-subscriptions", (req, res) => {
+app.get("/api/users/:userId/category-subscriptions", requireAuth, async (req, res) => {
   const userId = Number(req.params.userId);
+  if (isNaN(userId) || req.user.id !== userId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot access another user's category subscriptions" });
+  }
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query(
+        `SELECT id, user_id as "userId", category, tier, joined_at as "joinedAt"
+         FROM category_subscriptions
+         WHERE user_id = $1
+         ORDER BY id ASC`,
+        [userId]
+      );
+      return res.json(
+        dbRes.rows.map((r) => ({
+          id: Number(r.id),
+          userId: Number(r.userId),
+          category: r.category,
+          tier: r.tier,
+          joinedAt: r.joinedAt instanceof Date ? r.joinedAt.toISOString() : String(r.joinedAt)
+        }))
+      );
+    } catch (err) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[CATEGORY SUBSCRIPTIONS GET DB ERROR]", err?.message || err);
+        return res.status(500).json({ error: "Failed to load category subscriptions" });
+      }
+    }
+  }
   const userSubs = categorySubscriptionsStore.filter((s) => s.userId === userId);
-  res.json(userSubs);
+  return res.json(userSubs);
 });
-app.post("/api/users/:userId/category-subscriptions", (req, res) => {
+app.post("/api/users/:userId/category-subscriptions", requireAuth, async (req, res) => {
   const userId = Number(req.params.userId);
-  const { category, tier } = req.body;
+  if (isNaN(userId) || req.user.id !== userId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot modify another user's category subscriptions" });
+  }
+  const { category, tier } = req.body || {};
   if (!category || !tier) {
     return res.status(400).json({ error: "Category and tier are required" });
+  }
+  if (isDatabaseConfigured) {
+    try {
+      const insRes = await pool.query(
+        `INSERT INTO category_subscriptions (user_id, category, tier)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, category, tier) DO UPDATE SET tier = EXCLUDED.tier
+         RETURNING id, user_id as "userId", category, tier, joined_at as "joinedAt"`,
+        [userId, String(category), String(tier)]
+      );
+      const row = insRes.rows[0];
+      return res.status(201).json({
+        id: Number(row.id),
+        userId: Number(row.userId),
+        category: row.category,
+        tier: row.tier,
+        joinedAt: row.joinedAt instanceof Date ? row.joinedAt.toISOString() : String(row.joinedAt)
+      });
+    } catch (err) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[CATEGORY SUBSCRIPTIONS POST DB ERROR]", err?.message || err);
+        return res.status(500).json({ error: "Failed to save category subscription" });
+      }
+    }
   }
   const existing = categorySubscriptionsStore.find(
     (s) => s.userId === userId && s.category === category && s.tier === tier
@@ -13917,18 +14152,35 @@ app.post("/api/users/:userId/category-subscriptions", (req, res) => {
     joinedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   categorySubscriptionsStore.push(newSub);
-  res.status(201).json(newSub);
+  return res.status(201).json(newSub);
 });
-app.delete("/api/users/:userId/category-subscriptions", (req, res) => {
+app.delete("/api/users/:userId/category-subscriptions", requireAuth, async (req, res) => {
   const userId = Number(req.params.userId);
-  const { category, tier } = req.body;
+  if (isNaN(userId) || req.user.id !== userId && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot modify another user's category subscriptions" });
+  }
+  const { category, tier } = req.body || {};
+  if (isDatabaseConfigured) {
+    try {
+      await pool.query(
+        `DELETE FROM category_subscriptions WHERE user_id = $1 AND category = $2 AND tier = $3`,
+        [userId, String(category || ""), String(tier || "")]
+      );
+      return res.json({ success: true });
+    } catch (err) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[CATEGORY SUBSCRIPTIONS DELETE DB ERROR]", err?.message || err);
+        return res.status(500).json({ error: "Failed to delete category subscription" });
+      }
+    }
+  }
   const idx = categorySubscriptionsStore.findIndex(
     (s) => s.userId === userId && s.category === category && s.tier === tier
   );
   if (idx !== -1) {
     categorySubscriptionsStore.splice(idx, 1);
   }
-  res.json({ success: true });
+  return res.json({ success: true });
 });
 app.all("/api/*", (req, res) => {
   res.status(404).json({ error: "Endpoint not found" });
@@ -13943,51 +14195,30 @@ app.use((err, req, res, _next) => {
   });
 });
 async function startServer() {
-  let isDbConnected = false;
-  if (!process.env.DATABASE_URL) {
-    console.log("[STARTUP] No DATABASE_URL configured. Running with in-memory / local storage mode.");
+  enforceProductionEnvironment();
+  if (process.env.NODE_ENV === "production") {
+    console.log("[STARTUP] Checking production PostgreSQL database connection...");
+    const isDbConnected = await verifyDbConnection();
+    if (!isDbConnected) {
+      console.error("FATAL: PostgreSQL database connection could not be established in production. Halting startup.");
+      process.exit(1);
+    }
+    console.log("[STARTUP] \u2713 PostgreSQL database connection verified successfully.");
   } else {
-    try {
-      console.log("[STARTUP] Checking PostgreSQL database connection...");
-      isDbConnected = await verifyDbConnection();
-      if (isDbConnected) {
-        console.log("[STARTUP] PostgreSQL database connection verified successfully.");
-      } else {
+    if (!process.env.DATABASE_URL) {
+      console.log("[STARTUP] No DATABASE_URL configured. Running with local fallback mode in development.");
+    } else {
+      try {
+        console.log("[STARTUP] Checking database connection...");
+        const isDbConnected = await verifyDbConnection();
+        if (isDbConnected) {
+          console.log("[STARTUP] PostgreSQL database connection verified successfully.");
+        } else {
+          console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
+        }
+      } catch {
         console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
       }
-    } catch (err) {
-      console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
-    }
-  }
-  if (isDbConnected) {
-    try {
-      const adminEmail = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
-      const adminPass = process.env.ADMIN_PASSWORD || "admin123";
-      const res = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [adminEmail]);
-      if (res.rows.length === 0) {
-        const hash = bcrypt.hashSync(adminPass, 10);
-        await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
-           VALUES ($1, $2, 'Mingree Administrator', 'admin', true, 'active')`,
-          [adminEmail, hash]
-        );
-        console.log(`[SEED] Admin account seeded: ${adminEmail}`);
-      }
-      await pool.query(`
-        DELETE FROM creator_profiles 
-        WHERE user_id IN (
-          SELECT id FROM users 
-          WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-             OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner')
-        );
-        DELETE FROM users 
-        WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-           OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
-      `).catch(() => {
-      });
-      console.log("[DB] Purged fake/demo accounts from PostgreSQL");
-    } catch (seedErr) {
-      console.log("[SEED] Skipped database seeding:", seedErr.message);
     }
   }
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
@@ -14032,12 +14263,15 @@ if (isDirectRun && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME)
 }
 var server_default = app;
 export {
+  createSignedOtpToken,
   server_default as default,
+  getJwtSecret,
   requireAdmin,
   requireAuth,
   requireCreator,
   requireRole,
   requireSponsor,
-  saveCreatorProfilePicture
+  saveCreatorProfilePicture,
+  verifySignedOtpToken
 };
 //# sourceMappingURL=server.js.map

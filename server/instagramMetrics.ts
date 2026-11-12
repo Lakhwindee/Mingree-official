@@ -1,15 +1,28 @@
 import crypto from "crypto";
 import { getTierByFollowers } from "../shared/tiers";
 
-// Token Encryption Key (AES-256-GCM)
-const TOKEN_ENC_RAW = process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "mingree_token_encryption_default_key";
-const ENCRYPTION_KEY = crypto.scryptSync(TOKEN_ENC_RAW, "mingree_salt_v1", 32);
+const EPHEMERAL_DEV_TOKEN_KEY = crypto.randomBytes(32).toString("hex");
+
+function getTokenEncryptionKey(): Buffer {
+  const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
+  if (!raw) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+    }
+    return crypto.scryptSync(EPHEMERAL_DEV_TOKEN_KEY, "mingree_salt_v1", 32);
+  }
+  return crypto.scryptSync(raw, "mingree_salt_v1", 32);
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.TOKEN_ENC_KEY && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+}
 
 // 1. Encrypt Access Token at rest (AES-256-GCM)
 export function encryptAccessToken(plainText: string): string {
   if (!plainText) return "";
   const iv = crypto.randomBytes(12); // 96-bit IV
-  const cipher = crypto.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  const cipher = crypto.createCipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
   let encrypted = cipher.update(plainText, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
@@ -25,7 +38,7 @@ export function decryptAccessToken(encryptedText: string): string {
   try {
     const iv = Buffer.from(ivHex, "hex");
     const authTag = Buffer.from(authTagHex, "hex");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+    const decipher = crypto.createDecipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(cipherHex, "hex", "utf8");
     decrypted += decipher.final("utf8");

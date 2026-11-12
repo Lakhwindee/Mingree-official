@@ -2,11 +2,22 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import * as schema from "../shared/schema";
 
 const { Pool } = pg;
 
-export const isLocalFallbackAllowed = true;
+// OID 20 = int8 (BIGINT / BIGSERIAL / COUNT(*))
+// Parse into native JavaScript Number safely with overflow detection
+pg.types.setTypeParser(20, (val: string) => {
+  const n = Number(val);
+  if (!Number.isSafeInteger(n)) {
+    throw new RangeError(`PostgreSQL BIGINT value "${val}" exceeds JS Number.MAX_SAFE_INTEGER`);
+  }
+  return n;
+});
+
+export const isLocalFallbackAllowed = process.env.NODE_ENV !== "production";
 
 function getValidDatabaseUrl(): string | undefined {
   const raw = (
@@ -15,6 +26,8 @@ function getValidDatabaseUrl(): string | undefined {
     process.env.POSTGRES_URL ||
     process.env.STORAGE_URL ||
     process.env.STORAGE_POSTGRES_URL ||
+    process.env.SUPABASE_DATABASE_URL ||
+    process.env.SUPABASE_POSTGRES_URL ||
     process.env.NEON_DATABASE_URL ||
     process.env.POSTGRES_URL_NON_POOLING ||
     ""
@@ -29,103 +42,132 @@ function getValidDatabaseUrl(): string | undefined {
   }
 }
 
-const validDbUrl = getValidDatabaseUrl();
-export let isDatabaseConfigured = Boolean(validDbUrl);
+let currentDbUrl = getValidDatabaseUrl();
+export let isDatabaseConfigured = Boolean(currentDbUrl);
 
-const rawPool = new Pool(
-  validDbUrl
-    ? {
-        connectionString: validDbUrl,
-        ssl: (validDbUrl.includes("localhost") || validDbUrl.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 5000,
-      }
-    : {
-        host: "127.0.0.1",
-        port: 5432,
-        connectionTimeoutMillis: 500,
-      }
-);
+if (process.env.NODE_ENV === "production" && !currentDbUrl && !process.env.HYPERDRIVE) {
+  console.error("================================================================================");
+  console.error("FATAL ERROR: DATABASE_URL / Hyperdrive is missing or invalid in production.");
+  console.error("Production launch requires a persistent PostgreSQL database (Supabase PostgreSQL via Cloudflare Hyperdrive).");
+  console.error("In-memory database fallbacks are strictly disabled in production.");
+  console.error("Halting server startup.");
+  console.error("================================================================================");
+  process.exit(1);
+}
 
-rawPool.on("error", (err: any) => {
-  // Never crash serverless process on pool idle connection issues
+function createPgPool(url?: string): pg.Pool {
+  return new Pool(
+    url
+      ? {
+          connectionString: url,
+          ssl: (url.includes("localhost") || url.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false },
+          connectionTimeoutMillis: 5000,
+        }
+      : {
+          host: "127.0.0.1",
+          port: 5432,
+          connectionTimeoutMillis: 500,
+        }
+  );
+}
+
+let activePool = createPgPool(currentDbUrl);
+let activeDb = drizzle(activePool, { schema });
+
+activePool.on("error", (err: any) => {
   console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
 });
 
-const originalQuery = rawPool.query.bind(rawPool);
-(rawPool as any).query = (...args: any[]) => {
-  if (!isDatabaseConfigured) {
-    return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
+/**
+ * Dynamically reconfigures the active PostgreSQL connection pool (e.g. when Cloudflare Hyperdrive
+ * provides env.HYPERDRIVE.connectionString at runtime).
+ */
+export function reconfigureDatabase(newConnectionString: string): void {
+  if (!newConnectionString) return;
+  const clean = newConnectionString.trim();
+  if (currentDbUrl === clean) return;
+  currentDbUrl = clean;
+  isDatabaseConfigured = true;
+  const newPool = createPgPool(clean);
+  newPool.on("error", (err: any) => {
+    console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
+  });
+  activePool = newPool;
+  activeDb = drizzle(activePool, { schema });
+  console.log("[DB] Active database connection routed to Hyperdrive / Supabase PostgreSQL pool.");
+}
+
+// Proxied pool delegating to activePool
+export const pool = new Proxy({} as pg.Pool, {
+  get(_target, prop: string | symbol) {
+    if (prop === "query") {
+      return (...args: any[]) => {
+        if (!isDatabaseConfigured) {
+          return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
+        }
+        return (activePool as any).query(...args);
+      };
+    }
+    const val = (activePool as any)[prop];
+    return typeof val === "function" ? val.bind(activePool) : val;
+  },
+});
+
+// Proxied Drizzle ORM instance delegating to activeDb
+export const db = new Proxy({} as ReturnType<typeof drizzle>, {
+  get(_target, prop: string | symbol) {
+    const val = (activeDb as any)[prop];
+    return typeof val === "function" ? val.bind(activeDb) : val;
+  },
+});
+
+/**
+ * Explicit migration runner invoked ONLY by the dedicated migration CLI (`scripts/migrate.ts`).
+ * Never called automatically during normal API server startup or runtime requests,
+ * tracks applied migration versions in `schema_migrations`,
+ * and never executes destructive DELETE/TRUNCATE statements.
+ */
+export async function runDatabaseMigrations(client?: pg.PoolClient | any): Promise<void> {
+  if (!isDatabaseConfigured && !client) {
+    throw new Error("DATABASE_URL is not configured. Cannot run database migrations.");
   }
-  return (originalQuery as any)(...args);
-};
-
-export const pool = rawPool;
-
-export const db = drizzle(pool, { schema });
-
-let schemaInitialized = false;
-
-export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<void> {
-  if (!isDatabaseConfigured || schemaInitialized) return;
-  schemaInitialized = true;
-  let localClient: pg.PoolClient | undefined;
-  try {
-    localClient = client || (await pool.connect());
-  } catch (connErr: any) {
-    console.warn("[DB SCHEMA CONNECT SKIPPED]", connErr?.message || connErr);
-    return;
-  }
+  const localClient = client || (await pool.connect());
   const shouldRelease = !client;
   try {
-    const migrationPath = path.join(process.cwd(), "migrations", "001_init.sql");
-    const phase1MigrationPath = path.join(process.cwd(), "migrations", "002_phase1_consolidation.sql");
-    let initSql = "";
-    if (fs.existsSync(migrationPath)) {
-      initSql = fs.readFileSync(migrationPath, "utf-8");
-    }
-    if (initSql) {
-      await localClient.query(initSql);
-      if (fs.existsSync(phase1MigrationPath)) {
-        const phase1Sql = fs.readFileSync(phase1MigrationPath, "utf-8");
-        if (phase1Sql) {
-          await localClient.query(phase1Sql).catch((err) => {
-            console.warn("[DB PHASE1 MIGRATION WARN]", err?.message || err);
-          });
+    // Ensure schema_migrations tracking table exists
+    await localClient.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        name TEXT PRIMARY KEY,
+        checksum TEXT NOT NULL,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
+    // Ordered migration files for canonical clean launch
+    const migrationFiles = ["0001_clean_launch_schema.sql"];
+    for (const fileName of migrationFiles) {
+      const migrationPath = path.join(process.cwd(), "migrations", fileName);
+      if (fs.existsSync(migrationPath)) {
+        const checkRes = await localClient.query(
+          "SELECT name FROM schema_migrations WHERE name = $1",
+          [fileName]
+        );
+        if (checkRes.rows.length === 0) {
+          const sqlContent = fs.readFileSync(migrationPath, "utf-8");
+          if (sqlContent.trim()) {
+            await localClient.query(sqlContent);
+            const checksum = crypto.createHash("sha256").update(sqlContent).digest("hex");
+            await localClient.query(
+              "INSERT INTO schema_migrations (name, checksum, applied_at) VALUES ($1, $2, now()) ON CONFLICT (name) DO NOTHING",
+              [fileName, checksum]
+            );
+            console.log(`[DB MIGRATE] Applied migrations/${fileName} (checksum: ${checksum.slice(0, 8)})`);
+          }
+        } else {
+          console.log(`[DB MIGRATE] Skip migrations/${fileName} (already applied)`);
         }
       }
-      await localClient.query(`
-        ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS avatar_url text;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
-        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
-        CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
-      `).catch(() => {});
-
-      // Purge any residual demo campaigns and demo users from DB
-      await localClient.query(`
-        DELETE FROM campaigns
-        WHERE title ILIKE '%boAt%' OR title ILIKE '%Myntra%' OR title ILIKE '%Spotify%'
-           OR title ILIKE '%Zomato%' OR title ILIKE '%Mamaearth%' OR title ILIKE '%Nykaa%'
-           OR title ILIKE '%Puma%' OR title ILIKE '%OnePlus%' OR title ILIKE '%Noise%'
-           OR title ILIKE '%Swiggy%' OR title ILIKE '%CRED%' OR title ILIKE '%Cult.fit%'
-           OR title ILIKE '%Lookbook%';
-
-        DELETE FROM creator_profiles 
-        WHERE user_id IN (
-          SELECT id FROM users 
-          WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-             OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner')
-        );
-
-        DELETE FROM users 
-        WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-           OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
-      `).catch(() => {});
-      schemaInitialized = true;
-      console.log("[DB SCHEMA] Applied migrations/001_init.sql and 002_phase1_consolidation.sql successfully.");
     }
-  } catch (err: any) {
-    console.error("[DB SCHEMA INIT ERROR]", err?.message || err);
   } finally {
     if (shouldRelease) {
       localClient.release();
@@ -133,6 +175,10 @@ export async function ensureSchemaInitialized(client?: pg.PoolClient): Promise<v
   }
 }
 
+/**
+ * Verifies database connectivity on server startup using a lightweight read-only check.
+ * Never executes DDL migrations or destructive SQL automatically on startup.
+ */
 export async function verifyDbConnection(): Promise<boolean> {
   if (!isDatabaseConfigured) {
     return false;
@@ -141,14 +187,12 @@ export async function verifyDbConnection(): Promise<boolean> {
     const client = await pool.connect();
     try {
       await client.query("SELECT 1");
-      await ensureSchemaInitialized(client);
       return true;
     } finally {
       client.release();
     }
-  } catch (err) {
+  } catch {
     isDatabaseConfigured = false;
     return false;
   }
 }
-

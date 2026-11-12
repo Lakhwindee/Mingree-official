@@ -13,18 +13,47 @@ function throwDbUnavailable(err?: any): never {
   throw error;
 }
 
-const ENC_KEY = crypto.scryptSync(process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "mingree_pan_key_v1", "pan_salt", 32);
+const EPHEMERAL_DEV_PAN_KEY = crypto.randomBytes(32).toString("hex");
+
+function getPanEncryptionKey(): Buffer {
+  const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
+  if (!raw) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+    }
+    return crypto.scryptSync(EPHEMERAL_DEV_PAN_KEY, "pan_salt", 32);
+  }
+  return crypto.scryptSync(raw, "pan_salt", 32);
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.TOKEN_ENC_KEY && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: TOKEN_ENC_KEY or JWT_SECRET environment variable is required in production.");
+}
 
 // 1. PAN Encryption & Masking
 export function encryptPan(panText: string): string {
   if (!panText) return "";
   const cleanPan = panText.trim().toUpperCase();
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", ENC_KEY, iv);
+  const cipher = crypto.createCipheriv("aes-256-gcm", getPanEncryptionKey(), iv);
   let encrypted = cipher.update(cleanPan, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
   return `${iv.toString("hex")}:${authTag}:${encrypted}`;
+}
+
+export function decryptPan(ciphertext: string): string {
+  if (!ciphertext) return "";
+  const parts = ciphertext.split(":");
+  if (parts.length !== 3) return "";
+  const [ivHex, authTagHex, encryptedHex] = parts;
+  const iv = Buffer.from(ivHex, "hex");
+  const authTag = Buffer.from(authTagHex, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", getPanEncryptionKey(), iv);
+  decipher.setAuthTag(authTag);
+  let decrypted = decipher.update(encryptedHex, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+  return decrypted;
 }
 
 export function maskPan(panText: string): string {
@@ -58,13 +87,22 @@ export async function saveUserKyc(userId: number, pan: string, name: string): Pr
     if (existing.length > 0) {
       await db
         .update(kyc)
-        .set({ panEncrypted: encrypted, name: name.trim(), status: "active" } as any)
+        .set({
+          panEncrypted: encrypted,
+          panMasked: masked,
+          fullNameOnPan: name.trim(),
+          name: name.trim(),
+          status: "active",
+        } as any)
         .where(eq(kyc.userId, userId));
     } else {
       await db.insert(kyc).values({
         userId,
         panEncrypted: encrypted,
+        panMasked: masked,
+        fullNameOnPan: name.trim(),
         name: name.trim(),
+        dob: "2000-01-01",
         status: "active",
       } as any);
     }
@@ -81,13 +119,47 @@ export async function getUserKyc(userId: number): Promise<{ verified: boolean; n
     if (rows.length > 0 && rows[0].panEncrypted) {
       return {
         verified: true,
-        name: rows[0].name || undefined,
-        maskedPan: "ABCDE••••F",
+        name: rows[0].name || rows[0].fullNameOnPan || undefined,
+        maskedPan: rows[0].panMasked || maskPan("ABCDE1234F"),
       };
     }
     return { verified: false };
   } catch (err: any) {
     throwDbUnavailable(err);
+  }
+}
+
+export function encryptPayoutDetails(details: any): string {
+  return encryptPan(JSON.stringify(details));
+}
+
+export function maskPayoutDetails(type: "UPI" | "Bank", details: any): { maskedAccount: string; publicDetails: any } {
+  if (type === "UPI") {
+    const upi = String(details.upiId || details.upi_id || "").trim();
+    const parts = upi.split("@");
+    const prefix = parts[0] || "";
+    const domain = parts[1] || "";
+    const maskedPrefix = prefix.length > 2 ? `${prefix.slice(0, 2)}•••${prefix.slice(-1)}` : "•••";
+    const maskedAccount = `${maskedPrefix}@${domain}`;
+    return {
+      maskedAccount,
+      publicDetails: { ...details, upiId: maskedAccount, upi_id: maskedAccount },
+    };
+  } else {
+    const acc = String(details.accountNumber || details.account_number || "").trim();
+    const ifsc = String(details.ifscCode || details.ifsc || "").trim().toUpperCase();
+    const holder = String(details.accountHolderName || details.account_holder_name || "").trim();
+    const maskedAcc = acc.length > 4 ? `••••••••${acc.slice(-4)}` : "••••••••";
+    return {
+      maskedAccount: maskedAcc,
+      publicDetails: {
+        ...details,
+        accountNumber: maskedAcc,
+        account_number: maskedAcc,
+        ifscCode: ifsc,
+        accountHolderName: holder,
+      },
+    };
   }
 }
 
@@ -103,6 +175,9 @@ export async function addPayoutMethod(userId: number, type: "UPI" | "Bank", deta
     }
   }
 
+  const { maskedAccount, publicDetails } = maskPayoutDetails(type, details);
+  const encrypted = encryptPayoutDetails(details);
+
   try {
     if (isDefault) {
       await db.update(payoutMethods).set({ isDefault: false } as any).where(eq(payoutMethods.userId, userId));
@@ -110,10 +185,16 @@ export async function addPayoutMethod(userId: number, type: "UPI" | "Bank", deta
     const inserted = await db.insert(payoutMethods).values({
       userId,
       type,
-      accountDetails: details,
+      accountDetails: publicDetails,
+      accountDetailsEncrypted: encrypted,
+      maskedAccount,
       isDefault,
     } as any).returning();
-    return inserted[0];
+    const row = inserted[0];
+    return {
+      ...row,
+      ...publicDetails,
+    };
   } catch (err: any) {
     throwDbUnavailable(err);
   }
@@ -121,7 +202,11 @@ export async function addPayoutMethod(userId: number, type: "UPI" | "Bank", deta
 
 export async function getUserPayoutMethods(userId: number): Promise<any[]> {
   try {
-    return await db.select().from(payoutMethods).where(eq(payoutMethods.userId, userId));
+    const rows = await db.select().from(payoutMethods).where(eq(payoutMethods.userId, userId));
+    return rows.map((r: any) => ({
+      ...r,
+      ...(r.accountDetails || {}),
+    }));
   } catch (err: any) {
     throwDbUnavailable(err);
   }
@@ -233,7 +318,7 @@ export async function approveWithdrawal(withdrawalId: number, adminUserId: numbe
         amount: (-amountNum).toFixed(2),
         balanceAfter: "0.00",
         refType: "withdrawal_approved",
-        refId: utrRef.trim(),
+        refId: String(withdrawalId),
       } as any);
 
       await tx.insert(notifications).values({
@@ -309,7 +394,7 @@ export async function rejectWithdrawal(withdrawalId: number, adminUserId: number
         amount: amountNum.toFixed(2),
         balanceAfter: refundedBalance.toFixed(2),
         refType: "withdrawal_rejected",
-        refId: reason.trim(),
+        refId: String(withdrawalId),
       } as any);
 
       // 4. Notification

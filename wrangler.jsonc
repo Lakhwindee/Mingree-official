@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mingree-official",
+  "main": "server/worker.ts",
+  "compatibility_date": "2026-11-07",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "none"
+  },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "70716aea69dd496794f3df065faec698"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2_BUCKET",
+      "bucket_name": "mingree-assets"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/5 * * * *",
+      "*/15 * * * *",
+      "0 * * * *",
+      "0 0 * * *"
+    ]
+  },
+  "vars": {
+    "NODE_ENV": "production",
+    "APP_URL": "https://mingree.com",
+    "CASHFREE_MODE": "production",
+    "REVIEW_WINDOW_HOURS": "48",
+    "STILL_LIVE_HOURS": "24"
+  }
+}

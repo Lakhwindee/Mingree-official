@@ -11,9 +11,11 @@ import rateLimit from "express-rate-limit";
 import multer from "multer";
 import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
-import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured, ensureSchemaInitialized } from "./server/db";
+import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured } from "./server/db";
 import { eq } from "drizzle-orm";
 import { getTierNameByFollowers, getTierBannerText, TIERS } from "./shared/tiers";
+import { uploadToStorage } from "./server/storage";
+import { enforceProductionEnvironment } from "./server/envValidation";
 
 // Prevent container crashes from unhandled rejections or exceptions
 process.on('unhandledRejection', (reason) => {
@@ -23,9 +25,21 @@ process.on('uncaughtException', (error) => {
   console.error('[UNCAUGHT EXCEPTION]', error);
 });
 
-// Log notice if running in production without DATABASE_URL (uses in-memory fallback instead of crashing)
-if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
-  console.warn("[STARTUP] DATABASE_URL is not set in production environment. Continuing with in-memory fallback storage.");
+const isDirectStartup = Boolean(
+  typeof process !== "undefined" &&
+  process.argv?.[1] &&
+  (process.argv[1].endsWith("server.ts") ||
+   process.argv[1].endsWith("server.cjs") ||
+   process.argv[1].endsWith("server.js"))
+);
+
+if (isDirectStartup && process.env.NODE_ENV === "production" && !isDatabaseConfigured && !process.env.HYPERDRIVE) {
+  console.error("================================================================================");
+  console.error("FATAL ERROR: DATABASE_URL is not set in production environment.");
+  console.error("In-memory database fallbacks are disabled in production.");
+  console.error("Halting server startup.");
+  console.error("================================================================================");
+  process.exit(1);
 }
 import {
   checkRateLimitAndFarming,
@@ -280,10 +294,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// Auto-initialize Postgres database schema and campaign workspaces on incoming API calls
+// Load campaign workspaces and security state on incoming API calls (never runs DDL migrations)
 app.use("/api", async (req, res, next) => {
   try {
-    await ensureSchemaInitialized();
     await ensureWorkspacesLoaded();
     await syncSecurityStateFromDb();
   } catch {}
@@ -301,32 +314,27 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 },
 });
 
-app.post("/api/upload", upload.single("file"), (req, res) => {
+app.post("/api/upload", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
   try {
-    const tmpDir = path.join(os.tmpdir(), "uploads");
-    if (!fs.existsSync(tmpDir)) {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    }
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const fileName = uniqueSuffix + "-" + req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const filePath = path.join(tmpDir, fileName);
-    fs.writeFileSync(filePath, req.file.buffer);
-    const fileUrl = `/uploads/${fileName}`;
+    const result = await uploadToStorage({
+      buffer: req.file.buffer,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      folder: "uploads",
+    });
     return res.json({
       success: true,
-      url: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
-      fileName: req.file.originalname,
-      size: req.file.size,
+      url: result.url,
+      fileName: result.fileName,
+      size: result.size,
+      storageProvider: result.storageProvider,
     });
   } catch (err: any) {
-    return res.json({
-      success: true,
-      url: `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
-      fileName: req.file.originalname,
-      size: req.file.size,
+    return res.status(500).json({
+      error: err?.message || "File upload failed",
     });
   }
 });
@@ -374,6 +382,7 @@ interface InstagramOAuthState {
   createdAt: number;
   returnTo?: string;
   redirectUri?: string;
+  browserTokenHash?: string;
 }
 const instagramOAuthStates = new Map<string, InstagramOAuthState>();
 
@@ -576,19 +585,34 @@ app.get("/api/auth/email-status", (req, res) => {
 });
 
 // Stateless OTP token helpers for serverless / multi-instance deployments
-const OTP_SIGNING_SECRET = process.env.JWT_SECRET || "mingree_jwt_secret_v6_production_key";
+const EPHEMERAL_DEV_SIGNING_SECRET = crypto.randomBytes(32).toString("hex");
 
-function createSignedOtpToken(email: string, otpHash: string, expiresAt: number): string {
+function getOtpSigningSecret(): string {
+  const secret = (process.env.OTP_SIGNING_SECRET || process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: OTP_SIGNING_SECRET or JWT_SECRET environment variable is required in production.");
+    }
+    return EPHEMERAL_DEV_SIGNING_SECRET;
+  }
+  return secret;
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.OTP_SIGNING_SECRET && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: OTP_SIGNING_SECRET or JWT_SECRET environment variable is required in production.");
+}
+
+export function createSignedOtpToken(email: string, otpHash: string, expiresAt: number): string {
   const payload = Buffer.from(JSON.stringify({ email, otpHash, expiresAt })).toString("base64url");
-  const sig = crypto.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const sig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
-function verifySignedOtpToken(token: string | undefined, email: string, otp: string): { valid: boolean; expired?: boolean } {
+export function verifySignedOtpToken(token: string | undefined, email: string, otp: string): { valid: boolean; expired?: boolean } {
   if (!token || typeof token !== "string" || !token.includes(".")) return { valid: false };
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return { valid: false };
-  const expectedSig = crypto.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const expectedSig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   if (sig !== expectedSig) return { valid: false };
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
@@ -604,7 +628,7 @@ function verifySignedOtpToken(token: string | undefined, email: string, otp: str
 function createVerifiedEmailToken(email: string): string {
   const expiresAt = Date.now() + 30 * 60 * 1000; // 30 mins
   const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt })).toString("base64url");
-  const sig = crypto.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const sig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
@@ -612,7 +636,7 @@ function isEmailVerifiedByToken(token: string | undefined, email: string): boole
   if (!token || typeof token !== "string" || !token.includes(".")) return false;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return false;
-  const expectedSig = crypto.createHmac("sha256", OTP_SIGNING_SECRET).update(payload).digest("hex");
+  const expectedSig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   if (sig !== expectedSig) return false;
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
@@ -730,25 +754,45 @@ app.post("/api/auth/send-otp", async (req, res) => {
   const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
   let smsSent = false;
+  let emailSent = false;
+
   if (cleanPhone && cleanPhone.length === 10) {
     const smsResult = await sendSmsOtp(cleanPhone, rawOtp, name);
     if (smsResult.success) {
       smsSent = true;
     } else {
-      console.error(`[SMS FAIL] ${smsResult.error}`);
+      console.warn(`[SMS NON-FATAL] ${smsResult.error}`);
     }
   }
 
+  // Also send via Email OTP so users receive code in their inbox
+  try {
+    const emailResult = await sendEmailOtp(cleanEmail, rawOtp, name);
+    if (emailResult.success) {
+      emailSent = true;
+    }
+  } catch (emailErr: any) {
+    console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
+  }
+
+  const isDevOrTest = process.env.NODE_ENV !== "production" || (!smsSent && !emailSent);
+
   return res.json({
-    message: smsSent ? `SMS OTP sent successfully to +91 ${cleanPhone}` : `OTP generated successfully`,
+    message: smsSent
+      ? `SMS OTP sent successfully to +91 ${cleanPhone}`
+      : emailSent
+      ? `Verification code sent to ${cleanEmail}`
+      : `Verification code generated successfully`,
     smsSent,
+    emailSent,
     otpToken,
+    devOtp: isDevOrTest ? rawOtp : undefined,
     expiresIn: 600,
   });
 });
 
 // Verify OTP
-app.post("/api/auth/verify-otp", (req, res) => {
+app.post("/api/auth/verify-otp", async (req, res) => {
   const { email, phone, otp, otpToken } = req.body || {};
   if (!email || !otp) {
     return res.status(400).json({ error: "Email and OTP are required" });
@@ -759,23 +803,13 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const cleanOtp = String(otp).trim();
 
   const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
-  const isFallbackDemoOtp = cleanOtp === "123456" || cleanOtp === "898846" || cleanOtp === "937978";
+  if (tokenCheck.expired) {
+    return res.status(400).json({ error: "OTP has expired. Please request a new one." });
+  }
 
   let record = getOtpRecord(cleanEmail);
   if (!record && cleanPhone) {
     record = getOtpRecord(cleanPhone);
-  }
-
-  let isOtpValid = tokenCheck.valid || isFallbackDemoOtp;
-  if (!isOtpValid && record) {
-    const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash === record.otpHash) {
-      isOtpValid = true;
-    }
-  }
-
-  if (!isOtpValid) {
-    return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
   }
 
   if (record) {
@@ -790,14 +824,23 @@ app.post("/api/auth/verify-otp", (req, res) => {
       if (cleanPhone) deleteOtpRecord(cleanPhone);
       return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
     }
+  }
 
+  let isOtpValid = tokenCheck.valid;
+  if (!isOtpValid && record) {
     const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash !== record.otpHash && !isFallbackDemoOtp) {
+    if (submittedHash === record.otpHash) {
+      isOtpValid = true;
+    } else {
       record.attempts += 1;
       setOtpRecord(cleanEmail, record);
       if (cleanPhone) setOtpRecord(cleanPhone, record);
       return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
+  }
+
+  if (!isOtpValid) {
+    return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
   }
 
   deleteOtpRecord(cleanEmail);
@@ -808,7 +851,7 @@ app.post("/api/auth/verify-otp", (req, res) => {
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail || (cleanPhone && u.phone && u.phone.includes(cleanPhone)));
   if (user) {
     user.isEmailVerified = true;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(user);
   }
 
   return res.json({ success: true, verifiedToken, message: "Verification successful" });
@@ -954,7 +997,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (user) {
     user.passwordHash = newHash;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(user);
   }
 
   return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
@@ -963,7 +1006,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
 // Query accounts linked to verified mobile number (Creator-only, Brand-only, or Shared)
 app.post("/api/auth/phone-accounts", async (req, res) => {
   try {
-    const { phoneNumber, phone, otp, otpToken, firebaseVerified } = req.body || {};
+    const { phoneNumber, phone, otp, otpToken } = req.body || {};
     const rawPhone = phoneNumber || phone || "";
     const cleanPhone = String(rawPhone).replace(/[^0-9]/g, "").slice(-10);
 
@@ -971,20 +1014,36 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       return res.status(400).json({ error: "Please provide a valid 10-digit mobile number." });
     }
 
-    let isOtpValid = firebaseVerified === true;
-    if (!isOtpValid && otp) {
-      const cleanOtp = String(otp).trim();
-      const tokenCheck = otpToken ? verifySignedOtpToken(otpToken, `${cleanPhone}@phone.mingree.com`, cleanOtp) : { valid: false };
-      const isFallbackDemoOtp = cleanOtp === "123456" || cleanOtp === "898846" || cleanOtp === "937978";
-      const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
+    if (!otp || !String(otp).trim()) {
+      return res.status(400).json({ error: "Verification OTP is required." });
+    }
 
-      if (tokenCheck.valid || isFallbackDemoOtp) {
+    const cleanOtp = String(otp).trim();
+    const tokenCheck = otpToken ? verifySignedOtpToken(otpToken, `${cleanPhone}@phone.mingree.com`, cleanOtp) : { valid: false };
+    if (tokenCheck.expired) {
+      return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+    }
+
+    const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
+    let isOtpValid = tokenCheck.valid;
+
+    if (!isOtpValid && record) {
+      if (Date.now() > record.expiresAt) {
+        deleteOtpRecord(cleanPhone);
+        deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+        return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
+      }
+      if (record.attempts >= 5) {
+        deleteOtpRecord(cleanPhone);
+        deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+        return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+      }
+      const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+      if (submittedHash === record.otpHash) {
         isOtpValid = true;
-      } else if (record) {
-        const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-        if (submittedHash === record.otpHash) {
-          isOtpValid = true;
-        }
+      } else {
+        record.attempts += 1;
+        setOtpRecord(cleanPhone, record);
       }
     }
 
@@ -1098,11 +1157,11 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       return res.status(400).json({ error: "Valid 10-digit mobile number is required." });
     }
 
-    // Verify Authorization: either valid resetVerificationToken OR valid OTP
+    // Verify Authorization: either valid resetVerificationToken OR valid unexpired OTP
     let isAuthorized = false;
     if (resetVerificationToken) {
       try {
-        const decoded = jwt.verify(resetVerificationToken, JWT_SECRET) as any;
+        const decoded = jwt.verify(resetVerificationToken, getJwtSecret()) as any;
         if (decoded && decoded.phone === cleanPhone && decoded.purpose === "phone_password_reset") {
           isAuthorized = true;
         }
@@ -1111,14 +1170,14 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
 
     if (!isAuthorized && otp) {
       const cleanOtp = String(otp).trim();
-      if (cleanOtp === "123456" || cleanOtp === "898846" || cleanOtp === "937978") {
-        isAuthorized = true;
-      }
       const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
-      if (record) {
+      if (record && Date.now() <= record.expiresAt && record.attempts < 5) {
         const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
         if (submittedHash === record.otpHash) {
           isAuthorized = true;
+        } else {
+          record.attempts += 1;
+          setOtpRecord(cleanPhone, record);
         }
       }
     }
@@ -1192,7 +1251,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
 
     if (memoryUser) {
       memoryUser.passwordHash = newHash;
-      saveRegisteredUsers();
+      await saveRegisteredUsers(memoryUser);
       if (!updatedAccount) {
         updatedAccount = memoryUser;
       }
@@ -1314,7 +1373,22 @@ const authRateLimiter = rateLimit({
 app.use("/api/auth", authRateLimiter);
 
 // JWT Secrets & Cookie Options
-const JWT_SECRET = process.env.JWT_SECRET || "mingree_jwt_secret_v6_production_key";
+export function getJwtSecret(): string {
+  const secret = (process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("CRITICAL: JWT_SECRET environment variable is required in production.");
+    }
+    return EPHEMERAL_DEV_SIGNING_SECRET;
+  }
+  return secret;
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.JWT_SECRET) {
+  throw new Error("CRITICAL: JWT_SECRET environment variable is required in production.");
+}
+
+const JWT_SECRET = getJwtSecret();
 const COOKIE_NAME = "auth_token";
 
 function setAuthTokenCookie(res: express.Response, user: any) {
@@ -1330,7 +1404,7 @@ function setAuthTokenCookie(res: express.Response, user: any) {
       reach: user.reach || (user.instagramFollowers ? Math.round(user.instagramFollowers * 2.2) : null),
       medianViews: user.medianViews || (user.instagramFollowers ? Math.round(user.instagramFollowers * 0.45) : null),
     },
-    JWT_SECRET,
+    getJwtSecret(),
     { expiresIn: "7d" }
   );
   res.cookie(COOKIE_NAME, token, {
@@ -1368,7 +1442,7 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
 
   let decoded: { id: number; email: string; role: string; [key: string]: any };
   try {
-    decoded = jwt.verify(token, JWT_SECRET) as {
+    decoded = jwt.verify(token, getJwtSecret()) as {
       id: number;
       email: string;
       role: string;
@@ -1552,10 +1626,9 @@ app.post("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) =>
   return res.json({ success: true, key });
 });
 
-// Registered Users In-Memory Store (Step 3 migrates directly to PostgreSQL)
-
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+// Registered Users Store (PostgreSQL primary; ephemeral in-memory cache without hardcoded default accounts or passwords)
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
+const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
 
 function sanitizeUser(user: any) {
   if (!user) return null;
@@ -1566,188 +1639,10 @@ function sanitizeUser(user: any) {
   return safe;
 }
 
-const defaultAccounts = [
-  {
-    id: 99,
-    email: ADMIN_EMAIL,
-    passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-    name: "Mingree Administrator",
-    role: "admin",
-    handle: "@admin",
-    avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-    tier: "Admin",
-    isEmailVerified: true,
-  },
-  {
-    id: 1,
-    email: "riyasen.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Riya Sen",
-    displayName: "Riya Sen",
-    accountName: "Riya Sen",
-    role: "creator",
-    handle: "@riyasen.official",
-    instagramUsername: "riyasen.official",
-    instagramFollowers: 94200,
-    followers: 94200,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
-    tier: "mid",
-    city: "Mumbai",
-    medianViews: 52400,
-    reach: 248500,
-    engagementRate: 5.2,
-    indiaAudiencePct: 96,
-    completedDeals: 24,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 2,
-    email: "aarohi.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Aarohi Mehta",
-    displayName: "Aarohi Mehta",
-    accountName: "Aarohi Mehta",
-    role: "creator",
-    handle: "@aarohimehta_",
-    instagramUsername: "aarohimehta_",
-    instagramFollowers: 142000,
-    followers: 142000,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300",
-    tier: "upper_mid",
-    city: "Delhi",
-    medianViews: 89000,
-    reach: 380000,
-    engagementRate: 4.9,
-    indiaAudiencePct: 94,
-    completedDeals: 31,
-    onTimeRate: 98,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 3,
-    email: "tanvi.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Tanvi Kapoor",
-    displayName: "Tanvi Kapoor",
-    accountName: "Tanvi Kapoor",
-    role: "creator",
-    handle: "@tanvikapoor.fit",
-    instagramUsername: "tanvikapoor.fit",
-    instagramFollowers: 78500,
-    followers: 78500,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=300",
-    tier: "mid",
-    city: "Bangalore",
-    medianViews: 44200,
-    reach: 195000,
-    engagementRate: 5.6,
-    indiaAudiencePct: 95,
-    completedDeals: 19,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 4,
-    email: "simran.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Simran Kaur",
-    displayName: "Simran Kaur",
-    accountName: "Simran Kaur",
-    role: "creator",
-    handle: "@simrankaur_vibes",
-    instagramUsername: "simrankaur_vibes",
-    instagramFollowers: 185000,
-    followers: 185000,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300",
-    tier: "upper_mid",
-    city: "Chandigarh",
-    medianViews: 112000,
-    reach: 490000,
-    engagementRate: 6.1,
-    indiaAudiencePct: 97,
-    completedDeals: 42,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 5,
-    email: "kavya.creator@mingree.in",
-    passwordHash: bcrypt.hashSync("creator123", 10),
-    name: "Kavya Nair",
-    displayName: "Kavya Nair",
-    accountName: "Kavya Nair",
-    role: "creator",
-    handle: "@kavyanair_daily",
-    instagramUsername: "kavyanair_daily",
-    instagramFollowers: 62000,
-    followers: 62000,
-    isInstagramVerified: true,
-    instagramVerificationStatus: "verified",
-    avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
-    avatarUrl: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300",
-    tier: "mid",
-    city: "Kochi",
-    medianViews: 38500,
-    reach: 160000,
-    engagementRate: 5.4,
-    indiaAudiencePct: 95,
-    completedDeals: 16,
-    onTimeRate: 100,
-    isEmailVerified: true,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 20,
-    email: "sponsor@mingree.in",
-    passwordHash: bcrypt.hashSync("sponsor123", 10),
-    name: "Brand Partner",
-    displayName: "Brand Partner",
-    companyName: "Brand Partner",
-    role: "sponsor",
-    handle: "@brandpartner",
-    avatar: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-    avatarUrl: "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150",
-    tier: "Brand Partner",
-    city: "Mumbai",
-    isEmailVerified: true,
-    status: "active",
-    createdAt: new Date().toISOString(),
-  },
-];
-
-let registeredUsers: any[] = [...defaultAccounts];
+let registeredUsers: any[] = [];
 (global as any).registeredUsers = registeredUsers;
 
 function loadRegisteredUsers() {
-  for (const acc of defaultAccounts) {
-    const existing = registeredUsers.find((u) => u.email.toLowerCase() === acc.email.toLowerCase() || u.id === acc.id);
-    if (!existing) {
-      registeredUsers.push({ ...acc });
-    }
-  }
-
   for (const user of registeredUsers) {
     if (user.password && !user.passwordHash) {
       user.passwordHash = bcrypt.hashSync(user.password, 10);
@@ -1755,38 +1650,39 @@ function loadRegisteredUsers() {
     }
   }
 
-  let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL || u.role === "admin");
-  if (!adminUser) {
-    adminUser = {
-      id: 99,
-      email: ADMIN_EMAIL,
-      passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-      name: "Mingree Administrator",
-      role: "admin",
-      handle: "@admin",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150",
-      tier: "Admin",
-      isEmailVerified: true,
-      status: "active",
-    };
-    registeredUsers.push(adminUser);
-  } else {
-    adminUser.email = ADMIN_EMAIL;
-    adminUser.role = "admin";
-    adminUser.isEmailVerified = true;
-    if (process.env.ADMIN_PASSWORD) {
-      adminUser.passwordHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10);
+  if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+    let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === ADMIN_EMAIL);
+    if (!adminUser) {
+      adminUser = {
+        id: 99,
+        email: ADMIN_EMAIL,
+        passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
+        name: "Mingree Administrator",
+        role: "admin",
+        handle: "@admin",
+        tier: "Admin",
+        isEmailVerified: true,
+        status: "active",
+      };
+      registeredUsers.push(adminUser);
+    } else {
+      adminUser.email = ADMIN_EMAIL;
+      adminUser.role = "admin";
+      adminUser.isEmailVerified = true;
+      adminUser.passwordHash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
     }
   }
 }
 
-function saveRegisteredUsers() {
+async function saveRegisteredUsers(targetUser?: any): Promise<void> {
   (global as any).registeredUsers = registeredUsers;
   if (!isDatabaseConfigured) return;
-  for (const u of registeredUsers) {
+
+  const usersToPersist = targetUser ? [targetUser] : registeredUsers;
+  for (const u of usersToPersist) {
     if (!u || !u.email || !u.passwordHash) continue;
-    pool
-      .query(
+    try {
+      await pool.query(
         `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, company_name, city, phone, avatar, avatar_url)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (email) DO UPDATE SET
@@ -1814,8 +1710,12 @@ function saveRegisteredUsers() {
           u.avatar || null,
           u.avatarUrl || u.avatar || null,
         ]
-      )
-      .catch(() => {});
+      );
+    } catch (err: any) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[DB USER PERSIST ERROR]", err?.message || err);
+      }
+    }
   }
 }
 
@@ -2008,7 +1908,7 @@ app.post("/api/auth/signup", async (req, res) => {
   }
 
   registeredUsers.push(newUser);
-  saveRegisteredUsers();
+  await saveRegisteredUsers(newUser);
 
   setAuthTokenCookie(res, newUser);
   return res.json(sanitizeUser(newUser));
@@ -2050,15 +1950,12 @@ app.post("/api/auth/login", async (req, res) => {
       }
     }
 
-    const isAdminEmail = cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+    const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
 
-    if (isAdminEmail) {
+    if (isAdminEmail && ADMIN_PASSWORD) {
       if (foundUser) {
         foundUser.role = "admin";
         foundUser.isEmailVerified = true;
-        if (!foundUser.passwordHash) {
-          foundUser.passwordHash = bcrypt.hashSync("admin123", 10);
-        }
       } else {
         foundUser = {
           id: 99,
@@ -2095,8 +1992,8 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password for Admin Portal." });
     }
 
-    const isAdminPass = isAdminEmail && (String(password) === "admin123" || String(password) === ADMIN_PASSWORD);
-    const isPasswordValid = isAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
+    const isEnvAdminPass = isAdminEmail && Boolean(ADMIN_PASSWORD) && String(password) === ADMIN_PASSWORD;
+    const isPasswordValid = isEnvAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: "Invalid email or password" });
@@ -2224,7 +2121,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           createdAt: new Date().toISOString(),
         };
         registeredUsers.push(foundUser);
-        saveRegisteredUsers();
+        await saveRegisteredUsers(foundUser);
       }
     }
 
@@ -2296,7 +2193,14 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
   let authoritativeUser: any = null;
   if (isDatabaseConfigured) {
     try {
-      const dbRes = await pool.query("SELECT id, email, name, role, email_verified, status, company_name, gstin, pan, billing_address, avatar, avatar_url, city, created_at FROM users WHERE id = $1", [targetId]);
+      const dbRes = await pool.query(
+        `SELECT u.id, u.email, u.name, u.role, u.email_verified, u.status, u.company_name, u.gstin,
+                k.pan_masked AS pan, u.billing_address, u.avatar, u.avatar_url, u.city, u.created_at
+         FROM users u
+         LEFT JOIN kyc k ON k.user_id = u.id
+         WHERE u.id = $1`,
+        [targetId]
+      );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = 0;
@@ -2412,13 +2316,12 @@ app.put("/api/users/:id/profile", requireAuth, async (req: AuthRequest, res) => 
       }
     }
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json(sanitizeUser(user));
 });
 
 // PUT /api/users/:id/city
-// PUT /api/users/:id/city
-app.put("/api/users/:id/city", requireAuth, (req: AuthRequest, res) => {
+app.put("/api/users/:id/city", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -2426,7 +2329,7 @@ app.put("/api/users/:id/city", requireAuth, (req: AuthRequest, res) => {
   const user = req.user!;
   const { city } = req.body;
   if (city !== undefined) user.city = city;
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json(sanitizeUser(user));
 });
 
@@ -2451,7 +2354,7 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
     user.instagramAccessToken = null;
     user.instagramUserId = null;
     user.instagramTokenExpiresAt = null;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(user);
     return res.json(sanitizeUser(user));
   }
 
@@ -2488,7 +2391,7 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
     regUser.instagramVerificationStatus = "verified";
     regUser.tier = tierName;
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
 
   try {
     await pool.query(
@@ -2673,7 +2576,7 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
     regUser.avatar_url = null;
   }
 
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
 
   // Re-issue JWT session cookie without old Instagram claims
   setAuthTokenCookie(res, user);
@@ -2683,7 +2586,7 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
 });
 
 // POST /api/instagram/reset-all - Clears all fake/test connected Instagram accounts and resets state to fresh
-app.post("/api/instagram/reset-all", async (req, res) => {
+app.post("/api/instagram/reset-all", requireAuth, requireRole("admin"), async (req, res) => {
   for (const u of registeredUsers) {
     u.instagramUsername = null;
     u.instagramProfileUrl = null;
@@ -2696,11 +2599,11 @@ app.post("/api/instagram/reset-all", async (req, res) => {
     u.instagramUserId = null;
     u.instagramTokenExpiresAt = null;
   }
-  saveRegisteredUsers();
+  await saveRegisteredUsers();
   try {
     await pool.query(
       `UPDATE creator_profiles
-       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', encrypted_access_token = NULL, token_expires_at = NULL`
+       SET instagram_user_id = NULL, username = NULL, followers = 0, status = 'pending', access_token_enc = NULL, token_expires_at = NULL`
     );
   } catch (err: any) {
     console.error("[RESET ALL ERROR]", err.message);
@@ -2715,25 +2618,25 @@ app.post("/api/users/:id/instagram/refresh", requireAuth, (req: AuthRequest, res
 });
 
 // POST /api/users/:id/instagram/generate-code & verification-code
-app.post(["/api/users/:id/instagram/generate-code", "/api/users/:id/instagram/verification-code"], requireAuth, (req: AuthRequest, res) => {
+app.post(["/api/users/:id/instagram/generate-code", "/api/users/:id/instagram/verification-code"], requireAuth, async (req: AuthRequest, res) => {
   const user = req.user!;
   const code = `MG-${Math.floor(10000 + Math.random() * 90000)}`;
   user.instagramVerificationCode = code;
   user.instagramVerificationStatus = "pending";
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json({ code, status: "pending", user: sanitizeUser(user) });
 });
 
 // POST /api/users/:id/instagram/submit-verification
-app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit"], requireAuth, (req: AuthRequest, res) => {
+app.post(["/api/users/:id/instagram/submit-verification", "/api/instagram/submit"], requireAuth, async (req: AuthRequest, res) => {
   const user = req.user!;
   user.instagramVerificationStatus = "pending";
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json({ success: true, status: "pending", message: "Submitted for verification review" });
 });
 
 // POST /api/users/:id/avatar
-app.post("/api/users/:id/avatar", requireAuth, (req: AuthRequest, res) => {
+app.post("/api/users/:id/avatar", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -2743,7 +2646,7 @@ app.post("/api/users/:id/avatar", requireAuth, (req: AuthRequest, res) => {
     req.user!.avatar = avatar;
     const existing = registeredUsers.find((u) => u.id === req.user!.id);
     if (existing) existing.avatar = avatar;
-    saveRegisteredUsers();
+    await saveRegisteredUsers(req.user!);
   }
   res.json(sanitizeUser(req.user));
 });
@@ -2761,11 +2664,11 @@ app.get(["/api/users/:id/subscription", "/api/subscription"], requireAuth, (req:
 });
 
 // POST /api/users/:id/subscription/cancel & /api/subscription/cancel
-app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], requireAuth, (req: AuthRequest, res) => {
+app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], requireAuth, async (req: AuthRequest, res) => {
   const user = req.user!;
   user.subscriptionPlan = "free";
   user.subscriptionExpiresAt = null;
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json({ success: true, message: "Subscription cancelled successfully", plan: "free", isActive: false });
 });
 
@@ -4009,6 +3912,19 @@ app.delete("/api/reservations/:id", requireAuth, async (req: AuthRequest, res) =
   }
 
   if (found) {
+    try {
+      await pool.query(
+        `UPDATE workspace_participants SET status = 'withdrawn', updated_at = now()
+         WHERE (id = $1 OR (creator_id = $2 AND campaign_id = $1)) AND status IN ('applied', 'reserved')`,
+        [reservationId, userId]
+      );
+      await pool.query(
+        `UPDATE campaigns SET spots_remaining = spots_remaining + 1 WHERE id = $1`,
+        [reservationId]
+      );
+    } catch (pgErr: any) {
+      console.error("[PG RESERVATION CANCEL ERROR]", pgErr.message);
+    }
     return res.json({ success: true, message: "Reservation cancelled" });
   }
   return res.status(404).json({ error: "Reservation not found" });
@@ -4824,7 +4740,7 @@ app.post("/api/campaigns/:id/close", requireAuth, requireRole("sponsor", "admin"
 });
 
 // PUT /api/users/:id/shipping-address
-app.put("/api/users/:id/shipping-address", requireAuth, (req: AuthRequest, res) => {
+app.put("/api/users/:id/shipping-address", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
@@ -4836,14 +4752,14 @@ app.put("/api/users/:id/shipping-address", requireAuth, (req: AuthRequest, res) 
   user.shippingState = shippingState ?? user.shippingState;
   user.shippingPincode = shippingPincode ?? user.shippingPincode;
   user.shippingPhone = shippingPhone ?? user.shippingPhone;
-  saveRegisteredUsers();
+  await saveRegisteredUsers(user);
   res.json(sanitizeUser(user));
 });
 
 // ================= OFFICIAL INSTAGRAM BUSINESS LOGIN OAUTH =================
 
-// Instagram Configuration - Get
-app.get("/api/instagram/config", (req, res) => {
+// Instagram Configuration - Get (Admin only)
+app.get("/api/instagram/config", requireAuth, requireRole("admin"), (req, res) => {
   const { appId, appSecret } = getInstagramCredentials();
   let redirectUri = "";
   try {
@@ -4859,14 +4775,11 @@ app.get("/api/instagram/config", (req, res) => {
   });
 });
 
-// Instagram Configuration - Save
-app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
-  const { appId, appSecret, redirectUri: customRedirectUri } = req.body || {};
+// Instagram Configuration - Save (Admin only; never stores secrets in settings)
+app.post(["/api/instagram/config", "/api/instagram/configure"], requireAuth, requireRole("admin"), (req, res) => {
+  const { appId, redirectUri: customRedirectUri } = req.body || {};
   const settings = loadSettings();
   if (typeof appId === "string" && appId.trim()) settings.instagram_app_id = appId.trim();
-  if (typeof appSecret === "string" && appSecret.trim() && !appSecret.startsWith("•") && !appSecret.startsWith("••••")) {
-    settings.instagram_app_secret = appSecret.trim();
-  }
   if (typeof customRedirectUri === "string" && customRedirectUri.trim()) settings.instagram_redirect_uri = customRedirectUri.trim();
   saveSettings(settings);
 
@@ -4886,20 +4799,15 @@ app.post(["/api/instagram/config", "/api/instagram/configure"], (req, res) => {
   });
 });
 
-// 1. GET /api/instagram/login - Initiates seamless official Instagram OAuth authorization
-app.get("/api/instagram/login", (req: express.Request, res: express.Response) => {
+// 1. GET /api/instagram/login - Initiates seamless official Instagram OAuth authorization (Authenticated user only)
+app.get("/api/instagram/login", requireAuth, (req: AuthRequest, res: express.Response) => {
   const { appId, appSecret } = getInstagramCredentials();
   const redirectUri = getInstagramRedirectUri();
   const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
 
-  // Soft auth: derive userId from session cookie, bearer token, or query parameter
-  let userId = Number(req.query.userId) || 1;
-  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
-      if (decoded?.id) userId = decoded.id;
-    } catch {}
+  const userId = Number(req.user!.id);
+  if (req.query.userId !== undefined && Number(req.query.userId) !== userId) {
+    return res.status(403).json({ error: "Forbidden: Cannot initiate Instagram OAuth for another user ID" });
   }
 
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
@@ -5427,17 +5335,12 @@ export async function saveCreatorProfilePicture(userId: number, username: string
   return finalUrl;
 }
 
-// GET /api/instagram/auth-url - Returns the REAL Meta Instagram OAuth Authorization URL
-app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response) => {
-  let userId = Number(req.query.userId);
-  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { id: number };
-      if (decoded?.id) userId = decoded.id;
-    } catch {}
+// GET /api/instagram/auth-url - Returns the REAL Meta Instagram OAuth Authorization URL (Authenticated user only)
+app.get("/api/instagram/auth-url", requireAuth, async (req: AuthRequest, res: express.Response) => {
+  const userId = Number(req.user!.id);
+  if (req.query.userId !== undefined && Number(req.query.userId) !== userId) {
+    return res.status(403).json({ error: "Forbidden: Cannot generate Instagram OAuth URL for another user ID" });
   }
-  if (!userId) userId = 1;
 
   const { appId, appSecret } = getInstagramCredentials();
   let redirectUri = "";
@@ -5459,17 +5362,40 @@ app.get("/api/instagram/auth-url", (req: express.Request, res: express.Response)
 
   const returnTo = typeof req.query.return_to === "string" ? req.query.return_to : "/profile";
   const state = createSignedOAuthState(userId, returnTo, appSecret, redirectUri);
+  const browserToken = crypto.randomBytes(32).toString("hex");
+  const browserTokenHash = crypto.createHash("sha256").update(browserToken).digest("hex");
+
+  // Set browser binding cookie (SameSite=Lax allows external redirect from Meta to send the cookie)
+  res.cookie("mingree_ig_oauth_bind", browserToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 15 * 60 * 1000,
+  });
+
+  try {
+    await pool.query(
+      `INSERT INTO oauth_states (state, user_id, browser_token_hash, redirect_uri, return_to, expires_at)
+       VALUES ($1, $2, $3, $4, $5, now() + interval '15 minutes')`,
+      [state, userId, browserTokenHash, redirectUri, returnTo]
+    );
+  } catch (pgErr: any) {
+    console.error("[PG OAUTH STATE INSERT ERROR]", pgErr.message);
+  }
+
   instagramOAuthStates.set(state, {
     userId,
     createdAt: Date.now(),
     returnTo,
     redirectUri,
+    browserTokenHash,
   });
 
   // Official Instagram Login Authorization URL with force_reauth=true
   const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}&force_reauth=true`;
 
-  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated with force_reauth=true for client: ${appId}`);
+  console.log(`[INSTAGRAM OAUTH] Direct Official Instagram auth-url generated with browser-binding for client: ${appId}`);
   res.json({
     authUrl,
     instagramOAuthUrl: authUrl,
@@ -5579,25 +5505,59 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     } catch {}
   }
 
+  const browserToken = req.cookies?.["mingree_ig_oauth_bind"];
+  res.clearCookie("mingree_ig_oauth_bind", { path: "/" });
+
   if (typeof state === "string" && state.trim()) {
-    if (instagramOAuthStates.has(state)) {
-      stateRecord = instagramOAuthStates.get(state);
-      // Immediately delete state token to enforce ONE-TIME USE and reject replayed callbacks
-      instagramOAuthStates.delete(state);
-    } else {
-      const verified = verifySignedOAuthState(state, appSecret);
-      if (verified) {
-        stateRecord = { userId: verified.userId, returnTo: verified.returnTo, redirectUri: verified.redirectUri };
+    const cleanState = state.trim();
+    const browserTokenHash = browserToken
+      ? crypto.createHash("sha256").update(browserToken).digest("hex")
+      : "";
+
+    try {
+      const dbState = await pool.query(
+        `DELETE FROM oauth_states
+         WHERE state = $1 AND expires_at > now()
+         RETURNING user_id, browser_token_hash, return_to, redirect_uri`,
+        [cleanState]
+      );
+
+      if (dbState.rows.length > 0) {
+        const row = dbState.rows[0];
+        if (browserTokenHash && row.browser_token_hash === browserTokenHash) {
+          stateRecord = {
+            userId: Number(row.user_id),
+            returnTo: row.return_to,
+            redirectUri: row.redirect_uri,
+          };
+        } else {
+          console.warn(`[INSTAGRAM OAUTH] Browser binding token mismatch for state: ${cleanState}`);
+        }
+      }
+    } catch (pgErr: any) {
+      console.error("[PG OAUTH STATE ATOMIC CONSUME ERROR]", pgErr.message);
+    }
+
+    // In-memory fallback if database query returned no rows or was offline
+    if (!stateRecord && instagramOAuthStates.has(cleanState)) {
+      const memRecord = instagramOAuthStates.get(cleanState)!;
+      instagramOAuthStates.delete(cleanState);
+      if (!memRecord.browserTokenHash || memRecord.browserTokenHash === browserTokenHash) {
+        stateRecord = {
+          userId: memRecord.userId,
+          returnTo: memRecord.returnTo,
+          redirectUri: memRecord.redirectUri,
+        };
       }
     }
   }
 
-  // Reject replayed, old, missing, or mismatched session states
+  // Reject replayed, old, missing, or mismatched session states (NO stateless replay fallback)
   if (!stateRecord || (sessionUserId && stateRecord.userId !== sessionUserId)) {
     console.warn(`[INSTAGRAM OAUTH] Authorization state validation failed. State found: ${Boolean(stateRecord)}, State User ID: ${stateRecord?.userId}, Session User ID: ${sessionUserId}`);
     return res.status(200).send(renderOAuthResult({
       success: false,
-      error: "Authorization session expired or invalid state. Replayed and stale callbacks are rejected. Please click 'Connect with Instagram' to try again.",
+      error: "Authorization session expired or invalid state. Replayed, browser-mismatched, and stale callbacks are rejected. Please click 'Connect with Instagram' to try again.",
       returnTo: "/profile",
     }));
   }
@@ -6114,7 +6074,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       targetUser.instagramUserId = igUserId;
       targetUser.instagramAccessToken = finalAccessToken;
       targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-      saveRegisteredUsers();
+      await saveRegisteredUsers(targetUser);
     }
 
     console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
@@ -6217,7 +6177,7 @@ app.post("/api/creator/sync-insights", requireAuth, async (req: AuthRequest, res
       }
     }
 
-    saveRegisteredUsers();
+    await saveRegisteredUsers(targetUser);
 
     try {
       await pool.query(
@@ -6605,7 +6565,7 @@ app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req
   const idx = registeredUsers.findIndex((u) => u.id === targetUserId);
   if (idx !== -1) {
     registeredUsers.splice(idx, 1);
-    saveRegisteredUsers();
+    await saveRegisteredUsers();
   }
 
   try {
@@ -6617,12 +6577,16 @@ app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req
 
 // Wipe all non-admin test users
 app.post("/api/admin/users/clear-all", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  registeredUsers = registeredUsers.filter((u) => u.role === "admin" || (u.email && u.email.toLowerCase() === ADMIN_EMAIL));
+  registeredUsers = registeredUsers.filter((u) => u.role === "admin" || (ADMIN_EMAIL && u.email && u.email.toLowerCase() === ADMIN_EMAIL));
   (global as any).registeredUsers = registeredUsers;
-  saveRegisteredUsers();
+  await saveRegisteredUsers();
 
   try {
-    await pool.query("DELETE FROM users WHERE role != 'admin' AND LOWER(email) != LOWER($1)", [ADMIN_EMAIL]);
+    if (ADMIN_EMAIL) {
+      await pool.query("DELETE FROM users WHERE role != 'admin' AND LOWER(email) != LOWER($1)", [ADMIN_EMAIL]);
+    } else {
+      await pool.query("DELETE FROM users WHERE role != 'admin'");
+    }
   } catch {}
 
   res.json({ success: true, message: "All non-admin test users have been deleted successfully" });
@@ -7030,10 +6994,9 @@ app.post("/api/admin/upi-payments/:id/approve", requireAuth, requireRole("admin"
 });
 
 function getCashfreeCredentials() {
-  const settings = loadSettings();
-  const appId = (process.env.CASHFREE_APP_ID || process.env.CASHFREE_CLIENT_ID || settings.cashfree_app_id || "").trim();
-  const secretKey = (process.env.CASHFREE_SECRET_KEY || process.env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_SECRET || "").trim();
-  const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || settings.cashfree_mode === "production" || secretKey.startsWith("cfsk_ma_prod_");
+  const appId = (process.env.CASHFREE_APP_ID || "").trim();
+  const secretKey = (process.env.CASHFREE_SECRET_KEY || "").trim();
+  const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || secretKey.startsWith("cfsk_ma_prod_");
   return { appId, secretKey, isProd };
 }
 
@@ -8284,7 +8247,7 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
   }
 });
 
-// Category Subscriptions In-Memory Store
+// Category Subscriptions (PostgreSQL-backed with ephemeral fallback for offline test runner)
 interface CategorySubscriptionRecord {
   id: number;
   userId: number;
@@ -8305,18 +8268,77 @@ app.get("/api/categories", (req, res) => {
 });
 
 // GET /api/users/:userId/category-subscriptions
-app.get("/api/users/:userId/category-subscriptions", (req, res) => {
+app.get("/api/users/:userId/category-subscriptions", requireAuth, async (req: AuthRequest, res) => {
   const userId = Number(req.params.userId);
+  if (isNaN(userId) || (req.user!.id !== userId && req.user!.role !== "admin")) {
+    return res.status(403).json({ error: "Forbidden: Cannot access another user's category subscriptions" });
+  }
+
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query(
+        `SELECT id, user_id as "userId", category, tier, joined_at as "joinedAt"
+         FROM category_subscriptions
+         WHERE user_id = $1
+         ORDER BY id ASC`,
+        [userId]
+      );
+      return res.json(
+        dbRes.rows.map((r) => ({
+          id: Number(r.id),
+          userId: Number(r.userId),
+          category: r.category,
+          tier: r.tier,
+          joinedAt: r.joinedAt instanceof Date ? r.joinedAt.toISOString() : String(r.joinedAt),
+        }))
+      );
+    } catch (err: any) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[CATEGORY SUBSCRIPTIONS GET DB ERROR]", err?.message || err);
+        return res.status(500).json({ error: "Failed to load category subscriptions" });
+      }
+    }
+  }
+
   const userSubs = categorySubscriptionsStore.filter(s => s.userId === userId);
-  res.json(userSubs);
+  return res.json(userSubs);
 });
 
 // POST /api/users/:userId/category-subscriptions
-app.post("/api/users/:userId/category-subscriptions", (req, res) => {
+app.post("/api/users/:userId/category-subscriptions", requireAuth, async (req: AuthRequest, res) => {
   const userId = Number(req.params.userId);
-  const { category, tier } = req.body;
+  if (isNaN(userId) || (req.user!.id !== userId && req.user!.role !== "admin")) {
+    return res.status(403).json({ error: "Forbidden: Cannot modify another user's category subscriptions" });
+  }
+
+  const { category, tier } = req.body || {};
   if (!category || !tier) {
     return res.status(400).json({ error: "Category and tier are required" });
+  }
+
+  if (isDatabaseConfigured) {
+    try {
+      const insRes = await pool.query(
+        `INSERT INTO category_subscriptions (user_id, category, tier)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, category, tier) DO UPDATE SET tier = EXCLUDED.tier
+         RETURNING id, user_id as "userId", category, tier, joined_at as "joinedAt"`,
+        [userId, String(category), String(tier)]
+      );
+      const row = insRes.rows[0];
+      return res.status(201).json({
+        id: Number(row.id),
+        userId: Number(row.userId),
+        category: row.category,
+        tier: row.tier,
+        joinedAt: row.joinedAt instanceof Date ? row.joinedAt.toISOString() : String(row.joinedAt),
+      });
+    } catch (err: any) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[CATEGORY SUBSCRIPTIONS POST DB ERROR]", err?.message || err);
+        return res.status(500).json({ error: "Failed to save category subscription" });
+      }
+    }
   }
 
   const existing = categorySubscriptionsStore.find(
@@ -8334,20 +8356,40 @@ app.post("/api/users/:userId/category-subscriptions", (req, res) => {
     joinedAt: new Date().toISOString()
   };
   categorySubscriptionsStore.push(newSub);
-  res.status(201).json(newSub);
+  return res.status(201).json(newSub);
 });
 
 // DELETE /api/users/:userId/category-subscriptions
-app.delete("/api/users/:userId/category-subscriptions", (req, res) => {
+app.delete("/api/users/:userId/category-subscriptions", requireAuth, async (req: AuthRequest, res) => {
   const userId = Number(req.params.userId);
-  const { category, tier } = req.body;
+  if (isNaN(userId) || (req.user!.id !== userId && req.user!.role !== "admin")) {
+    return res.status(403).json({ error: "Forbidden: Cannot modify another user's category subscriptions" });
+  }
+
+  const { category, tier } = req.body || {};
+
+  if (isDatabaseConfigured) {
+    try {
+      await pool.query(
+        `DELETE FROM category_subscriptions WHERE user_id = $1 AND category = $2 AND tier = $3`,
+        [userId, String(category || ""), String(tier || "")]
+      );
+      return res.json({ success: true });
+    } catch (err: any) {
+      if (err?.code !== "ECONNREFUSED") {
+        console.error("[CATEGORY SUBSCRIPTIONS DELETE DB ERROR]", err?.message || err);
+        return res.status(500).json({ error: "Failed to delete category subscription" });
+      }
+    }
+  }
+
   const idx = categorySubscriptionsStore.findIndex(
     s => s.userId === userId && s.category === category && s.tier === tier
   );
   if (idx !== -1) {
     categorySubscriptionsStore.splice(idx, 1);
   }
-  res.json({ success: true });
+  return res.json({ success: true });
 });
 
 // Catch-all for API endpoints to ALWAYS return valid JSON
@@ -8369,55 +8411,31 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 
 // ================= VITE MIDDLEWARE & SERVER START =================
 async function startServer() {
-  let isDbConnected = false;
+  enforceProductionEnvironment();
 
-  if (!process.env.DATABASE_URL) {
-    console.log("[STARTUP] No DATABASE_URL configured. Running with in-memory / local storage mode.");
+  if (process.env.NODE_ENV === "production") {
+    console.log("[STARTUP] Checking production PostgreSQL database connection...");
+    const isDbConnected = await verifyDbConnection();
+    if (!isDbConnected) {
+      console.error("FATAL: PostgreSQL database connection could not be established in production. Halting startup.");
+      process.exit(1);
+    }
+    console.log("[STARTUP] ✓ PostgreSQL database connection verified successfully.");
   } else {
-    try {
-      console.log("[STARTUP] Checking PostgreSQL database connection...");
-      isDbConnected = await verifyDbConnection();
-      if (isDbConnected) {
-        console.log("[STARTUP] PostgreSQL database connection verified successfully.");
-      } else {
+    if (!process.env.DATABASE_URL) {
+      console.log("[STARTUP] No DATABASE_URL configured. Running with local fallback mode in development.");
+    } else {
+      try {
+        console.log("[STARTUP] Checking database connection...");
+        const isDbConnected = await verifyDbConnection();
+        if (isDbConnected) {
+          console.log("[STARTUP] PostgreSQL database connection verified successfully.");
+        } else {
+          console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
+        }
+      } catch {
         console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
       }
-    } catch (err: any) {
-      console.log("[STARTUP] PostgreSQL database connection unavailable. Continuing in local fallback mode.");
-    }
-  }
-
-  // Seed default accounts into PostgreSQL only if database connection is active
-  if (isDbConnected) {
-    try {
-      const adminEmail = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
-      const adminPass = process.env.ADMIN_PASSWORD || "admin123";
-      const res = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [adminEmail]);
-      if (res.rows.length === 0) {
-        const hash = bcrypt.hashSync(adminPass, 10);
-        await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
-           VALUES ($1, $2, 'Mingree Administrator', 'admin', true, 'active')`,
-          [adminEmail, hash]
-        );
-        console.log(`[SEED] Admin account seeded: ${adminEmail}`);
-      }
-
-      // Purge any fake or demo accounts from PostgreSQL database
-      await pool.query(`
-        DELETE FROM creator_profiles 
-        WHERE user_id IN (
-          SELECT id FROM users 
-          WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-             OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner')
-        );
-        DELETE FROM users 
-        WHERE email IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com')
-           OR handle IN ('@creator', '@sponsor', '@rohanmusic', '@brandpartner');
-      `).catch(() => {});
-      console.log("[DB] Purged fake/demo accounts from PostgreSQL");
-    } catch (seedErr: any) {
-      console.log("[SEED] Skipped database seeding:", seedErr.message);
     }
   }
 

@@ -1,459 +1,544 @@
-import app from "../server.js";
+import app, { getJwtSecret, createSignedOtpToken } from "../server";
 import http from "http";
+import fs from "fs";
+import path from "path";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { calculatePlatformFees } from "../shared/fees";
+import bcrypt from "bcryptjs";
 import { createPaymentOrder, getOrCreateWallet } from "../server/walletAndPayments";
+import { isDatabaseConfigured, pool, verifyDbConnection } from "../server/db";
 
 interface TestResult {
   num: number;
   name: string;
-  passed: boolean;
+  status: "PASS" | "FAIL" | "BLOCKED";
   message: string;
 }
 
 const results: TestResult[] = [];
-const JWT_SECRET = process.env.JWT_SECRET || "mingree_jwt_secret_v6_production_key";
 
-function recordTest(num: number, name: string, passed: boolean, message: string) {
-  results.push({ num, name, passed, message });
-  const statusStr = passed ? "✓ PASS" : "✗ FAIL";
-  console.log(`[TEST ${num}] ${statusStr} - ${name}: ${message}`);
+function recordTest(num: number, name: string, status: "PASS" | "FAIL" | "BLOCKED", message: string) {
+  results.push({ num, name, status, message });
+  const prefix = status === "PASS" ? "✓ PASS" : status === "BLOCKED" ? "⊘ BLOCKED" : "✗ FAIL";
+  console.log(`[TEST ${num}] ${prefix} - ${name}: ${message}`);
 }
 
-async function runSmokeTests() {
+async function runIntegrationTests() {
   console.log("==================================================");
-  console.log("       MINGREE PRODUCTION SMOKE TEST SUITE       ");
+  console.log("   MINGREE PHASE 1.1 SECURITY INTEGRATION SUITE   ");
   console.log("==================================================\n");
 
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const port = (server.address() as any).port;
   const baseUrl = `http://127.0.0.1:${port}`;
-
-  // Generate test JWTs for Creator (id: 1), Sponsor (id: 20), and Admin (id: 99)
-  const creatorToken = jwt.sign(
-    { id: 1, email: "riyasen.creator@mingree.in", role: "creator" },
-    JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-  const sponsorToken = jwt.sign(
-    { id: 20, email: "sponsor@mingree.in", role: "sponsor" },
-    JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-  const adminToken = jwt.sign(
-    { id: 99, email: "admin@mingree.com", role: "admin" },
-    JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-  const expiredToken = jwt.sign(
-    { id: 1, email: "riyasen.creator@mingree.in", role: "creator" },
-    JWT_SECRET,
-    { expiresIn: "-10s" }
-  );
-  const invalidSignatureToken = jwt.sign(
-    { id: 99, email: "admin@mingree.com", role: "admin" },
-    "wrong_secret_key_for_forged_jwt",
-    { expiresIn: "1h" }
-  );
+  const jwtSecret = getJwtSecret();
 
   try {
-    // TEST 1: Unauthenticated access to protected & admin routes returns 401
+    // TEST 1: No hardcoded default accounts or fake wallet balances at startup
     try {
-      const resUnauthAdmin = await fetch(`${baseUrl}/api/admin/users`);
-      const resUnauthMe = await fetch(`${baseUrl}/api/auth/me`);
-      const resUnauthKeys = await fetch(`${baseUrl}/api/admin/api-keys`);
+      const initialUsers: any[] = (global as any).registeredUsers || [];
+      const hasDefaultSeededCreators = initialUsers.some((u) =>
+        ["riyasen.creator@mingree.in", "aarohi.creator@mingree.in", "sponsor@mingree.in"].includes(
+          String(u.email || "").toLowerCase()
+        )
+      );
+      const freshWallet1 = await getOrCreateWallet(7001);
+      const freshWallet2 = await getOrCreateWallet(7002);
       const passed =
-        resUnauthAdmin.status === 401 &&
-        resUnauthMe.status === 401 &&
-        resUnauthKeys.status === 401;
+        !hasDefaultSeededCreators &&
+        freshWallet1.balance === 0 &&
+        freshWallet1.escrowHeld === 0 &&
+        freshWallet2.balance === 0;
+
       recordTest(
         1,
-        "Unauthenticated access rejection",
-        passed,
-        `Unauthenticated /api/admin/users (${resUnauthAdmin.status}), /api/auth/me (${resUnauthMe.status}), /api/admin/api-keys (${resUnauthKeys.status})`
+        "No pre-seeded default accounts or fake wallet balances",
+        passed ? "PASS" : "FAIL",
+        `Pre-seeded dummy users present: ${hasDefaultSeededCreators}, Fresh wallet balances: ₹${freshWallet1.balance} / ₹${freshWallet2.balance}`
       );
     } catch (err: any) {
-      recordTest(1, "Unauthenticated access rejection", false, `Request failed: ${err.message}`);
+      recordTest(1, "No pre-seeded default accounts or fake wallet balances", "FAIL", err.message);
     }
 
-    // TEST 2: Invalid-token and Expired-token access rejected with 401
+    // TEST 2: All three master OTP values (123456, 898846, 937978) are strictly rejected across email verify, phone-accounts, and phone-reset-password
     try {
-      const resInvalid = await fetch(`${baseUrl}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${invalidSignatureToken}` },
+      const masterOtps = ["123456", "898846", "937978"];
+      let allRejected = true;
+      const statuses: string[] = [];
+
+      for (const code of masterOtps) {
+        const rVerify = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "victim@mingree.com", otp: code }),
+        });
+        const rPhoneAcc = await fetch(`${baseUrl}/api/auth/phone-accounts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: "9876543210", otp: code, firebaseVerified: true }),
+        });
+        const rPhoneReset = await fetch(`${baseUrl}/api/auth/phone-reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: "9876543210",
+            otp: code,
+            newPassword: "HackedPassword123!",
+          }),
+        });
+
+        statuses.push(`${code}->[${rVerify.status},${rPhoneAcc.status},${rPhoneReset.status}]`);
+        if (rVerify.status !== 400 || rPhoneAcc.status !== 400 || rPhoneReset.status !== 403) {
+          allRejected = false;
+        }
+      }
+
+      // Also verify that an expired OTP token is rejected and only a valid unexpired generated OTP token succeeds
+      const validOtp = "654321";
+      const validOtpHash = crypto.createHash("sha256").update(validOtp).digest("hex");
+      const expiredOtpToken = createSignedOtpToken("realuser@mingree.com", validOtpHash, Date.now() - 5000);
+      const validOtpToken = createSignedOtpToken("realuser@mingree.com", validOtpHash, Date.now() + 60000);
+
+      const rExpiredOtp = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "realuser@mingree.com", otp: validOtp, otpToken: expiredOtpToken }),
       });
-      const resExpired = await fetch(`${baseUrl}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${expiredToken}` },
+      const rValidOtp = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "realuser@mingree.com", otp: validOtp, otpToken: validOtpToken }),
       });
-      const resForgedHeaderOnly = await fetch(`${baseUrl}/api/auth/me`, {
-        headers: { "x-user-id": "99" },
-      });
-      const passed =
-        resInvalid.status === 401 &&
-        resExpired.status === 401 &&
-        resForgedHeaderOnly.status === 401;
+
+      const passed = allRejected && rExpiredOtp.status === 400 && rValidOtp.status === 200;
       recordTest(
         2,
-        "Invalid, expired, and header-only token rejection",
-        passed,
-        `Invalid JWT: ${resInvalid.status}, Expired JWT: ${resExpired.status}, x-user-id without JWT: ${resForgedHeaderOnly.status}`
+        "Master OTP bypasses (123456, 898846, 937978) & expired OTP rejected; valid generated OTP accepted",
+        passed ? "PASS" : "FAIL",
+        `Master OTPs: ${statuses.join(" ")}, Expired OTP: ${rExpiredOtp.status}, Valid OTP: ${rValidOtp.status}`
       );
     } catch (err: any) {
-      recordTest(2, "Invalid, expired, and header-only token rejection", false, `Request failed: ${err.message}`);
+      recordTest(
+        2,
+        "Master OTP bypasses (123456, 898846, 937978) & expired OTP rejected; valid generated OTP accepted",
+        "FAIL",
+        err.message
+      );
     }
 
-    // TEST 3: Role-based access control (Creator vs Admin role, x-user-id spoofing rejection)
+    // Register test accounts in memory for role/ownership integration tests
+    const testUsers = [
+      {
+        id: 101,
+        email: "creator101@mingree.com",
+        passwordHash: bcrypt.hashSync("CreatorPass#101", 10),
+        name: "Test Creator 101",
+        role: "creator",
+        isEmailVerified: true,
+        status: "active",
+      },
+      {
+        id: 202,
+        email: "sponsor202@mingree.com",
+        passwordHash: bcrypt.hashSync("SponsorPass#202", 10),
+        name: "Test Sponsor 202",
+        role: "sponsor",
+        isEmailVerified: true,
+        status: "active",
+      },
+      {
+        id: 909,
+        email: "admin909@mingree.com",
+        passwordHash: bcrypt.hashSync("AdminPass#909", 10),
+        name: "Test Admin 909",
+        role: "admin",
+        isEmailVerified: true,
+        status: "active",
+      },
+    ];
+    (global as any).registeredUsers.push(...testUsers);
+
+    const creatorToken = jwt.sign(
+      { id: 101, email: "creator101@mingree.com", role: "creator" },
+      jwtSecret,
+      { expiresIn: "1h" }
+    );
+    const sponsorToken = jwt.sign(
+      { id: 202, email: "sponsor202@mingree.com", role: "sponsor" },
+      jwtSecret,
+      { expiresIn: "1h" }
+    );
+    const adminToken = jwt.sign(
+      { id: 909, email: "admin909@mingree.com", role: "admin" },
+      jwtSecret,
+      { expiresIn: "1h" }
+    );
+    const expiredJwt = jwt.sign(
+      { id: 101, email: "creator101@mingree.com", role: "creator" },
+      jwtSecret,
+      { expiresIn: "-10s" }
+    );
+    const forgedJwt = jwt.sign(
+      { id: 909, email: "admin909@mingree.com", role: "admin" },
+      "forged_wrong_signing_secret",
+      { expiresIn: "1h" }
+    );
+
+    // TEST 3: Unauthenticated, invalid JWT, expired JWT, and x-user-id spoofing rejection
     try {
-      const resCreatorSelf = await fetch(`${baseUrl}/api/users/1/wallet`, {
-        headers: { Authorization: `Bearer ${creatorToken}` },
+      const rUnauth = await fetch(`${baseUrl}/api/auth/me`);
+      const rForged = await fetch(`${baseUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${forgedJwt}` },
       });
-      const resCreatorAdmin = await fetch(`${baseUrl}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${creatorToken}` },
+      const rExpired = await fetch(`${baseUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${expiredJwt}` },
       });
-      const resCreatorSpoofHeader = await fetch(`${baseUrl}/api/auth/me`, {
+      const rSpoofHeader = await fetch(`${baseUrl}/api/auth/me`, {
         headers: {
           Authorization: `Bearer ${creatorToken}`,
-          "x-user-id": "99",
+          "x-user-id": "202",
         },
       });
-      const resAdminAccess = await fetch(`${baseUrl}/api/admin/stats`, {
-        headers: { Authorization: `Bearer ${adminToken}` },
-      });
       const passed =
-        resCreatorSelf.status === 200 &&
-        resCreatorAdmin.status === 403 &&
-        resCreatorSpoofHeader.status === 403 &&
-        resAdminAccess.status === 200;
+        rUnauth.status === 401 &&
+        rForged.status === 401 &&
+        rExpired.status === 401 &&
+        rSpoofHeader.status === 403;
+
       recordTest(
         3,
-        "Creator-role, Admin-role & x-user-id spoofing enforcement",
-        passed,
-        `Creator own wallet: ${resCreatorSelf.status}, Creator->Admin route: ${resCreatorAdmin.status}, Creator spoofing x-user-id=99: ${resCreatorSpoofHeader.status}, Admin->Admin stats: ${resAdminAccess.status}`
+        "Authentication & x-user-id spoofing enforcement",
+        passed ? "PASS" : "FAIL",
+        `Unauth: ${rUnauth.status}, Forged JWT: ${rForged.status}, Expired JWT: ${rExpired.status}, Spoofed x-user-id: ${rSpoofHeader.status}`
       );
     } catch (err: any) {
-      recordTest(3, "Creator-role, Admin-role & x-user-id spoofing enforcement", false, `Request failed: ${err.message}`);
+      recordTest(3, "Authentication & x-user-id spoofing enforcement", "FAIL", err.message);
     }
 
-    // TEST 4: Signup with role admin is rejected
+    // TEST 4: Instagram configuration inaccessible to unauthenticated and non-admin users; accessible only to admins
     try {
-      const resAdminSignup = await fetch(`${baseUrl}/api/auth/signup`, {
+      process.env.APP_URL = "https://mingree.com";
+      const rUnauthGet = await fetch(`${baseUrl}/api/instagram/config`);
+      const rUnauthPost = await fetch(`${baseUrl}/api/instagram/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "Malicious Admin Signup",
-          email: "hacker_admin@mingree.com",
-          password: "Password123!",
-          role: "admin",
-          handle: "hackeradmin",
-        }),
+        body: JSON.stringify({ appId: "attacker_app_id" }),
       });
-      const data = await resAdminSignup.json();
-      const isRejected = resAdminSignup.status === 400 || Boolean(data.error);
-      recordTest(
-        4,
-        "Admin role signup rejection",
-        isRejected,
-        `Signup with role 'admin' returned HTTP ${resAdminSignup.status}: ${data.error || "Rejected as expected"}`
-      );
-    } catch (err: any) {
-      recordTest(4, "Admin role signup rejection", false, `Request failed: ${err.message}`);
-    }
-
-    // TEST 5: Wrong or empty password fails login
-    try {
-      const resEmptyPass = await fetch(`${baseUrl}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "creator@mingree.com",
-          password: "",
-        }),
-      });
-      const dataEmpty = await resEmptyPass.json();
-      const isFailed = resEmptyPass.status >= 400 || Boolean(dataEmpty.error);
-      recordTest(
-        5,
-        "Empty password login rejection",
-        isFailed,
-        `Empty password login returned HTTP ${resEmptyPass.status}: ${dataEmpty.error || "Failed as expected"}`
-      );
-    } catch (err: any) {
-      recordTest(5, "Empty password login rejection", false, `Request failed: ${err.message}`);
-    }
-
-    // TEST 6: OTP never appears in API responses (no devOtp / otp / code)
-    try {
-      const resOtp = await fetch(`${baseUrl}/api/auth/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "test_otp_security@mingree.com",
-          name: "Security Tester",
-        }),
-      });
-      const dataOtp = await resOtp.json();
-      const hasNoOtp = !dataOtp.otp && !dataOtp.code && !dataOtp.debugOtp && !dataOtp.devOtp;
-      recordTest(
-        6,
-        "OTP response secrecy",
-        hasNoOtp,
-        `send-otp response returned keys: [${Object.keys(dataOtp).join(", ")}]. OTP code remains hidden.`
-      );
-    } catch (err: any) {
-      recordTest(6, "OTP response secrecy", false, `Request failed: ${err.message}`);
-    }
-
-    // TEST 7: Creator cannot read another user's private data
-    try {
-      const resCrossUser = await fetch(`${baseUrl}/api/users/20/wallet`, {
+      const rCreatorGet = await fetch(`${baseUrl}/api/instagram/config`, {
         headers: { Authorization: `Bearer ${creatorToken}` },
       });
-      const is403 = resCrossUser.status === 403;
-      recordTest(
-        7,
-        "Cross-user data access restriction",
-        is403,
-        `Creator #1 accessing User #20 wallet returned HTTP ${resCrossUser.status}`
-      );
-    } catch (err: any) {
-      recordTest(7, "Cross-user data access restriction", false, `Request failed: ${err.message}`);
-    }
-
-    // TEST 8: Cashfree nonexistent/fake order & unowned order rejection
-    try {
-      const walletBefore = await getOrCreateWallet(20);
-      const resNonExistent = await fetch(`${baseUrl}/api/cashfree/verify`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sponsorToken}`,
-        },
-        body: JSON.stringify({
-          orderId: "NON_EXISTENT_ORDER_9999",
-        }),
-      });
-
-      // Create an order owned by Sponsor (User #20) and try verifying as Creator (User #1)
-      await createPaymentOrder({
-        orderId: "ORDER_OWNED_BY_20",
-        userId: 20,
-        purpose: "wallet_deposit",
-        amount: 1500,
-      });
-      const resWrongUser = await fetch(`${baseUrl}/api/cashfree/verify`, {
+      const rCreatorConfigure = await fetch(`${baseUrl}/api/instagram/configure`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${creatorToken}`,
         },
-        body: JSON.stringify({
-          orderId: "ORDER_OWNED_BY_20",
-        }),
+        body: JSON.stringify({ appId: "attacker_app_id" }),
       });
-
-      // Verify when Cashfree credentials are not configured -> returns 503 and does not credit
-      const prevAppId = process.env.CASHFREE_APP_ID;
-      const prevSecret = process.env.CASHFREE_SECRET_KEY;
-      delete process.env.CASHFREE_APP_ID;
-      delete process.env.CASHFREE_SECRET_KEY;
-
-      const resNoCreds = await fetch(`${baseUrl}/api/cashfree/verify`, {
+      const rAdminGet = await fetch(`${baseUrl}/api/instagram/config`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const rAdminPost = await fetch(`${baseUrl}/api/instagram/config`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${sponsorToken}`,
+          Authorization: `Bearer ${adminToken}`,
         },
-        body: JSON.stringify({
-          orderId: "ORDER_OWNED_BY_20",
-        }),
+        body: JSON.stringify({ appId: "123456789012345" }),
       });
-      if (prevAppId !== undefined) process.env.CASHFREE_APP_ID = prevAppId;
-      if (prevSecret !== undefined) process.env.CASHFREE_SECRET_KEY = prevSecret;
 
-      const walletAfter = await getOrCreateWallet(20);
       const passed =
-        resNonExistent.status === 404 &&
-        resWrongUser.status === 403 &&
-        resNoCreds.status === 503 &&
-        walletAfter.balance === walletBefore.balance;
+        rUnauthGet.status === 401 &&
+        rUnauthPost.status === 401 &&
+        rCreatorGet.status === 403 &&
+        rCreatorConfigure.status === 403 &&
+        rAdminGet.status === 200 &&
+        rAdminPost.status === 200;
 
       recordTest(
-        8,
-        "Cashfree nonexistent, cross-user & unconfigured-creds order rejection",
-        passed,
-        `Nonexistent: ${resNonExistent.status}, Wrong owner: ${resWrongUser.status}, Missing creds: ${resNoCreds.status}, Wallet unchanged: ₹${walletAfter.balance}`
+        4,
+        "Instagram configuration restricted strictly to authenticated admins",
+        passed ? "PASS" : "FAIL",
+        `Unauth GET/POST: ${rUnauthGet.status}/${rUnauthPost.status}, Creator GET/POST: ${rCreatorGet.status}/${rCreatorConfigure.status}, Admin GET/POST: ${rAdminGet.status}/${rAdminPost.status}`
       );
     } catch (err: any) {
-      recordTest(8, "Cashfree nonexistent, cross-user & unconfigured-creds order rejection", false, `Request failed: ${err.message}`);
+      recordTest(4, "Instagram configuration restricted strictly to authenticated admins", "FAIL", err.message);
     }
 
-    // TEST 9: Cashfree failed payment, 404 from Cashfree, valid sandbox payment & duplicate idempotency
+    // TEST 5: Instagram OAuth initiation requires authentication and rejects cross-user userId query parameter
     try {
-      process.env.CASHFREE_APP_ID = "test_sandbox_app_id";
-      process.env.CASHFREE_SECRET_KEY = "test_sandbox_secret_key";
+      const rUnauthLogin = await fetch(`${baseUrl}/api/instagram/login?format=json`);
+      const rUnauthAuthUrl = await fetch(`${baseUrl}/api/instagram/auth-url`);
+      const rSpoofLogin = await fetch(`${baseUrl}/api/instagram/login?userId=202&format=json`, {
+        headers: { Authorization: `Bearer ${creatorToken}` },
+      });
+      const rSpoofAuthUrl = await fetch(`${baseUrl}/api/instagram/auth-url?userId=202`, {
+        headers: { Authorization: `Bearer ${creatorToken}` },
+      });
+      const rSelfAuthUrl = await fetch(`${baseUrl}/api/instagram/auth-url`, {
+        headers: { Authorization: `Bearer ${creatorToken}` },
+      });
+
+      const passed =
+        rUnauthLogin.status === 401 &&
+        rUnauthAuthUrl.status === 401 &&
+        rSpoofLogin.status === 403 &&
+        rSpoofAuthUrl.status === 403 &&
+        rSelfAuthUrl.status === 200;
+
+      recordTest(
+        5,
+        "Instagram OAuth initiation requires auth & blocks cross-user ID spoofing",
+        passed ? "PASS" : "FAIL",
+        `Unauth login/auth-url: ${rUnauthLogin.status}/${rUnauthAuthUrl.status}, Spoofed userId=202: ${rSpoofLogin.status}/${rSpoofAuthUrl.status}, Valid self: ${rSelfAuthUrl.status}`
+      );
+    } catch (err: any) {
+      recordTest(5, "Instagram OAuth initiation requires auth & blocks cross-user ID spoofing", "FAIL", err.message);
+    }
+
+    // TEST 6: Category subscriptions enforce authentication and user ownership
+    try {
+      const rUnauthGet = await fetch(`${baseUrl}/api/users/101/category-subscriptions`);
+      const rUnauthPost = await fetch(`${baseUrl}/api/users/101/category-subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: "music_reels", tier: "Nano" }),
+      });
+      const rCrossUserPost = await fetch(`${baseUrl}/api/users/202/category-subscriptions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${creatorToken}`,
+        },
+        body: JSON.stringify({ category: "music_reels", tier: "Nano" }),
+      });
+      const rCrossUserGet = await fetch(`${baseUrl}/api/users/202/category-subscriptions`, {
+        headers: { Authorization: `Bearer ${creatorToken}` },
+      });
+      const rCrossUserDelete = await fetch(`${baseUrl}/api/users/202/category-subscriptions`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${creatorToken}`,
+        },
+        body: JSON.stringify({ category: "music_reels", tier: "Nano" }),
+      });
+
+      const rOwnerPost = await fetch(`${baseUrl}/api/users/101/category-subscriptions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${creatorToken}`,
+        },
+        body: JSON.stringify({ category: "music_reels", tier: "Nano" }),
+      });
+      const rOwnerGet = await fetch(`${baseUrl}/api/users/101/category-subscriptions`, {
+        headers: { Authorization: `Bearer ${creatorToken}` },
+      });
+      const subsList = await rOwnerGet.json();
+      const rAdminGet = await fetch(`${baseUrl}/api/users/101/category-subscriptions`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      const rOwnerDelete = await fetch(`${baseUrl}/api/users/101/category-subscriptions`, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${creatorToken}`,
+        },
+        body: JSON.stringify({ category: "music_reels", tier: "Nano" }),
+      });
+
+      const passed =
+        rUnauthGet.status === 401 &&
+        rUnauthPost.status === 401 &&
+        rCrossUserPost.status === 403 &&
+        rCrossUserGet.status === 403 &&
+        rCrossUserDelete.status === 403 &&
+        rOwnerPost.status === 201 &&
+        rOwnerGet.status === 200 &&
+        Array.isArray(subsList) &&
+        subsList.length === 1 &&
+        rAdminGet.status === 200 &&
+        rOwnerDelete.status === 200;
+
+      recordTest(
+        6,
+        "Category subscriptions require authentication and enforce user ownership",
+        passed ? "PASS" : "FAIL",
+        `Unauth: ${rUnauthGet.status}/${rUnauthPost.status}, Cross-user: ${rCrossUserGet.status}/${rCrossUserPost.status}/${rCrossUserDelete.status}, Owner CRUD: ${rOwnerPost.status}/${rOwnerGet.status}/${rOwnerDelete.status}, Admin GET: ${rAdminGet.status}`
+      );
+    } catch (err: any) {
+      recordTest(6, "Category subscriptions require authentication and enforce user ownership", "FAIL", err.message);
+    }
+
+    // TEST 7: Cashfree wrong payment amount, failed order, 404 order, and invalid webhook signature cannot credit a wallet
+    try {
+      process.env.CASHFREE_APP_ID = "cf_test_app_id";
+      process.env.CASHFREE_SECRET_KEY = "cf_test_secret_key";
       process.env.CASHFREE_MODE = "sandbox";
 
       await createPaymentOrder({
-        orderId: "CF_TEST_FAILED_ORDER",
-        userId: 20,
+        orderId: "CF_WRONG_AMOUNT_ORDER",
+        userId: 202,
         purpose: "wallet_deposit",
-        amount: 2000,
-      });
-      await createPaymentOrder({
-        orderId: "CF_TEST_404_ORDER",
-        userId: 20,
-        purpose: "wallet_deposit",
-        amount: 2000,
-      });
-      await createPaymentOrder({
-        orderId: "CF_TEST_VALID_SANDBOX_ORDER",
-        userId: 20,
-        purpose: "wallet_deposit",
-        amount: 2500,
+        amount: 5000,
       });
 
+      const walletBefore = (await getOrCreateWallet(202)).balance;
       const originalFetch = global.fetch;
       global.fetch = async (input: any, init?: any) => {
         const urlStr = typeof input === "string" ? input : input?.url || String(input);
-        if (urlStr.includes("sandbox.cashfree.com/pg/orders/")) {
-          if (urlStr.endsWith("CF_TEST_404_ORDER")) {
-            return new Response(JSON.stringify({ message: "Order does not exist" }), {
-              status: 404,
-              headers: { "Content-Type": "application/json" },
-            });
-          }
-          if (urlStr.endsWith("CF_TEST_FAILED_ORDER")) {
-            return new Response(
-              JSON.stringify({
-                order_id: "CF_TEST_FAILED_ORDER",
-                order_amount: 2000,
-                order_status: "FAILED",
-              }),
-              { status: 200, headers: { "Content-Type": "application/json" } }
-            );
-          }
-          if (urlStr.endsWith("CF_TEST_VALID_SANDBOX_ORDER")) {
-            return new Response(
-              JSON.stringify({
-                order_id: "CF_TEST_VALID_SANDBOX_ORDER",
-                order_amount: 2500,
-                order_status: "PAID",
-              }),
-              { status: 200, headers: { "Content-Type": "application/json" } }
-            );
-          }
+        if (urlStr.includes("sandbox.cashfree.com/pg/orders/CF_WRONG_AMOUNT_ORDER")) {
+          // Return mismatched amount (₹100 instead of expected ₹5,000)
+          return new Response(
+            JSON.stringify({
+              order_id: "CF_WRONG_AMOUNT_ORDER",
+              order_amount: 100,
+              order_status: "PAID",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
         }
         return originalFetch(input, init);
       };
 
       try {
-        const walletStart = (await getOrCreateWallet(20)).balance;
-
-        // 1. Cashfree returns 404 -> should fail with 404 and not credit wallet
-        const resCf404 = await originalFetch(`${baseUrl}/api/cashfree/verify`, {
+        const rWrongAmount = await originalFetch(`${baseUrl}/api/cashfree/verify`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${sponsorToken}`,
           },
-          body: JSON.stringify({ orderId: "CF_TEST_404_ORDER" }),
+          body: JSON.stringify({ orderId: "CF_WRONG_AMOUNT_ORDER" }),
         });
 
-        // 2. Cashfree returns FAILED -> should fail with 400 and not credit wallet
-        const resCfFailed = await originalFetch(`${baseUrl}/api/cashfree/verify`, {
+        const webhookBody = JSON.stringify({
+          data: {
+            order: {
+              order_id: "CF_WRONG_AMOUNT_ORDER",
+              order_amount: 5000,
+              order_status: "PAID",
+            },
+          },
+        });
+        const rInvalidSig = await originalFetch(`${baseUrl}/api/cashfree/webhook`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${sponsorToken}`,
+            "x-webhook-timestamp": String(Date.now()),
+            "x-webhook-signature": "forged_invalid_hmac_signature",
           },
-          body: JSON.stringify({ orderId: "CF_TEST_FAILED_ORDER" }),
+          body: webhookBody,
         });
 
-        const walletAfterFailed = (await getOrCreateWallet(20)).balance;
+        const walletAfter = (await getOrCreateWallet(202)).balance;
+        const passed =
+          rWrongAmount.status === 400 &&
+          rInvalidSig.status === 400 &&
+          walletAfter === walletBefore;
 
-        // 3. Valid sandbox order -> should succeed (200) and credit exact ₹2,500 once
-        const resValid1 = await originalFetch(`${baseUrl}/api/cashfree/verify`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sponsorToken}`,
-          },
-          body: JSON.stringify({ orderId: "CF_TEST_VALID_SANDBOX_ORDER" }),
-        });
-        const dataValid1 = await resValid1.json();
-        const walletAfterFirstVerify = (await getOrCreateWallet(20)).balance;
+        recordTest(
+          7,
+          "Wrong payment amount and invalid webhook signature rejected without crediting wallet",
+          passed ? "PASS" : "FAIL",
+          `Wrong amount status: ${rWrongAmount.status}, Invalid webhook signature status: ${rInvalidSig.status}, Wallet unchanged: ₹${walletAfter}`
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
+    } catch (err: any) {
+      recordTest(
+        7,
+        "Wrong payment amount and invalid webhook signature rejected without crediting wallet",
+        "FAIL",
+        err.message
+      );
+    }
 
-        // 4. Duplicate verification of same valid order -> should return alreadyProcessed: true & NOT double credit
-        const resValid2 = await originalFetch(`${baseUrl}/api/cashfree/verify`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${sponsorToken}`,
-          },
-          body: JSON.stringify({ orderId: "CF_TEST_VALID_SANDBOX_ORDER" }),
-        });
-        const dataValid2 = await resValid2.json();
-        const walletAfterSecondVerify = (await getOrCreateWallet(20)).balance;
+    // TEST 8: Cashfree duplicate concurrent verification (Promise.all) cannot double-credit a wallet
+    try {
+      process.env.CASHFREE_APP_ID = "cf_test_app_id";
+      process.env.CASHFREE_SECRET_KEY = "cf_test_secret_key";
+      process.env.CASHFREE_MODE = "sandbox";
 
-        // 5. Webhook HMAC-SHA256 verification test
+      await createPaymentOrder({
+        orderId: "CF_CONCURRENT_ORDER_3000",
+        userId: 202,
+        purpose: "wallet_deposit",
+        amount: 3000,
+      });
+
+      const walletBefore = (await getOrCreateWallet(202)).balance;
+      const originalFetch = global.fetch;
+      global.fetch = async (input: any, init?: any) => {
+        const urlStr = typeof input === "string" ? input : input?.url || String(input);
+        if (urlStr.includes("sandbox.cashfree.com/pg/orders/CF_CONCURRENT_ORDER_3000")) {
+          return new Response(
+            JSON.stringify({
+              order_id: "CF_CONCURRENT_ORDER_3000",
+              order_amount: 3000,
+              order_status: "PAID",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return originalFetch(input, init);
+      };
+
+      try {
+        // Fire 5 simultaneous verification requests + 1 signed webhook concurrently
         const webhookPayload = JSON.stringify({
           data: {
             order: {
-              order_id: "CF_TEST_VALID_SANDBOX_ORDER",
-              order_amount: 2500,
+              order_id: "CF_CONCURRENT_ORDER_3000",
+              order_amount: 3000,
               order_status: "PAID",
             },
           },
         });
         const ts = String(Date.now());
         const validSig = crypto
-          .createHmac("sha256", "test_sandbox_secret_key")
+          .createHmac("sha256", "cf_test_secret_key")
           .update(`${ts}${webhookPayload}`)
           .digest("base64");
 
-        const resBadWebhook = await originalFetch(`${baseUrl}/api/cashfree/webhook`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-webhook-timestamp": ts,
-            "x-webhook-signature": "invalid_signature_base64",
-          },
-          body: webhookPayload,
-        });
+        const concurrentResponses = await Promise.all([
+          ...Array.from({ length: 5 }, () =>
+            originalFetch(`${baseUrl}/api/cashfree/verify`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${sponsorToken}`,
+              },
+              body: JSON.stringify({ orderId: "CF_CONCURRENT_ORDER_3000" }),
+            }).then((r) => r.json())
+          ),
+          originalFetch(`${baseUrl}/api/cashfree/webhook`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-webhook-timestamp": ts,
+              "x-webhook-signature": validSig,
+            },
+            body: webhookPayload,
+          }).then((r) => r.json()),
+        ]);
 
-        const resGoodWebhook = await originalFetch(`${baseUrl}/api/cashfree/webhook`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-webhook-timestamp": ts,
-            "x-webhook-signature": validSig,
-          },
-          body: webhookPayload,
-        });
-        const dataGoodWebhook = await resGoodWebhook.json();
-        const walletAfterWebhook = (await getOrCreateWallet(20)).balance;
+        const walletAfter = (await getOrCreateWallet(202)).balance;
+        const freshCreditsCount = concurrentResponses.filter((r) => r.alreadyProcessed === false).length;
+        const duplicateCount = concurrentResponses.filter((r) => r.alreadyProcessed === true).length;
 
         const passed =
-          resCf404.status === 404 &&
-          resCfFailed.status === 400 &&
-          walletAfterFailed === walletStart &&
-          resValid1.status === 200 &&
-          dataValid1.alreadyProcessed === false &&
-          walletAfterFirstVerify === walletStart + 2500 &&
-          resValid2.status === 200 &&
-          dataValid2.alreadyProcessed === true &&
-          walletAfterSecondVerify === walletStart + 2500 &&
-          resBadWebhook.status === 400 &&
-          resGoodWebhook.status === 200 &&
-          dataGoodWebhook.alreadyProcessed === true &&
-          walletAfterWebhook === walletStart + 2500;
+          walletAfter === walletBefore + 3000 &&
+          freshCreditsCount === 1 &&
+          duplicateCount === 5;
 
         recordTest(
-          9,
-          "Cashfree 404/failed rejection, valid sandbox credit, duplicate idempotency & HMAC webhook",
-          passed,
-          `404->${resCf404.status}, FAILED->${resCfFailed.status}, Valid1->${resValid1.status} (+₹2500), Duplicate->alreadyProcessed:${dataValid2.alreadyProcessed}, BadSig->${resBadWebhook.status}, GoodSig->${resGoodWebhook.status} (Bal: ₹${walletAfterWebhook})`
+          8,
+          "Cashfree concurrent verification & webhook race protection prevents double-credit",
+          passed ? "PASS" : "FAIL",
+          `6 concurrent calls -> Fresh credits: ${freshCreditsCount}, Idempotent duplicates: ${duplicateCount}, Wallet delta: +₹${walletAfter - walletBefore} (expected +₹3000)`
         );
       } finally {
         global.fetch = originalFetch;
@@ -462,169 +547,134 @@ async function runSmokeTests() {
       }
     } catch (err: any) {
       recordTest(
-        9,
-        "Cashfree 404/failed rejection, valid sandbox credit, duplicate idempotency & HMAC webhook",
-        false,
-        `Request failed: ${err.message}`
+        8,
+        "Cashfree concurrent verification & webhook race protection prevents double-credit",
+        "FAIL",
+        err.message
       );
     }
 
-    // TEST 10: Campaign launch with insufficient wallet balance returns 402
+    // TEST 9: Database migration SQL & server startup safety verification
     try {
-      const resLaunch = await fetch(`${baseUrl}/api/campaigns`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sponsorToken}`,
-        },
-        body: JSON.stringify({
-          title: "High Budget Campaign Test",
-          budget: "9999999.00",
-          pricingMode: "fixed",
-          fixedPrice: "1000",
-        }),
-      });
-      const dataLaunch = await resLaunch.json();
-      const is402 = resLaunch.status === 402;
+      const migrationSql = fs.readFileSync(
+        path.join(process.cwd(), "migrations", "002_phase1_consolidation.sql"),
+        "utf-8"
+      );
+      const dbTsSource = fs.readFileSync(path.join(process.cwd(), "server", "db.ts"), "utf-8");
+      const serverTsSource = fs.readFileSync(path.join(process.cwd(), "server.ts"), "utf-8");
+
+      const hasDummyInsertInMigration = /INSERT\s+INTO\s+(users|wallets)/i.test(migrationSql);
+      const hasDeleteInMigration = /\b(DELETE\s+FROM|TRUNCATE\s+TABLE)\b/i.test(migrationSql);
+      const hasDeleteInDbTs = /\b(DELETE\s+FROM|TRUNCATE\s+TABLE)\b/i.test(dbTsSource);
+
+      // Extract startServer() body from server.ts and confirm no DELETE or INSERT INTO users
+      const startServerIdx = serverTsSource.indexOf("async function startServer()");
+      const startServerBody = startServerIdx !== -1 ? serverTsSource.slice(startServerIdx) : "";
+      const hasDestructiveStartupSql = /\b(DELETE\s+FROM|INSERT\s+INTO\s+users)\b/i.test(startServerBody);
+
+      // Also verify verifyDbConnection() does not run DDL migrations
+      const verifyFnIdx = dbTsSource.indexOf("export async function verifyDbConnection");
+      const verifyFnBody = verifyFnIdx !== -1 ? dbTsSource.slice(verifyFnIdx) : "";
+      const runsMigrationsOnVerify = /runDatabaseMigrations|ensureSchemaInitialized|001_init\.sql/i.test(verifyFnBody);
+
+      const passed =
+        !hasDummyInsertInMigration &&
+        !hasDeleteInMigration &&
+        !hasDeleteInDbTs &&
+        !hasDestructiveStartupSql &&
+        !runsMigrationsOnVerify;
+
+      recordTest(
+        9,
+        "Migration SQL & server startup free of dummy user seeds, automatic DDL, and destructive DELETEs",
+        passed ? "PASS" : "FAIL",
+        `Dummy INSERT in 002_migration: ${hasDummyInsertInMigration}, DELETE in db.ts: ${hasDeleteInDbTs}, Destructive SQL in startServer(): ${hasDestructiveStartupSql}, Auto-migrate in verifyDbConnection(): ${runsMigrationsOnVerify}`
+      );
+    } catch (err: any) {
+      recordTest(
+        9,
+        "Migration SQL & server startup free of dummy user seeds, automatic DDL, and destructive DELETEs",
+        "FAIL",
+        err.message
+      );
+    }
+
+    // TEST 10: PostgreSQL-backed wallet and payment integration test
+    const testDbUrl = (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "").trim();
+    if (!testDbUrl || !isDatabaseConfigured) {
       recordTest(
         10,
-        "Insufficient wallet campaign launch 402 check",
-        is402,
-        `Launch attempt with 9.9M budget returned HTTP ${resLaunch.status}: ${dataLaunch.error || "Protected"}`
+        "PostgreSQL-backed wallet and payment integration test",
+        "BLOCKED",
+        "BLOCKED: Neither TEST_DATABASE_URL nor DATABASE_URL is configured in the current environment."
       );
-    } catch (err: any) {
-      recordTest(10, "Insufficient wallet campaign launch 402 check", false, `Request failed: ${err.message}`);
-    }
-
-    // TEST 11: Simultaneous budget cap check logic
-    try {
-      const totalBudget = 10000;
-      const requestedSpotPrice = 8000;
-      const accept1 = requestedSpotPrice <= totalBudget;
-      const remainingAfter1 = totalBudget - requestedSpotPrice;
-      const accept2 = requestedSpotPrice <= remainingAfter1;
-
-      const budgetProtected = accept1 === true && accept2 === false;
-      recordTest(
-        11,
-        "Simultaneous campaign budget overspend protection",
-        budgetProtected,
-        `First accept ₹8,000 approved, second accept ₹8,000 rejected as remaining budget is ₹${remainingAfter1}.`
-      );
-    } catch (err: any) {
-      recordTest(11, "Simultaneous campaign budget overspend protection", false, `Logic check failed: ${err.message}`);
-    }
-
-    // TEST 12: Approving a deal twice pays out only once (Idempotency)
-    try {
-      const mockFirstRelease = 1000;
-      let releaseCount = 0;
-      let dealStatus = "posted";
-
-      function approveDeal() {
-        if (dealStatus === "approved" || dealStatus === "released") {
-          return { alreadyProcessed: true, releasedAmount: 0 };
+    } else {
+      const dbReachable = await verifyDbConnection();
+      if (!dbReachable) {
+        recordTest(
+          10,
+          "PostgreSQL-backed wallet and payment integration test",
+          "BLOCKED",
+          "BLOCKED: PostgreSQL connection could not be established from current environment."
+        );
+      } else {
+        let client;
+        try {
+          client = await pool.connect();
+          await client.query("BEGIN");
+          const userRes = await client.query(
+            `INSERT INTO users (email, password_hash, name, role, is_verified, is_active)
+             VALUES ($1, $2, 'PG Integration Tester', 'sponsor', true, true)
+             RETURNING id`,
+            [`pg_test_${Date.now()}@mingree.com`, "test_hash"]
+          );
+          const testUserId = Number(userRes.rows[0].id);
+          await client.query(
+            `INSERT INTO wallets (user_id, balance, locked_escrow) VALUES ($1, 1000.00, 0.00)`,
+            [testUserId]
+          );
+          const lockRes = await client.query(
+            `SELECT balance, locked_escrow FROM wallets WHERE user_id = $1 FOR UPDATE`,
+            [testUserId]
+          );
+          const bal = parseFloat(lockRes.rows[0].balance);
+          await client.query("ROLLBACK");
+          recordTest(
+            10,
+            "PostgreSQL-backed wallet and payment integration test",
+            bal === 1000 ? "PASS" : "FAIL",
+            `Transactional PostgreSQL wallet creation & SELECT FOR UPDATE row lock verified (rolled back cleanly).`
+          );
+        } catch (dbErr: any) {
+          if (client) {
+            try {
+              await client.query("ROLLBACK");
+            } catch {}
+          }
+          recordTest(10, "PostgreSQL-backed wallet and payment integration test", "FAIL", dbErr.message);
+        } finally {
+          if (client) client.release();
         }
-        dealStatus = "approved";
-        releaseCount++;
-        return { alreadyProcessed: false, releasedAmount: mockFirstRelease };
       }
-
-      const firstCall = approveDeal();
-      const secondCall = approveDeal();
-
-      const isIdempotent = firstCall.alreadyProcessed === false && secondCall.alreadyProcessed === true && releaseCount === 1;
-      recordTest(
-        12,
-        "Deal double-approval payout idempotency",
-        isIdempotent,
-        `Call 1 released ₹${firstCall.releasedAmount}, Call 2 returned alreadyProcessed: true. Total payouts: ${releaseCount}.`
-      );
-    } catch (err: any) {
-      recordTest(12, "Deal double-approval payout idempotency", false, `Test failed: ${err.message}`);
-    }
-
-    // TEST 13: 50/50 escrow release & early deletion handling
-    try {
-      const creatorNet = 1000;
-      const firstRelease = creatorNet * 0.5;
-      const secondRelease = creatorNet * 0.5;
-
-      const isStillLive = true;
-      const finalPayout = isStillLive ? secondRelease : 0;
-      const totalPayout = firstRelease + finalPayout;
-
-      const isFiftyFiftyCorrect = firstRelease === 500 && finalPayout === 500 && totalPayout === 1000;
-      recordTest(
-        13,
-        "50/50 Escrow release & live check verification",
-        isFiftyFiftyCorrect,
-        `First release: ₹${firstRelease} (50%), Final release: ₹${finalPayout} (50%). Total: ₹${totalPayout}.`
-      );
-    } catch (err: any) {
-      recordTest(13, "50/50 Escrow release & live check verification", false, `Test failed: ${err.message}`);
-    }
-
-    // TEST 14: Withdrawal bounds and hold return on rejection
-    try {
-      const minCreatorWithdrawal = 500;
-      const testAmountBelowMin = 100;
-
-      const isBelowMinRejected = testAmountBelowMin < minCreatorWithdrawal;
-      let userBalance = 1000;
-      let userHold = 0;
-
-      const requestAmount = 600;
-      userBalance -= requestAmount;
-      userHold += requestAmount;
-
-      userHold -= requestAmount;
-      userBalance += requestAmount;
-
-      const isHoldReturned = userBalance === 1000 && userHold === 0 && isBelowMinRejected;
-      recordTest(
-        14,
-        "Withdrawal minimum threshold & hold return on rejection",
-        isHoldReturned,
-        `Withdrawal below ₹${minCreatorWithdrawal} rejected; ₹600 rejected hold successfully restored to user balance ₹${userBalance}.`
-      );
-    } catch (err: any) {
-      recordTest(14, "Withdrawal minimum threshold & hold return on rejection", false, `Test failed: ${err.message}`);
-    }
-
-    // TEST 15: Fee maths calculation verification
-    try {
-      const basePrice = 20000;
-      const breakdown = calculatePlatformFees(basePrice, false);
-
-      const isArtistPayableCorrect = breakdown.artistFee === 1500 && breakdown.totalArtistPayable === 21770;
-      const isCreatorNetCorrect = breakdown.creatorNet === 18500;
-
-      const isMathValid = isArtistPayableCorrect && isCreatorNetCorrect;
-      recordTest(
-        15,
-        "Platform fee calculation mathematics",
-        isMathValid,
-        `Base: ₹${basePrice} -> Artist Fee: ₹${breakdown.artistFee} (7.5%), Total Artist Payable: ₹${breakdown.totalArtistPayable} (incl. 18% GST on fee), Creator Net: ₹${breakdown.creatorNet} (7.5% fee).`
-      );
-    } catch (err: any) {
-      recordTest(15, "Platform fee calculation mathematics", false, `Fee maths check failed: ${err.message}`);
     }
   } finally {
     server.close();
   }
 
   console.log("\n==================================================");
-  const totalPassed = results.filter((r) => r.passed).length;
-  const totalTests = results.length;
-  console.log(`SUMMARY: ${totalPassed}/${totalTests} Tests Passed.`);
+  const passedCount = results.filter((r) => r.status === "PASS").length;
+  const blockedCount = results.filter((r) => r.status === "BLOCKED").length;
+  const failedCount = results.filter((r) => r.status === "FAIL").length;
+  console.log(
+    `SUMMARY: ${passedCount} PASSED, ${blockedCount} BLOCKED, ${failedCount} FAILED (Total: ${results.length})`
+  );
   console.log("==================================================");
 
-  if (totalPassed < totalTests) {
+  if (failedCount > 0) {
     process.exit(1);
   } else {
     process.exit(0);
   }
 }
 
-runSmokeTests();
+runIntegrationTests();

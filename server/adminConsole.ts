@@ -21,7 +21,7 @@ import {
 } from "../shared/schema";
 import { eq, and, sql, desc, like, or, count } from "drizzle-orm";
 import { CONFIG } from "../shared/config";
-import { releaseEscrow, refundEscrow, getOrCreateWallet } from "./walletAndPayments";
+import { releaseEscrow, refundEscrow, getOrCreateWallet, approveUpiTopup } from "./walletAndPayments";
 
 /**
  * 1. Audit Log Helper for Admin Actions
@@ -377,12 +377,13 @@ export async function getUsersPaginatedAdmin(params: {
 
     // Get Items
     const itemsRes = await pool.query(
-      `SELECT u.id, u.email, u.name, u.role, u.city, u.status as user_status, u.created_at, u.company_name, u.pan, u.gstin,
-              cp.username, cp.followers, cp.tier_label, cp.median_views, cp.risk_score, cp.status as creator_status,
+      `SELECT u.id, u.email, u.name, u.role, u.city, u.status as user_status, u.created_at, u.company_name, k.pan_masked as pan, u.gst_number as gstin,
+              cp.username, cp.followers, cp.tier as tier_label, cp.median_views, cp.risk_score, cp.status as creator_status,
               cp.access_token_enc, cp.instagram_user_id,
               w.balance, w.escrow_held
        FROM users u
        LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+       LEFT JOIN kyc k ON k.user_id = u.id
        LEFT JOIN wallets w ON w.user_id = u.id
        WHERE ${whereClause}
        ORDER BY u.id DESC
@@ -400,7 +401,7 @@ export async function getUsersPaginatedAdmin(params: {
         city: r.city || "Mumbai",
         status: r.creator_status || r.user_status || "active",
         companyName: r.company_name,
-        maskedPan: r.pan ? `••••${String(r.pan).slice(-4)}` : null,
+        maskedPan: r.pan ? String(r.pan) : null,
         createdAt: r.created_at,
         wallet: {
           balance: parseFloat(r.balance || "0"),
@@ -1102,8 +1103,8 @@ export async function getWithdrawalsAdmin(params: {
     const total = Number(countRes.rows[0]?.count || 0);
 
     const itemsRes = await pool.query(
-      `SELECT w.*, u.name as user_name, u.email as user_email, u.pan,
-              pm.type as payout_type, pm.account_details, k.status as kyc_status,
+      `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
+              pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
               cp.status as creator_status
        FROM withdrawals w
        LEFT JOIN users u ON u.id = w.user_id
@@ -1322,39 +1323,7 @@ export async function getUpiPaymentsAdmin(): Promise<any[]> {
 }
 
 export async function approveUpiPaymentAdmin(adminUserId: number, paymentId: number, ipAddress?: string): Promise<any> {
-  const upiRes = await pool.query(`SELECT * FROM upi_payments WHERE id = $1`, [paymentId]);
-  if (upiRes.rows.length === 0) throw new Error("UPI payment record not found");
-  const upiRow = upiRes.rows[0];
-
-  if (upiRow.status === "approved") {
-    throw new Error(`UPI Payment #${paymentId} is already approved.`);
-  }
-
-  const creditAmount = parseFloat(upiRow.amount);
-
-  try {
-    await pool.query(`UPDATE upi_payments SET status = 'approved' WHERE id = $1`, [paymentId]);
-
-    const wallet = await getOrCreateWallet(upiRow.user_id);
-    const newBalance = wallet.balance + creditAmount;
-
-    await pool.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance.toFixed(2), upiRow.user_id]);
-
-    await pool.query(
-      `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
-       VALUES ($1, 'upi_topup_approved', $2, $3, $4, 'upi_payment', $5, $6)`,
-      [
-        upiRow.user_id,
-        creditAmount.toFixed(2),
-        newBalance.toFixed(2),
-        wallet.escrowHeld.toFixed(2),
-        String(paymentId),
-        `UPI payment UTR ${upiRow.utr} approved`,
-      ]
-    );
-  } catch (err) {
-    console.error("[APPROVE UPI PAYMENT ERROR]", err);
-  }
+  const result = await approveUpiTopup(paymentId, adminUserId);
 
   await recordAdminAuditLog(
     adminUserId,
@@ -1362,12 +1331,12 @@ export async function approveUpiPaymentAdmin(adminUserId: number, paymentId: num
     "upi_payment",
     paymentId,
     { status: "pending" },
-    { status: "approved", amount: creditAmount },
-    `Approved UPI payment UTR ${upiRow.utr}`,
+    { status: "approved", amount: result.creditAmount },
+    `Approved UPI payment #${paymentId}`,
     ipAddress
   );
 
-  return { success: true, paymentId, creditAmount, message: "UPI Payment approved and wallet credited." };
+  return { success: true, paymentId, creditAmount: result.creditAmount, message: "UPI Payment approved and wallet credited." };
 }
 
 export async function rejectUpiPaymentAdmin(adminUserId: number, paymentId: number, reason: string, ipAddress?: string): Promise<any> {
@@ -1375,10 +1344,22 @@ export async function rejectUpiPaymentAdmin(adminUserId: number, paymentId: numb
     throw new Error("A typed reason is required to reject a UPI payment.");
   }
 
+  const client = await pool.connect();
+  let paymentUtr = "";
   try {
-    await pool.query(`UPDATE upi_payments SET status = 'rejected' WHERE id = $1`, [paymentId]);
+    await client.query("BEGIN");
+    const upiRes = await client.query(`SELECT id, status, utr FROM upi_payments WHERE id = $1 FOR UPDATE`, [paymentId]);
+    if (upiRes.rows.length === 0) throw new Error("UPI payment record not found");
+    const payment = upiRes.rows[0];
+    if (payment.status !== "pending") throw new Error(`UPI payment is already ${payment.status}`);
+    paymentUtr = String(payment.utr);
+    await client.query(`UPDATE upi_payments SET status = 'rejected', reviewed_at = now() WHERE id = $1`, [paymentId]);
+    await client.query("COMMIT");
   } catch (err) {
-    console.error("[REJECT UPI PAYMENT ERROR]", err);
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 
   await recordAdminAuditLog(
@@ -1388,7 +1369,7 @@ export async function rejectUpiPaymentAdmin(adminUserId: number, paymentId: numb
     paymentId,
     { status: "pending" },
     { status: "rejected" },
-    reason.trim(),
+    `Rejected UPI payment UTR ${paymentUtr}: ${reason.trim()}`,
     ipAddress
   );
 
