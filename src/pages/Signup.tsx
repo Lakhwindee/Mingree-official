@@ -99,18 +99,6 @@ export default function Signup() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const fullPhone = `+91${cleanPhone.slice(-10)}`;
-      let sentViaFirebase = false;
-
-      try {
-        const verifier = setupRecaptcha("signup-recaptcha-container", "invisible");
-        const fbResult = await sendPhoneOtp(fullPhone, verifier);
-        setConfirmationResult(fbResult);
-        sentViaFirebase = true;
-      } catch (fbErr: any) {
-        console.warn("[FIREBASE SIGNUP SMS FALLBACK TO SERVER]", fbErr?.message);
-      }
-
       const response = await fetch("/api/auth/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,9 +108,7 @@ export default function Signup() {
       const data = await safeParseJson(response);
 
       if (data.__nonJson || !response.ok) {
-        if (!sentViaFirebase) {
-          throw new Error(data.error || "Failed to send verification code.");
-        }
+        throw new Error(data.error || "Failed to send verification code.");
       }
 
       if (data.otpToken) {
