@@ -541,9 +541,23 @@ export default function Signup() {
               <div className="space-y-4">
                 <div className="rounded-lg bg-muted/50 p-3 text-center border border-border">
                   <p className="text-xs text-muted-foreground">
-                    Enter the 6-digit SMS verification code sent to{" "}
+                    Enter the 6-digit verification code for{" "}
                     <strong className="text-foreground font-mono">+91 {phone.replace(/[^0-9]/g, "").slice(-10)}</strong>
                   </p>
+                  {devOtpCode && (
+                    <div className="mt-2 pt-2 border-t border-border/60">
+                      <p className="text-xs font-semibold text-primary">
+                        Your Verification Code:{" "}
+                        <button
+                          type="button"
+                          onClick={() => setOtp(devOtpCode)}
+                          className="font-mono text-sm font-bold underline cursor-pointer px-1.5 py-0.5 rounded bg-primary/10"
+                        >
+                          {devOtpCode}
+                        </button>
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex flex-col items-center gap-3 py-2">

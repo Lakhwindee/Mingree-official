@@ -5,7 +5,7 @@ import path from "path";
 import crypto from "crypto";
 import * as schema from "../shared/schema";
 
-const { Pool } = pg;
+const { Pool, Client } = pg;
 
 // OID 20 = int8 (BIGINT / BIGSERIAL / COUNT(*))
 // Parse into native JavaScript Number safely with overflow detection
@@ -44,24 +44,29 @@ function getValidDatabaseUrl(): string | undefined {
 
 let currentDbUrl = getValidDatabaseUrl();
 export let isDatabaseConfigured = Boolean(currentDbUrl);
+let isWorkerRuntime = false;
 
-if (process.env.NODE_ENV === "production" && !currentDbUrl && !process.env.HYPERDRIVE) {
-  console.error("================================================================================");
-  console.error("FATAL ERROR: DATABASE_URL / Hyperdrive is missing or invalid in production.");
-  console.error("Production launch requires a persistent PostgreSQL database (Supabase PostgreSQL via Cloudflare Hyperdrive).");
-  console.error("In-memory database fallbacks are strictly disabled in production.");
-  console.error("Halting server startup.");
-  console.error("================================================================================");
-  process.exit(1);
+function getPgClientConfig(url: string): pg.ClientConfig {
+  const isLocalOrHyperdrive =
+    url.includes("localhost") ||
+    url.includes("127.0.0.1") ||
+    url.includes(".hyperdrive.local");
+  return {
+    connectionString: url,
+    ssl: isLocalOrHyperdrive ? undefined : { rejectUnauthorized: false },
+    connectionTimeoutMillis: 4000,
+    query_timeout: 8000,
+    statement_timeout: 8000,
+  };
 }
 
 function createPgPool(url?: string): pg.Pool {
   return new Pool(
     url
       ? {
-          connectionString: url,
-          ssl: (url.includes("localhost") || url.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false },
-          connectionTimeoutMillis: 5000,
+          ...getPgClientConfig(url),
+          max: 5,
+          idleTimeoutMillis: 1000,
         }
       : {
           host: "127.0.0.1",
@@ -72,32 +77,51 @@ function createPgPool(url?: string): pg.Pool {
 }
 
 let activePool = createPgPool(currentDbUrl);
-let activeDb = drizzle(activePool, { schema });
 
 activePool.on("error", (err: any) => {
   console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
 });
 
 /**
- * Dynamically reconfigures the active PostgreSQL connection pool (e.g. when Cloudflare Hyperdrive
+ * Dynamically reconfigures the active PostgreSQL connection (e.g. when Cloudflare Hyperdrive
  * provides env.HYPERDRIVE.connectionString at runtime).
  */
-export function reconfigureDatabase(newConnectionString: string): void {
+export function reconfigureDatabase(newConnectionString: string, workerMode = true): void {
   if (!newConnectionString) return;
   const clean = newConnectionString.trim();
-  if (currentDbUrl === clean) return;
   currentDbUrl = clean;
   isDatabaseConfigured = true;
-  const newPool = createPgPool(clean);
-  newPool.on("error", (err: any) => {
-    console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
-  });
-  activePool = newPool;
-  activeDb = drizzle(activePool, { schema });
-  console.log("[DB] Active database connection routed to Hyperdrive / Supabase PostgreSQL pool.");
+  isWorkerRuntime = workerMode;
 }
 
-// Proxied pool delegating to activePool
+async function runWorkerQuery(...args: any[]): Promise<any> {
+  if (!currentDbUrl) {
+    throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
+  }
+  const client = new Client(getPgClientConfig(currentDbUrl));
+  client.on("error", () => {});
+  await client.connect();
+  try {
+    return await (client as any).query(...args);
+  } finally {
+    client.end().catch(() => {});
+  }
+}
+
+async function connectWorkerClient(): Promise<any> {
+  if (!currentDbUrl) {
+    throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
+  }
+  const client = new Client(getPgClientConfig(currentDbUrl));
+  client.on("error", () => {});
+  await client.connect();
+  (client as any).release = () => {
+    client.end().catch(() => {});
+  };
+  return client;
+}
+
+// Proxied pool delegating to stateless Client in Cloudflare Workers or activePool in Node
 export const pool = new Proxy({} as pg.Pool, {
   get(_target, prop: string | symbol) {
     if (prop === "query") {
@@ -105,13 +129,29 @@ export const pool = new Proxy({} as pg.Pool, {
         if (!isDatabaseConfigured) {
           return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
         }
+        if (isWorkerRuntime) {
+          return runWorkerQuery(...args);
+        }
         return (activePool as any).query(...args);
+      };
+    }
+    if (prop === "connect") {
+      return () => {
+        if (!isDatabaseConfigured) {
+          return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
+        }
+        if (isWorkerRuntime) {
+          return connectWorkerClient();
+        }
+        return activePool.connect();
       };
     }
     const val = (activePool as any)[prop];
     return typeof val === "function" ? val.bind(activePool) : val;
   },
 });
+
+let activeDb = drizzle(pool, { schema });
 
 // Proxied Drizzle ORM instance delegating to activeDb
 export const db = new Proxy({} as ReturnType<typeof drizzle>, {

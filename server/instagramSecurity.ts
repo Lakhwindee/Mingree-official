@@ -76,9 +76,14 @@ function saveAuditLogs(logs: SecurityAuditEvent[]) {
   memoryAuditLogs = logs.slice(0, 1000);
 }
 
+let lastSecuritySyncTime = 0;
+
 // Hydrate identities and security audit logs from PostgreSQL when database is configured
-export async function syncSecurityStateFromDb(): Promise<void> {
+export async function syncSecurityStateFromDb(force = false): Promise<void> {
   if (!isDatabaseConfigured) return;
+  const now = Date.now();
+  if (!force && now - lastSecuritySyncTime < 30000) return;
+  lastSecuritySyncTime = now;
   try {
     const idRes = await pool.query(`SELECT * FROM instagram_identities`);
     for (const row of idRes.rows) {

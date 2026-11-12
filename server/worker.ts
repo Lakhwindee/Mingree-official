@@ -63,18 +63,30 @@ export default {
     // 5. Handle static assets via Cloudflare Workers Static Assets binding if present
     if (!url.pathname.startsWith("/api") && env.ASSETS && typeof env.ASSETS.fetch === "function") {
       try {
-        const assetResponse = await env.ASSETS.fetch(request);
-        if (assetResponse.status !== 404) {
+        const fetchTargetUrl = url.pathname === "/index.html" ? new URL("/", request.url) : new URL(request.url);
+        const assetResponse = await env.ASSETS.fetch(new Request(fetchTargetUrl.toString(), request));
+        if (assetResponse.status >= 200 && assetResponse.status < 400) {
+          const contentType = assetResponse.headers.get("content-type") || "";
+          if (contentType.includes("text/html")) {
+            const headers = new Headers(assetResponse.headers);
+            headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+            return new Response(assetResponse.body, { status: assetResponse.status, headers });
+          }
           return assetResponse;
         }
 
-        // SPA fallback: return index.html for client-side HTML routes
+        // SPA fallback: return root index.html for client-side HTML routes
         const acceptHeader = request.headers.get("accept") || "";
         if (request.method === "GET" && (acceptHeader.includes("text/html") || !pathHasExtension(url.pathname))) {
-          const indexUrl = new URL("/index.html", request.url);
-          const indexResponse = await env.ASSETS.fetch(new Request(indexUrl.toString(), request));
+          const rootUrl = new URL("/", request.url);
+          const indexResponse = await env.ASSETS.fetch(
+            new Request(rootUrl.toString(), { method: "GET", headers: request.headers })
+          );
           if (indexResponse.status === 200) {
-            return indexResponse;
+            const headers = new Headers(indexResponse.headers);
+            headers.set("Content-Type", "text/html; charset=utf-8");
+            headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+            return new Response(indexResponse.body, { status: 200, headers });
           }
         }
       } catch (assetErr) {

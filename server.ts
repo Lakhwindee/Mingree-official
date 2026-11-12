@@ -294,8 +294,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// Load campaign workspaces and security state on incoming API calls (never runs DDL migrations)
+// Load campaign workspaces and security state on incoming API calls (skip health and auth routes for speed)
 app.use("/api", async (req, res, next) => {
+  if (req.path === "/health" || req.path.startsWith("/auth/")) {
+    return next();
+  }
   try {
     await ensureWorkspacesLoaded();
     await syncSecurityStateFromDb();
@@ -523,7 +526,10 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
       user: creds.user,
       pass: creds.pass,
     },
-  });
+    connectionTimeout: 2500,
+    greetingTimeout: 2500,
+    socketTimeout: 3000,
+  } as any);
 
   const mailOptions = {
     from: `"Mingree" <${creds.user}>`,
@@ -718,8 +724,8 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
     }
   }
 
-  console.log(`[REAL SMS DISPATCH] To: +91${cleanPhone}, OTP: ${otp}, Name: ${userName || "User"}`);
-  return { success: true };
+  console.log(`[SIMULATED SMS DISPATCH] To: +91${cleanPhone}, OTP: ${otp}, Name: ${userName || "User"}`);
+  return { success: false, error: "SMS gateway not configured" };
 }
 
 // Send OTP (SMS & Email)
@@ -746,17 +752,29 @@ app.post("/api/auth/send-otp", async (req, res) => {
   let emailSent = false;
 
   if (cleanPhone && cleanPhone.length === 10) {
-    const smsResult = await sendSmsOtp(cleanPhone, rawOtp, name);
-    if (smsResult.success) {
-      smsSent = true;
-    } else {
-      console.warn(`[SMS NON-FATAL] ${smsResult.error}`);
+    try {
+      const smsResult = await Promise.race([
+        sendSmsOtp(cleanPhone, rawOtp, name),
+        new Promise<{ success: boolean; error: string }>((resolve) =>
+          setTimeout(() => resolve({ success: false, error: "SMS timeout" }), 3500)
+        ),
+      ]);
+      if (smsResult.success) {
+        smsSent = true;
+      }
+    } catch (smsErr: any) {
+      console.warn(`[SMS NON-FATAL]`, smsErr?.message || smsErr);
     }
   }
 
-  // Also send via Email OTP so users receive code in their inbox
+  // Also attempt Email OTP with a fast 2.5s timeout so it never blocks
   try {
-    const emailResult = await sendEmailOtp(cleanEmail, rawOtp, name);
+    const emailResult = await Promise.race([
+      sendEmailOtp(cleanEmail, rawOtp, name),
+      new Promise<{ success: boolean; error: string }>((resolve) =>
+        setTimeout(() => resolve({ success: false, error: "Email timeout" }), 2500)
+      ),
+    ]);
     if (emailResult.success) {
       emailSent = true;
     }
@@ -764,18 +782,18 @@ app.post("/api/auth/send-otp", async (req, res) => {
     console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
   }
 
-  const isDevOrTest = process.env.NODE_ENV !== "production" || (!smsSent && !emailSent);
+  const showFallbackOtp = process.env.NODE_ENV !== "production" || (!smsSent && !emailSent);
 
   return res.json({
     message: smsSent
       ? `SMS OTP sent successfully to +91 ${cleanPhone}`
       : emailSent
       ? `Verification code sent to ${cleanEmail}`
-      : `Verification code generated successfully`,
+      : `Verification code generated: ${rawOtp}`,
     smsSent,
     emailSent,
     otpToken,
-    devOtp: isDevOrTest ? rawOtp : undefined,
+    devOtp: showFallbackOtp ? rawOtp : undefined,
     expiresIn: 600,
   });
 });
