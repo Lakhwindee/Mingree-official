@@ -246,6 +246,7 @@ export default function Profile() {
   }, [user?.id]);
 
   useEffect(() => {
+    if (!user?.id) return;
     // Check URL parameters for errors or completion
     const params = new URLSearchParams(window.location.search);
     const igErr = params.get("instagram_error");

@@ -491,6 +491,7 @@ export function bindIdentityToUser(params: {
   mediaCount: number;
   riskScore: number;
   riskFactors: string[];
+  skipDbPersist?: boolean;
 }) {
   const identities = loadIdentities();
   const now = new Date().toISOString();
@@ -521,22 +522,24 @@ export function bindIdentityToUser(params: {
 
   saveIdentities(identities);
 
-  // Persist to PostgreSQL instagram_identities
-  try {
-    pool.query(
-      `INSERT INTO instagram_identities (instagram_user_id, current_user_id, historical_user_ids, username, connect_count, linked_at)
-       VALUES ($1, $2, ARRAY[$2::bigint], $3, 1, now())
-       ON CONFLICT (instagram_user_id) DO UPDATE SET
-         current_user_id = EXCLUDED.current_user_id,
-         historical_user_ids = array_append(instagram_identities.historical_user_ids, EXCLUDED.current_user_id),
-         username = EXCLUDED.username,
-         connect_count = instagram_identities.connect_count + 1,
-         linked_at = now(),
-         unlinked_at = NULL`,
-      [params.instagramUserId, params.mingreeUserId, params.instagramUsername]
-    ).catch((err: any) => console.error("[PG BIND ERROR]", err.message));
-  } catch (err: any) {
-    console.error("[PG BIND ERROR]", err.message);
+  // Persist to PostgreSQL instagram_identities only if caller hasn't already persisted it
+  if (!params.skipDbPersist) {
+    try {
+      pool.query(
+        `INSERT INTO instagram_identities (instagram_user_id, current_user_id, historical_user_ids, username, connect_count, linked_at)
+         VALUES ($1, $2, ARRAY[$2::bigint], $3, 1, now())
+         ON CONFLICT (instagram_user_id) DO UPDATE SET
+           current_user_id = EXCLUDED.current_user_id,
+           historical_user_ids = array_append(instagram_identities.historical_user_ids, EXCLUDED.current_user_id),
+           username = EXCLUDED.username,
+           connect_count = instagram_identities.connect_count + 1,
+           linked_at = now(),
+           unlinked_at = NULL`,
+        [params.instagramUserId, params.mingreeUserId, params.instagramUsername]
+      ).catch((err: any) => console.error("[PG BIND ERROR]", err.message));
+    } catch (err: any) {
+      console.error("[PG BIND ERROR]", err.message);
+    }
   }
 
   console.log(`[SECURITY] Successfully bound Instagram @${params.instagramUsername} (${params.instagramUserId}) to Mingree User #${params.mingreeUserId}`);
@@ -608,7 +611,7 @@ export function unlockOrTransferIdentity(
 
 // 5. Security Audit Logging
 
-export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "timestamp">) {
+export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "timestamp"> & { skipDbPersist?: boolean }) {
   const logs = loadAuditLogs();
   const entry: SecurityAuditEvent = {
     id: `sec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -619,24 +622,26 @@ export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "time
   logs.unshift(entry);
   saveAuditLogs(logs);
 
-  // Persist to PostgreSQL security_audit_logs
-  try {
-    pool.query(
-      `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        entry.event,
-        entry.mingreeUserId,
-        entry.instagramUsername,
-        entry.riskScore,
-        JSON.stringify(entry.riskFactors),
-        entry.decision,
-        entry.ipAddress,
-        JSON.stringify({ message: entry.details }),
-      ]
-    ).catch((err: any) => console.error("[PG AUDIT LOG ERROR]", err.message));
-  } catch (err: any) {
-    console.error("[PG AUDIT LOG ERROR]", err.message);
+  // Persist to PostgreSQL security_audit_logs only if caller hasn't already persisted it
+  if (!event.skipDbPersist) {
+    try {
+      pool.query(
+        `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          entry.event,
+          entry.mingreeUserId,
+          entry.instagramUsername,
+          entry.riskScore,
+          JSON.stringify(entry.riskFactors),
+          entry.decision,
+          entry.ipAddress,
+          JSON.stringify({ message: entry.details }),
+        ]
+      ).catch((err: any) => console.error("[PG AUDIT LOG ERROR]", err.message));
+    } catch (err: any) {
+      console.error("[PG AUDIT LOG ERROR]", err.message);
+    }
   }
 
   console.log(

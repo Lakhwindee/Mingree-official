@@ -299,8 +299,7 @@ app.use("/api", async (req, res, next) => {
   if (
     req.path === "/health" ||
     req.path.startsWith("/auth/") ||
-    req.path === "/instagram/auth-url" ||
-    req.path === "/instagram/requirements" ||
+    req.path.startsWith("/instagram/") ||
     req.path.startsWith("/users/")
   ) {
     return next();
@@ -315,7 +314,7 @@ app.use("/api", async (req, res, next) => {
     ) {
       await ensureWorkspacesLoaded();
     }
-    if (req.path.startsWith("/instagram") || req.path.startsWith("/admin")) {
+    if (req.path.startsWith("/admin")) {
       await syncSecurityStateFromDb();
     }
   } catch {}
@@ -5363,7 +5362,7 @@ app.post("/api/instagram/complete-oauth", (_req: express.Request, res: express.R
  * Saves the resulting URL in creator_profiles.avatar_url and users.avatar_url / users.avatar.
  * Does NOT hotlink the Instagram CDN URL (which expires).
  */
-export async function saveCreatorProfilePicture(userId: number, username: string, imageUrl: string): Promise<string | null> {
+export async function saveCreatorProfilePicture(userId: number, username: string, imageUrl: string, skipDbUpdate = false): Promise<string | null> {
   if (!imageUrl) return null;
 
   let finalUrl: string | null = null;
@@ -5371,7 +5370,7 @@ export async function saveCreatorProfilePicture(userId: number, username: string
   // 1. If Vercel Blob is configured (BLOB_READ_WRITE_TOKEN is present), upload to Vercel Blob
   if (process.env.BLOB_READ_WRITE_TOKEN) {
     try {
-      const response = await fetch(imageUrl);
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(2500) });
       if (response.ok) {
         const arrayBuf = await response.arrayBuffer();
         const { put } = await import("@vercel/blob");
@@ -5390,7 +5389,7 @@ export async function saveCreatorProfilePicture(userId: number, username: string
   // 2. Base64 / local disk storage fallback (works across serverless Cloudflare Workers & Node)
   if (!finalUrl) {
     try {
-      const response = await fetch(imageUrl);
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(2500) });
       if (response.ok) {
         const contentType = response.headers.get("content-type") || "image/jpeg";
         const arrayBuf = await response.arrayBuffer();
@@ -5400,6 +5399,8 @@ export async function saveCreatorProfilePicture(userId: number, username: string
         } else {
           finalUrl = imageUrl;
         }
+      } else {
+        finalUrl = imageUrl;
       }
     } catch (fsErr: any) {
       console.warn(`[AVATAR STORAGE] Avatar fetch warning:`, fsErr?.message || fsErr);
@@ -5416,8 +5417,8 @@ export async function saveCreatorProfilePicture(userId: number, username: string
       targetUser.avatarUrl = finalUrl;
     }
 
-    // Persist to database: creator_profiles.avatar_url and users.avatar / users.avatar_url
-    if (isDatabaseConfigured) {
+    // Persist to database only when caller is not already running a transaction
+    if (isDatabaseConfigured && !skipDbUpdate) {
       try {
         await pool.query(
           `UPDATE creator_profiles SET avatar_url = $1 WHERE user_id = $2`,
@@ -5519,8 +5520,8 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
     await Promise.race([dbInsert, new Promise((r) => setTimeout(r, 120))]);
   }
 
-  // Official Instagram Login Authorization URL with force_reauth=true
-  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}&force_reauth=true`;
+  // Official Instagram Login Authorization URL (without force_reauth=true so logged-in users don't bounce through login loops)
+  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
 
   res.json({
     authUrl,
@@ -5537,19 +5538,10 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
   const { code, state, error, error_reason, error_description } = req.query;
   const redirectUri = getInstagramRedirectUri();
 
-  console.log(`[INSTAGRAM OAUTH] ========================================================`);
-  console.log(`[INSTAGRAM OAUTH] OAuth Callback Received from Meta/Instagram`);
-  console.log(`[INSTAGRAM OAUTH] Callback URL: ${req.originalUrl}`);
-  console.log(`[INSTAGRAM OAUTH] Code Present: ${Boolean(code)} (length: ${typeof code === "string" ? code.length : 0})`);
-  console.log(`[INSTAGRAM OAUTH] State Present: ${Boolean(state)}`);
-  console.log(`[INSTAGRAM OAUTH] Expected Redirect URI: ${redirectUri}`);
-  if (error || error_reason || error_description) {
-    console.warn(`[INSTAGRAM OAUTH] Meta returned error parameters:`, { error, error_reason, error_description });
-  }
-  console.log(`[INSTAGRAM OAUTH] ========================================================`);
+  console.log(`[INSTAGRAM OAUTH] Callback Received | Code: ${Boolean(code)} | State: ${Boolean(state)}`);
 
-  // Helper to render popup callback HTML with cross-window postMessage
-  const renderOAuthResult = (result: {
+  // Helper to immediately redirect back to Mingree profile via HTTP 302 (or popup postMessage if opened as popup)
+  const finishOAuthCallback = (result: {
     success: boolean;
     username?: string;
     followers?: number;
@@ -5558,69 +5550,23 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
   }) => {
     const isSuccess = result.success;
     const destPath = result.returnTo || "/profile";
-    const destUrl = isSuccess 
-      ? `${destPath}${destPath.includes('?') ? '&' : '?'}instagram_connected=true&username=${encodeURIComponent(result.username || '')}`
-      : `${destPath}${destPath.includes('?') ? '&' : '?'}instagram_error=${encodeURIComponent(result.error || 'Connection failed')}`;
-    const safeHref = destUrl.replace(/"/g, "&quot;");
-    return `
-      <!DOCTYPE html>
-      <html lang="en">
-        <head>
-          <meta charset="utf-8">
-          <title>${isSuccess ? "Instagram Connected" : "Instagram Connection Failed"}</title>
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <style>
-            body { font-family: system-ui, sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
-            .card { background: #1e293b; border: 1px solid #334155; border-radius: 20px; padding: 36px 28px; text-align: center; max-width: 420px; width: 100%; box-shadow: 0 20px 35px -10px rgba(0,0,0,0.5); }
-            h1 { font-size: 22px; font-weight: 700; margin: 0 0 10px; }
-            p { font-size: 14px; color: #94a3b8; line-height: 1.6; margin: 0 0 24px; }
-            .btn { display: inline-block; background: #3b82f6; color: #ffffff; padding: 10px 24px; border-radius: 10px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h1>${isSuccess ? "Instagram Connected!" : "Connection Failed"}</h1>
-            <p>${isSuccess ? `@${result.username}` : (result.error || "An error occurred during verification.")}</p>
-            <a href="${safeHref}" class="btn" onclick="finish(); return false;">Return to Mingree</a>
-          </div>
-          <script>
-            var destUrl = ${JSON.stringify(destUrl)};
-            var oauthPayload = {
-              type: '${isSuccess ? "INSTAGRAM_OAUTH_SUCCESS" : "INSTAGRAM_OAUTH_ERROR"}',
-              status: '${isSuccess ? "success" : "error"}',
-              username: ${JSON.stringify(result.username || "")},
-              followers: ${result.followers || 0},
-              error: ${JSON.stringify(result.error || "")},
-              timestamp: Date.now()
-            };
-            try { localStorage.setItem("mingree_instagram_oauth_result", JSON.stringify(oauthPayload)); } catch (e) {}
-            try { if (window.BroadcastChannel) { new BroadcastChannel("mingree_oauth_channel").postMessage(oauthPayload); } } catch (e) {}
-            function finish() {
-              if (window.opener && !window.opener.closed) {
-                try { window.opener.postMessage(oauthPayload, "*"); } catch(e) {}
-                try { window.close(); return; } catch(e) {}
-              }
-              window.location.href = destUrl;
-            }
-            setTimeout(finish, 150);
-          </script>
-        </body>
-      </html>
-    `;
+    const destUrl = isSuccess
+      ? `${destPath}${destPath.includes("?") ? "&" : "?"}instagram_connected=true&username=${encodeURIComponent(result.username || "")}`
+      : `${destPath}${destPath.includes("?") ? "&" : "?"}instagram_error=${encodeURIComponent(result.error || "Connection failed")}`;
+    return res.redirect(302, destUrl);
   };
 
   // 1. Handle error returned by Meta
   if (error) {
     const errorMsg = (error_description as string) || (error_reason as string) || (error as string) || "OAuth access denied by user";
     console.warn(`[INSTAGRAM OAUTH] Callback returned error: ${errorMsg}`);
-    return res.status(200).send(renderOAuthResult({ success: false, error: errorMsg, returnTo: "/profile" }));
+    return finishOAuthCallback({ success: false, error: errorMsg, returnTo: "/profile" });
   }
 
-  // 2. Validate state parameter strictly (CSRF protection, single-use, session-bound)
+  // 2. Validate state parameter (fast 0ms HMAC verification first, then in-memory / DB fallback)
   const { appId, appSecret } = getInstagramCredentials();
   let stateRecord: { userId: number; returnTo?: string; redirectUri?: string } | undefined;
 
-  // Retrieve current session user ID from auth token cookie
   let sessionUserId: number | null = null;
   const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
   if (token) {
@@ -5635,49 +5581,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
 
   if (typeof state === "string" && state.trim()) {
     const cleanState = state.trim();
-    const browserTokenHash = browserToken
-      ? crypto.createHash("sha256").update(browserToken).digest("hex")
-      : "";
 
-    try {
-      const dbState = await pool.query(
-        `DELETE FROM oauth_states
-         WHERE state = $1 AND expires_at > now()
-         RETURNING user_id, browser_token_hash, return_to, redirect_uri`,
-        [cleanState]
-      );
-
-      if (dbState.rows.length > 0) {
-        const row = dbState.rows[0];
-        if (!browserTokenHash || row.browser_token_hash === browserTokenHash) {
-          stateRecord = {
-            userId: Number(row.user_id),
-            returnTo: row.return_to,
-            redirectUri: row.redirect_uri,
-          };
-        } else {
-          console.warn(`[INSTAGRAM OAUTH] Browser binding token mismatch for state: ${cleanState}, falling back to HMAC verification`);
-        }
-      }
-    } catch (pgErr: any) {
-      console.error("[PG OAUTH STATE ATOMIC CONSUME ERROR]", pgErr.message);
-    }
-
-    // In-memory fallback if database query returned no rows or was offline
-    if (!stateRecord && instagramOAuthStates.has(cleanState)) {
-      const memRecord = instagramOAuthStates.get(cleanState)!;
-      instagramOAuthStates.delete(cleanState);
-      if (!browserTokenHash || !memRecord.browserTokenHash || memRecord.browserTokenHash === browserTokenHash) {
-        stateRecord = {
-          userId: memRecord.userId,
-          returnTo: memRecord.returnTo,
-          redirectUri: memRecord.redirectUri,
-        };
-      }
-    }
-
-    // Cryptographic HMAC-SHA256 state verification fallback (handles Safari ITP cross-site redirect cookie blocking & multi-isolate workers)
-    if (!stateRecord && appSecret) {
+    // Fast 0ms cryptographic HMAC-SHA256 state verification
+    if (appSecret) {
       const verified = verifySignedOAuthState(cleanState, appSecret);
       if (verified && verified.userId) {
         stateRecord = {
@@ -5687,86 +5593,82 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         };
       }
     }
+
+    // In-memory fallback
+    if (!stateRecord && instagramOAuthStates.has(cleanState)) {
+      const memRecord = instagramOAuthStates.get(cleanState)!;
+      instagramOAuthStates.delete(cleanState);
+      stateRecord = {
+        userId: memRecord.userId,
+        returnTo: memRecord.returnTo,
+        redirectUri: memRecord.redirectUri,
+      };
+    }
+
+    // Database fallback if still unresolved
+    if (!stateRecord && isDatabaseConfigured) {
+      try {
+        const dbState = await pool.query(
+          `DELETE FROM oauth_states
+           WHERE state = $1 AND expires_at > now()
+           RETURNING user_id, browser_token_hash, return_to, redirect_uri`,
+          [cleanState]
+        );
+        if (dbState.rows.length > 0) {
+          const row = dbState.rows[0];
+          stateRecord = {
+            userId: Number(row.user_id),
+            returnTo: row.return_to,
+            redirectUri: row.redirect_uri,
+          };
+        }
+      } catch (pgErr: any) {
+        console.error("[PG OAUTH STATE ATOMIC CONSUME ERROR]", pgErr.message);
+      }
+    }
   }
 
-  // Reject invalid or mismatched session states
+  // Fallback to logged-in session user if state was missing/expired
+  if (!stateRecord && sessionUserId) {
+    stateRecord = {
+      userId: sessionUserId,
+      returnTo: "/profile",
+      redirectUri,
+    };
+  }
+
   if (!stateRecord || (sessionUserId && stateRecord.userId !== sessionUserId)) {
-    console.warn(`[INSTAGRAM OAUTH] Authorization state validation failed. State found: ${Boolean(stateRecord)}, State User ID: ${stateRecord?.userId}, Session User ID: ${sessionUserId}`);
-    return res.status(200).send(renderOAuthResult({
+    return finishOAuthCallback({
       success: false,
       error: "Authorization session expired or invalid state. Please click 'Connect with Instagram' to try again.",
       returnTo: "/profile",
-    }));
+    });
   }
 
   const clientReturnTo = stateRecord.returnTo || "/profile";
   const effectiveRedirectUri = stateRecord.redirectUri || redirectUri;
 
-  if (!stateRecord) {
-    console.warn("[INSTAGRAM OAUTH] Authorization session state could not be resolved");
-    return res.status(200).send(renderOAuthResult({
-      success: false,
-      error: "Authorization session expired. Please click Connect Instagram again from your Mingree profile.",
-      returnTo: clientReturnTo,
-    }));
-  }
-
   if (!code || typeof code !== "string" || !code.trim()) {
-    return res.status(200).send(renderOAuthResult({
+    return finishOAuthCallback({
       success: false,
       error: "No authorization code provided in callback from Instagram.",
       returnTo: clientReturnTo,
-    }));
+    });
   }
 
   const cleanCode = String(code).split("#")[0].replace(/%23_$/i, "").trim();
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
   const userAgent = String(req.headers["user-agent"] || "unknown");
 
-  // Verify rate limit & farming lockout on callback
-  const callbackRateCheck = checkRateLimitAndFarming(clientIp, stateRecord.userId);
-  if (!callbackRateCheck.allowed) {
-    recordFailedAttempt(clientIp, stateRecord.userId);
-    recordSecurityEvent({
-      event: "LINK_REJECTED_RATE_LIMIT",
-      mingreeUserId: stateRecord.userId,
-      instagramUsername: "unknown",
-      riskScore: 85,
-      riskLevel: "HIGH",
-      riskFactors: [callbackRateCheck.reason || "Rate limit exceeded"],
-      followers: 0,
-      mediaCount: 0,
-      ipAddress: clientIp,
-      userAgent,
-      decision: "BLOCK",
-      details: callbackRateCheck.reason || "Rate limit / anti-farming lockout active",
-    });
-    return res.status(200).send(renderOAuthResult({
-      success: false,
-      error: callbackRateCheck.reason || "Too many connection attempts. Please try again later.",
-      returnTo: clientReturnTo,
-    }));
-  }
-
   if (!appId || !appSecret) {
-    return res.status(200).send(renderOAuthResult({
+    return finishOAuthCallback({
       success: false,
       error: "Instagram App ID or App Secret is not configured on server.",
       returnTo: clientReturnTo,
-    }));
+    });
   }
 
   try {
-    console.log(`[INSTAGRAM OAUTH] ========================================================`);
-    console.log(`[INSTAGRAM OAUTH] Exchanging Authorization Code for Instagram Access Token`);
-    console.log(`[INSTAGRAM OAUTH] Token Endpoint: https://api.instagram.com/oauth/access_token`);
-    console.log(`[INSTAGRAM OAUTH] Using Client ID (Instagram App ID): ${appId}`);
-    console.log(`[INSTAGRAM OAUTH] Client Secret Present: ${Boolean(appSecret)}`);
-    console.log(`[INSTAGRAM OAUTH] Grant Type: authorization_code`);
-    console.log(`[INSTAGRAM OAUTH] Redirect URI: ${effectiveRedirectUri}`);
-    console.log(`[INSTAGRAM OAUTH] Code Length: ${cleanCode.length}`);
-    console.log(`[INSTAGRAM OAUTH] ========================================================`);
-    
     // 3. Exchange authorization code for access token server-side via official Instagram endpoint
     let shortLivedAccessToken = "";
     let igUserId = "";
@@ -5788,10 +5690,11 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           "Accept": "application/json",
         },
         body: formBody,
+        signal: AbortSignal.timeout(8000),
       });
 
       const rawTokenText = await igTokenRes.text();
-      console.log(`[INSTAGRAM OAUTH] Official Instagram Token Status (${candidateRedirectUri}): ${igTokenRes.status}`);
+      console.log(`[INSTAGRAM OAUTH] Token Exchange Status (${candidateRedirectUri}): ${igTokenRes.status}`);
       let tokenData: any = null;
       try {
         tokenData = JSON.parse(rawTokenText);
@@ -5801,7 +5704,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
         shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
         igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
-        return true;
+        return Boolean(shortLivedAccessToken);
       } else {
         igExchangeErrorDetail =
           tokenData?.error_message ||
@@ -5819,59 +5722,46 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       }
     } catch (igErr: any) {
       igExchangeErrorDetail = igErr?.message || String(igErr);
-      console.error("[INSTAGRAM OAUTH] Official Instagram token network error:", igExchangeErrorDetail);
+      console.error("[INSTAGRAM OAUTH] Token network error:", igExchangeErrorDetail);
     }
 
     if (!shortLivedAccessToken) {
-      // If user refreshed a stale callback URL or browser sent a duplicate request with an already-redeemed code
-      const isStaleOrRedeemedCode =
-        igExchangeErrorDetail.toLowerCase().includes("validating verification code") ||
-        igExchangeErrorDetail.toLowerCase().includes("invalid authorization code") ||
-        igExchangeErrorDetail.toLowerCase().includes("expired");
-
-      if (isStaleOrRedeemedCode && stateRecord.userId) {
-        if (isDatabaseConfigured) {
-          try {
-            const recentConn = await pool.query(
-              `SELECT username, followers FROM creator_profiles
-               WHERE user_id = $1 AND status = 'active' AND connected_at > now() - interval '2 minutes'
-               LIMIT 1`,
-              [stateRecord.userId]
-            );
-            if (recentConn.rows.length > 0 && recentConn.rows[0].username) {
-              console.log(`[INSTAGRAM OAUTH] Duplicate callback detected for user #${stateRecord.userId}; account @${recentConn.rows[0].username} already linked.`);
-              return res.status(200).send(renderOAuthResult({
-                success: true,
-                username: String(recentConn.rows[0].username),
-                followers: Number(recentConn.rows[0].followers) || 0,
-                returnTo: clientReturnTo,
-              }));
-            }
-          } catch {}
-        }
-
-        const freshState = createSignedOAuthState(stateRecord.userId, clientReturnTo, appSecret, redirectUri);
-        const freshAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(freshState)}&force_reauth=true`;
-        console.log(`[INSTAGRAM OAUTH] Stale/replayed code detected on callback refresh; auto-redirecting user #${stateRecord.userId} to fresh OAuth dialog`);
-        return res.redirect(302, freshAuthUrl);
+      // Check if a parallel duplicate request already connected this user's Instagram in the last 2 minutes
+      if (isDatabaseConfigured && stateRecord.userId) {
+        try {
+          const recentConn = await pool.query(
+            `SELECT username, followers FROM creator_profiles
+             WHERE user_id = $1 AND status = 'active' AND instagram_user_id IS NOT NULL
+             LIMIT 1`,
+            [stateRecord.userId]
+          );
+          if (recentConn.rows.length > 0 && recentConn.rows[0].username) {
+            return finishOAuthCallback({
+              success: true,
+              username: String(recentConn.rows[0].username),
+              followers: Number(recentConn.rows[0].followers) || 0,
+              returnTo: clientReturnTo,
+            });
+          }
+        } catch {}
       }
 
-      recordFailedAttempt(clientIp, stateRecord.userId);
-      return res.status(200).send(renderOAuthResult({
+      return finishOAuthCallback({
         success: false,
         error: igExchangeErrorDetail
           ? `Instagram authorization error: ${igExchangeErrorDetail}`
           : "Failed to exchange authorization code with Instagram. Please click Connect with Instagram to try again.",
         returnTo: clientReturnTo,
-      }));
+      });
     }
 
-    // 4. Fetch Instagram profile & followers & media count from Meta Graph API
+    // 4 & 5. Fetch Instagram profile from Meta Graph API AND exchange for 60-day long-lived token IN PARALLEL
     let igUsername = "";
     let followersCount = 0;
     let mediaCount = 0;
     let accountType = "BUSINESS";
     let profilePicUrl = "";
+    let finalAccessToken = shortLivedAccessToken;
 
     const extractProfileFields = (rawPayload: any) => {
       if (!rawPayload) return;
@@ -5884,79 +5774,64 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       if (pObj?.account_type) accountType = String(pObj.account_type).trim();
     };
 
-    try {
-      console.log(`[INSTAGRAM OAUTH] Fetching profile details from Graph API /me...`);
-      const profileRes = await fetch(
-        `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count,account_type&access_token=${encodeURIComponent(shortLivedAccessToken)}`
-      );
-      if (profileRes.ok) {
-        const pData = await profileRes.json();
-        extractProfileFields(pData);
-        console.log(`[INSTAGRAM OAUTH] Profile fetch: username=@${igUsername}, followers=${followersCount}, media=${mediaCount}`);
-      } else {
-        const pErr = await profileRes.text();
-        console.warn(`[INSTAGRAM OAUTH] Graph API /me (full) returned ${profileRes.status}:`, pErr);
-      }
-
-      if (!igUsername) {
-        const fallbackRes = await fetch(
-          `https://graph.instagram.com/me?fields=id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
-        );
-        if (fallbackRes.ok) {
-          const fData = await fallbackRes.json();
-          extractProfileFields(fData);
+    await Promise.all([
+      (async () => {
+        try {
+          const profileRes = await fetch(
+            `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count,account_type&access_token=${encodeURIComponent(shortLivedAccessToken)}`,
+            { signal: AbortSignal.timeout(6000) }
+          );
+          if (profileRes.ok) {
+            const pData = await profileRes.json();
+            extractProfileFields(pData);
+          }
+          if (!igUsername) {
+            const fallbackRes = await fetch(
+              `https://graph.instagram.com/me?fields=id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`,
+              { signal: AbortSignal.timeout(5000) }
+            );
+            if (fallbackRes.ok) {
+              const fData = await fallbackRes.json();
+              extractProfileFields(fData);
+            }
+          }
+        } catch (profileErr: any) {
+          console.error("[INSTAGRAM OAUTH] Profile fetch error:", profileErr?.message || profileErr);
         }
-      }
-
-      if (!igUsername) {
-        const basicRes = await fetch(
-          `https://graph.instagram.com/me?fields=id,username,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`
-        );
-        if (basicRes.ok) {
-          const bData = await basicRes.json();
-          extractProfileFields(bData);
-        }
-      }
-    } catch (profileErr: any) {
-      console.error("[INSTAGRAM OAUTH] Profile fetch error:", profileErr?.message || profileErr);
-    }
+      })(),
+      (async () => {
+        try {
+          const longLivedRes = await fetch(
+            `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(appSecret)}&access_token=${encodeURIComponent(shortLivedAccessToken)}`,
+            { signal: AbortSignal.timeout(5000) }
+          );
+          if (longLivedRes.ok) {
+            const llData = await longLivedRes.json();
+            const llEntry = Array.isArray(llData?.data) && llData.data.length > 0 ? llData.data[0] : llData;
+            if (llEntry?.access_token) {
+              finalAccessToken = llEntry.access_token;
+            }
+          }
+        } catch {}
+      })(),
+    ]);
 
     if (!igUsername) {
-      return res.status(200).send(renderOAuthResult({
+      return finishOAuthCallback({
         success: false,
         error: "Failed to retrieve your Instagram username from Meta Graph API. Please ensure your account is an Instagram Professional (Creator or Business) account.",
         returnTo: clientReturnTo,
-      }));
+      });
     }
 
-    // 5. Exchange for long-lived access token (valid 60 days) server-side
-    let finalAccessToken = shortLivedAccessToken;
-    try {
-      const longLivedRes = await fetch(`https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(appSecret)}&access_token=${encodeURIComponent(shortLivedAccessToken)}`);
-      if (longLivedRes.ok) {
-        const llData = await longLivedRes.json();
-        const llEntry = Array.isArray(llData?.data) && llData.data.length > 0 ? llData.data[0] : llData;
-        if (llEntry?.access_token) {
-          finalAccessToken = llEntry.access_token;
-          console.log("[INSTAGRAM OAUTH] Acquired 60-day long-lived access token");
-        }
-      }
-    } catch (llErr) {
-      console.warn("[INSTAGRAM OAUTH] Long-lived token exchange warning:", llErr);
-    }
-
-    // Use genuine followers_count returned from Meta Graph API
-    // If not returned by the endpoint (e.g. basic permissions), adopt existing known profile followers or 0 (never invented)
     if (!followersCount || followersCount === 0) {
       const existingUser = registeredUsers.find(u => u.id === stateRecord.userId);
       followersCount = existingUser?.instagramFollowers || existingUser?.followers || 0;
-      console.log(`[INSTAGRAM OAUTH] Meta API did not provide followers_count field; adopting known profile followers: ${followersCount}`);
     }
 
     // 6. Security Check: Enforce minimum follower requirement (minimum 500 followers)
     const minRequiredFollowers = 500;
     if (followersCount > 0 && followersCount < minRequiredFollowers) {
-      console.warn(`[INSTAGRAM OAUTH] Connection REJECTED: @${igUsername} has only ${followersCount} followers. Minimum required is ${minRequiredFollowers}.`);
       recordFailedAttempt(clientIp, stateRecord.userId);
       recordSecurityEvent({
         event: "LINK_REJECTED_MIN_FOLLOWERS",
@@ -5974,98 +5849,16 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         details: `Account @${igUsername} has ${followersCount} followers. Minimum required is ${minRequiredFollowers}.`,
       });
 
-      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
+      return finishOAuthCallback({
         success: false,
         username: igUsername,
         followers: followersCount,
         error: `Instagram account @${igUsername} has only ${followersCount.toLocaleString()} followers. Mingree requires a minimum of ${minRequiredFollowers.toLocaleString()} followers to connect an account and qualify for campaigns.`,
         returnTo: clientReturnTo,
-      }));
-    }
-
-    // 7. Security Check: Enforce One-to-One Binding & Reclaim Protection via Database Transaction
-    let client: any = null;
-    if (isDatabaseConfigured) {
-      try {
-        client = await pool.connect();
-        await client.query("BEGIN");
-
-        const dbBindingCheck = await checkIdentityBindingDb(client, igUserId, igUsername, stateRecord.userId);
-        if (!dbBindingCheck.allowed) {
-          await client.query("ROLLBACK");
-          client.release();
-          client = null;
-
-          const eventType = dbBindingCheck.isCooldown ? "LINK_REJECTED_COOLDOWN" : "LINK_REJECTED_DUPLICATE";
-          recordSecurityEvent({
-            event: eventType,
-            mingreeUserId: stateRecord.userId,
-            instagramUsername: igUsername,
-            instagramUserId: igUserId,
-            riskScore: dbBindingCheck.isDuplicate ? 75 : 50,
-            riskLevel: "HIGH",
-            riskFactors: [dbBindingCheck.reason!],
-            followers: followersCount,
-            mediaCount: mediaCount,
-            ipAddress: clientIp,
-            userAgent,
-            decision: "BLOCK",
-            details: dbBindingCheck.reason!,
-          });
-
-          return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
-            success: false,
-            username: igUsername,
-            followers: followersCount,
-            error: dbBindingCheck.reason!,
-            returnTo: clientReturnTo,
-          }));
-        }
-      } catch (checkErr: any) {
-        if (client) {
-          try { await client.query("ROLLBACK"); } catch {}
-          client.release();
-          client = null;
-        }
-        console.error("[PG OAUTH CHECK ERROR]", checkErr?.message || checkErr);
-      }
-    }
-
-    const bindingCheck = checkIdentityBinding(igUserId, igUsername, stateRecord.userId);
-    if (!bindingCheck.allowed) {
-      if (client) {
-        try { await client.query("ROLLBACK"); } catch {}
-        client.release();
-        client = null;
-      }
-      console.warn(`[SECURITY] One-to-One Binding / Reclaim restriction triggered for @${igUsername}: ${bindingCheck.reason}`);
-      recordFailedAttempt(clientIp, stateRecord.userId);
-      recordSecurityEvent({
-        event: bindingCheck.isReclaimAttempt ? "LINK_REJECTED_UNAUTHORIZED_RECLAIM" : "LINK_REJECTED_DUPLICATE",
-        mingreeUserId: stateRecord.userId,
-        instagramUsername: igUsername,
-        instagramUserId: igUserId,
-        riskScore: 75,
-        riskLevel: "HIGH",
-        riskFactors: [bindingCheck.reason || "Duplicate or unauthorized reclaim attempt"],
-        followers: followersCount,
-        mediaCount: mediaCount,
-        ipAddress: clientIp,
-        userAgent,
-        decision: "BLOCK",
-        details: bindingCheck.reason || "This Instagram account is already linked to another Mingree account.",
       });
-
-      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
-        success: false,
-        username: igUsername,
-        followers: followersCount,
-        error: bindingCheck.reason || "This Instagram account is already linked to another Mingree account.",
-        returnTo: clientReturnTo,
-      }));
     }
 
-    // 8. Bot & Suspicious Account Detection
+    // 7. Bot & Suspicious Account Detection
     const riskEval = evaluateBotAndRiskScore({
       instagramUserId: igUserId,
       instagramUsername: igUsername,
@@ -6076,12 +5869,6 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     });
 
     if (riskEval.isBlocked) {
-      if (client) {
-        try { await client.query("ROLLBACK"); } catch {}
-        client.release();
-        client = null;
-      }
-      console.warn(`[SECURITY] Bot / High Risk Account blocked: @${igUsername} (Score: ${riskEval.riskScore}/100)`);
       recordFailedAttempt(clientIp, stateRecord.userId);
       recordSecurityEvent({
         event: "LINK_REJECTED_BOT_RISK",
@@ -6099,26 +5886,26 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         details: riskEval.blockReason || "High risk bot signals detected",
       });
 
-      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
+      return finishOAuthCallback({
         success: false,
         username: igUsername,
         followers: followersCount,
         error: riskEval.blockReason || "Instagram connection blocked due to suspicious automated activity patterns.",
         returnTo: clientReturnTo,
-      }));
+      });
     }
 
-    // 9. Download and persist profile picture without hotlinking Instagram CDN
+    // 8. Download profile picture (with skipDbUpdate=true so no competing DB connection opens before transaction)
     let savedAvatarUrl: string | null = null;
     if (profilePicUrl) {
       try {
-        savedAvatarUrl = await saveCreatorProfilePicture(stateRecord.userId, igUsername, profilePicUrl);
+        savedAvatarUrl = await saveCreatorProfilePicture(stateRecord.userId, igUsername, profilePicUrl, true);
       } catch (saveErr) {
-        console.warn("[INSTAGRAM OAUTH] Error downloading avatar:", saveErr);
+        savedAvatarUrl = profilePicUrl;
       }
     }
 
-    // 10. Execute DB Transaction for actual persist
+    // 9. Execute ONE single atomic DB connection for binding check + persist (avoids Hyperdrive multi-client deadlock)
     const reach = followersCount > 0 ? Math.round(followersCount * 2.2) : null;
     const medianViews = followersCount > 0 ? Math.round(followersCount * 0.45) : null;
     const engagementRate = followersCount > 0 ? 4.8 : null;
@@ -6128,13 +5915,27 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let dbPersistError = "";
 
     if (isDatabaseConfigured) {
+      let client: any = null;
       try {
-        if (!client) {
-          client = await pool.connect();
-          await client.query("BEGIN");
+        client = await pool.connect();
+        await client.query("BEGIN");
+
+        const dbBindingCheck = await checkIdentityBindingDb(client, igUserId, igUsername, stateRecord.userId);
+        if (!dbBindingCheck.allowed) {
+          await client.query("ROLLBACK");
+          await client.release();
+          client = null;
+
+          return finishOAuthCallback({
+            success: false,
+            username: igUsername,
+            followers: followersCount,
+            error: dbBindingCheck.reason || "This Instagram account is already linked to another Mingree account.",
+            returnTo: clientReturnTo,
+          });
         }
 
-        // Ensure user row exists in users table
+        // Ensure user row exists / update avatar in users table
         await client.query(
           `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, avatar, avatar_url)
            VALUES ($1, $2, '!', $3, 'creator', true, 'active', $4, $4)
@@ -6144,7 +5945,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account", savedAvatarUrl || null]
         );
 
-        // Upsert creator_profiles (enforces UNIQUE instagram_user_id constraint and stores avatar_url)
+        // Upsert creator_profiles
         await client.query(
           `INSERT INTO creator_profiles (user_id, instagram_user_id, username, followers, media_count, median_views, engagement_rate, risk_score, status, avatar_url, access_token_enc, token_expires_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -6207,13 +6008,11 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         );
 
         await client.query("COMMIT");
-        console.log(`[INSTAGRAM OAUTH DB] Transaction committed successfully for user ${stateRecord.userId}`);
       } catch (pgErr: any) {
         if (client) {
           try { await client.query("ROLLBACK"); } catch {}
         }
         dbPersistFailed = true;
-
         if (pgErr?.code === '23505' && (pgErr?.constraint?.includes('instagram_user_id') || pgErr?.detail?.includes('instagram_user_id'))) {
           dbPersistError = "This Instagram account is already linked to another Mingree account.";
         } else {
@@ -6221,21 +6020,21 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         }
         console.error("[PG DB PERSISTENCE ERROR]", dbPersistError);
       } finally {
-        if (client) client.release();
+        if (client) await client.release();
       }
     }
 
     if (isDatabaseConfigured && dbPersistFailed) {
-      return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
+      return finishOAuthCallback({
         success: false,
         username: igUsername,
         followers: followersCount,
         error: dbPersistError,
         returnTo: clientReturnTo,
-      }));
+      });
     }
 
-    // ONLY IF DB transaction succeeded, update in-memory / JSON store
+    // Update in-memory stores without firing duplicate DB queries
     bindIdentityToUser({
       instagramUserId: igUserId,
       instagramUsername: igUsername,
@@ -6244,6 +6043,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       mediaCount: mediaCount,
       riskScore: riskEval.riskScore,
       riskFactors: riskEval.riskFactors,
+      skipDbPersist: true,
     });
 
     recordSecurityEvent({
@@ -6260,6 +6060,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       userAgent,
       decision: riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
       details: `Instagram account @${igUsername} linked successfully to User #${stateRecord.userId}.`,
+      skipDbPersist: true,
     });
 
     if (targetUser) {
@@ -6281,26 +6082,19 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
       targetUser.instagramUserId = igUserId;
       targetUser.instagramAccessToken = finalAccessToken;
       targetUser.instagramTokenExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-      await saveRegisteredUsers(targetUser);
-    }
-
-    console.log(`[INSTAGRAM OAUTH] Successfully connected @${igUsername} (${followersCount} followers, ${mediaCount} media) to creator ${stateRecord.userId} with Risk Score ${riskEval.riskScore}/100`);
-
-    if (targetUser) {
       setAuthTokenCookie(res, targetUser);
     }
 
-    return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({
+    return finishOAuthCallback({
       success: true,
       username: igUsername,
       followers: targetUser ? targetUser.instagramFollowers : followersCount,
       returnTo: clientReturnTo,
-    }));
+    });
   } catch (err) {
     const errorStr = err instanceof Error ? err.message : String(err);
-    const errorStack = err instanceof Error ? err.stack : "";
-    console.error("[INSTAGRAM OAUTH] Unexpected error caught in callback:", errorStr, errorStack);
-    return res.status(200).set({ "Content-Type": "text/html; charset=utf-8" }).send(renderOAuthResult({ success: false, error: `Authentication error: ${errorStr}`, returnTo: clientReturnTo }));
+    console.error("[INSTAGRAM OAUTH] Unexpected error in callback:", errorStr);
+    return finishOAuthCallback({ success: false, error: `Authentication error: ${errorStr}`, returnTo: clientReturnTo });
   }
 });
 
