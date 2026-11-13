@@ -82,6 +82,230 @@ activePool.on("error", (err: any) => {
   console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
 });
 
+let schemaEnsured = false;
+let schemaPromise: Promise<void> | null = null;
+
+/**
+ * Idempotently verifies and patches core database tables and columns (such as creator_profiles.username)
+ * so serverless workers and production databases never throw "column cp.username does not exist".
+ */
+export async function ensureDatabaseSchema(force = false): Promise<void> {
+  if (schemaEnsured && !force) return;
+  if (schemaPromise && !force) return schemaPromise;
+
+  schemaPromise = (async () => {
+    if (!currentDbUrl) return;
+    const client = new Client(getPgClientConfig(currentDbUrl));
+    client.on("error", () => {});
+    try {
+      await client.connect();
+      await client.query(`
+        DO $$
+        BEGIN
+          -- 1. Ensure users table exists with all necessary columns
+          CREATE TABLE IF NOT EXISTS users (
+            id bigserial PRIMARY KEY,
+            email text UNIQUE NOT NULL,
+            password_hash text NOT NULL DEFAULT '!',
+            name text NOT NULL DEFAULT '',
+            role text NOT NULL DEFAULT 'creator',
+            email_verified boolean NOT NULL DEFAULT false,
+            status text NOT NULL DEFAULT 'active',
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS handle text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS city text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS gstin text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_address text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
+
+          -- 2. Ensure creator_profiles exists with all required columns
+          CREATE TABLE IF NOT EXISTS creator_profiles (
+            user_id bigint PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            instagram_user_id text,
+            username text,
+            full_name text,
+            avatar_url text,
+            followers int NOT NULL DEFAULT 0,
+            following_count int NOT NULL DEFAULT 0,
+            media_count int NOT NULL DEFAULT 0,
+            median_views int NOT NULL DEFAULT 0,
+            engagement_rate numeric(8,5) NOT NULL DEFAULT 0,
+            tier_label text DEFAULT 'Nano',
+            tier text DEFAULT 'Nano',
+            city_id int,
+            status text NOT NULL DEFAULT 'pending',
+            status_note text,
+            available boolean NOT NULL DEFAULT true,
+            risk_score int NOT NULL DEFAULT 0,
+            risk_flags jsonb NOT NULL DEFAULT '[]'::jsonb,
+            access_token_enc text,
+            token_expires_at timestamptz,
+            metrics_updated_at timestamptz,
+            india_audience_pct numeric(5,2) DEFAULT 0,
+            completed_deals int NOT NULL DEFAULT 0,
+            on_time_deals int NOT NULL DEFAULT 0,
+            strikes int NOT NULL DEFAULT 0,
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS username text;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS instagram_user_id text;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS full_name text;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS avatar_url text;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS followers int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS following_count int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS media_count int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS median_views int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS engagement_rate numeric(8,5) NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS tier_label text DEFAULT 'Nano';
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS tier text DEFAULT 'Nano';
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS city_id int;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'pending';
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS status_note text;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS available boolean NOT NULL DEFAULT true;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS risk_score int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS risk_flags jsonb NOT NULL DEFAULT '[]'::jsonb;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS access_token_enc text;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS token_expires_at timestamptz;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS metrics_updated_at timestamptz;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS india_audience_pct numeric(5,2) DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS completed_deals int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS on_time_deals int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS strikes int NOT NULL DEFAULT 0;
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+          ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+          -- Backfill username from legacy columns if present
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns 
+              WHERE table_name = 'creator_profiles' AND column_name = 'instagram_username'
+            ) THEN
+              UPDATE creator_profiles SET username = instagram_username WHERE username IS NULL AND instagram_username IS NOT NULL;
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM information_schema.columns 
+              WHERE table_name = 'creator_profiles' AND column_name = 'handle'
+            ) THEN
+              UPDATE creator_profiles SET username = handle WHERE username IS NULL AND handle IS NOT NULL;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
+          -- 3. Ensure oauth_states table exists
+          CREATE TABLE IF NOT EXISTS oauth_states (
+            state text PRIMARY KEY,
+            user_id bigint,
+            browser_token_hash text NOT NULL DEFAULT '',
+            return_to text NOT NULL DEFAULT '/profile',
+            redirect_uri text NOT NULL DEFAULT '',
+            expires_at timestamptz NOT NULL DEFAULT (now() + interval '15 minutes'),
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS user_id bigint;
+          ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS browser_token_hash text DEFAULT '';
+          ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS return_to text DEFAULT '/profile';
+          ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS redirect_uri text DEFAULT '';
+          ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS expires_at timestamptz DEFAULT (now() + interval '15 minutes');
+
+          -- 4. Ensure instagram_identities table exists
+          CREATE TABLE IF NOT EXISTS instagram_identities (
+            instagram_user_id text PRIMARY KEY,
+            current_user_id bigint REFERENCES users(id) ON DELETE SET NULL,
+            historical_user_ids bigint[] NOT NULL DEFAULT '{}'::bigint[],
+            username text,
+            connect_count int NOT NULL DEFAULT 1,
+            first_bound_at timestamptz NOT NULL DEFAULT now(),
+            last_bound_at timestamptz NOT NULL DEFAULT now(),
+            first_linked_at timestamptz NOT NULL DEFAULT now(),
+            linked_at timestamptz NOT NULL DEFAULT now(),
+            unlinked_at timestamptz,
+            last_followers_count int NOT NULL DEFAULT 0,
+            last_media_count int NOT NULL DEFAULT 0,
+            is_locked boolean NOT NULL DEFAULT false,
+            lockout_until bigint,
+            lockout_reason text,
+            disconnect_count int NOT NULL DEFAULT 0,
+            suspicious_flags jsonb NOT NULL DEFAULT '[]'::jsonb,
+            last_risk_score int NOT NULL DEFAULT 0,
+            first_user_id bigint REFERENCES users(id) ON DELETE SET NULL,
+            cooldown_until timestamptz
+          );
+
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS current_user_id bigint;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS historical_user_ids bigint[] DEFAULT '{}'::bigint[];
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS username text;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS connect_count int DEFAULT 1;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS first_bound_at timestamptz DEFAULT now();
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS last_bound_at timestamptz DEFAULT now();
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS first_linked_at timestamptz DEFAULT now();
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS linked_at timestamptz DEFAULT now();
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS unlinked_at timestamptz;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS last_followers_count int DEFAULT 0;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS last_media_count int DEFAULT 0;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS is_locked boolean DEFAULT false;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS lockout_until bigint;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS lockout_reason text;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS disconnect_count int DEFAULT 0;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS suspicious_flags jsonb DEFAULT '[]'::jsonb;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS last_risk_score int DEFAULT 0;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS first_user_id bigint;
+          ALTER TABLE instagram_identities ADD COLUMN IF NOT EXISTS cooldown_until timestamptz;
+
+          -- 5. Ensure security_audit_logs table exists
+          CREATE TABLE IF NOT EXISTS security_audit_logs (
+            id bigserial PRIMARY KEY,
+            event text NOT NULL,
+            user_id bigint,
+            instagram_username text,
+            risk_score int DEFAULT 0,
+            flags text,
+            decision text,
+            ip text,
+            details text,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS event text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS user_id bigint;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS instagram_username text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS risk_score int DEFAULT 0;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS flags text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS decision text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS ip text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS details text;
+
+          -- 6. Indices
+          CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
+          CREATE INDEX IF NOT EXISTS idx_creator_profiles_ig_uid ON creator_profiles (instagram_user_id);
+          CREATE INDEX IF NOT EXISTS idx_creator_profiles_status ON creator_profiles (status);
+          CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states (expires_at);
+          CREATE INDEX IF NOT EXISTS idx_instagram_identities_user ON instagram_identities (current_user_id);
+        END $$;
+      `);
+      schemaEnsured = true;
+      console.log("[DB SCHEMA] Successfully ensured creator_profiles schema & required columns");
+    } catch (err: any) {
+      console.warn("[DB SCHEMA ENSURE WARNING]", err?.message || err);
+    } finally {
+      await client.end().catch(() => {});
+      schemaPromise = null;
+    }
+  })();
+
+  return schemaPromise;
+}
+
 /**
  * Dynamically reconfigures the active PostgreSQL connection (e.g. when Cloudflare Hyperdrive
  * provides env.HYPERDRIVE.connectionString at runtime).
@@ -103,6 +327,9 @@ async function runWorkerQuery(...args: any[]): Promise<any> {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
   }
+  if (!schemaEnsured) {
+    await ensureDatabaseSchema().catch(() => {});
+  }
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {});
   await client.connect();
@@ -117,6 +344,9 @@ async function connectWorkerClient(): Promise<any> {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
   }
+  if (!schemaEnsured) {
+    await ensureDatabaseSchema().catch(() => {});
+  }
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {});
   await client.connect();
@@ -130,9 +360,12 @@ async function connectWorkerClient(): Promise<any> {
 export const pool = new Proxy({} as pg.Pool, {
   get(_target, prop: string | symbol) {
     if (prop === "query") {
-      return (...args: any[]) => {
+      return async (...args: any[]) => {
         if (!isDatabaseConfigured) {
-          return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
+          throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
+        }
+        if (!schemaEnsured) {
+          await ensureDatabaseSchema().catch(() => {});
         }
         if (isWorkerRuntime) {
           return runWorkerQuery(...args);
@@ -141,9 +374,12 @@ export const pool = new Proxy({} as pg.Pool, {
       };
     }
     if (prop === "connect") {
-      return () => {
+      return async () => {
         if (!isDatabaseConfigured) {
-          return Promise.reject(Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" }));
+          throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
+        }
+        if (!schemaEnsured) {
+          await ensureDatabaseSchema().catch(() => {});
         }
         if (isWorkerRuntime) {
           return connectWorkerClient();

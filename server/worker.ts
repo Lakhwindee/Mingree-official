@@ -1,7 +1,7 @@
 import http from "node:http";
 import app from "../server";
 import { httpServerHandler } from "cloudflare:node";
-import { reconfigureDatabase, isDatabaseConfigured, runWithWorkerDbUrl } from "./db";
+import { reconfigureDatabase, isDatabaseConfigured, runWithWorkerDbUrl, ensureDatabaseSchema } from "./db";
 import { setWorkerR2Bucket } from "./storage";
 import {
   runDealExpirationCheck,
@@ -28,6 +28,13 @@ export default {
       reconfigureDatabase(env.HYPERDRIVE.connectionString);
     } else if (env.DATABASE_URL) {
       reconfigureDatabase(env.DATABASE_URL);
+    }
+
+    // Proactively ensure database schema and core columns exist in background/on-demand
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(ensureDatabaseSchema());
+    } else {
+      ensureDatabaseSchema().catch(() => {});
     }
 
     // 2. Set Cloudflare R2 bucket binding for zero-cost persistent object storage

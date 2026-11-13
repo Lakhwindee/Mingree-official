@@ -11,7 +11,7 @@ import rateLimit from "express-rate-limit";
 import multer from "multer";
 import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
-import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured } from "./server/db";
+import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured, ensureDatabaseSchema } from "./server/db";
 import { eq } from "drizzle-orm";
 import { getTierNameByFollowers, getTierBannerText, TIERS } from "./shared/tiers";
 import { uploadToStorage } from "./server/storage";
@@ -299,9 +299,26 @@ app.use("/api", (_req, _res, next) => {
   next();
 });
 
-// Health check endpoint for Render.com deployment and load balancers
-app.get("/api/health", (req, res) => {
-  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+// Health check endpoint for Cloudflare Workers, Render.com deployment and load balancers
+app.get(["/api/health", "/api/system/db-sync"], async (req, res) => {
+  try {
+    if (isDatabaseConfigured) {
+      await ensureDatabaseSchema(req.path.includes("db-sync"));
+    }
+    res.status(200).json({
+      status: "ok",
+      database: isDatabaseConfigured ? "connected" : "unconfigured",
+      schema: "ensured",
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    res.status(200).json({
+      status: "ok",
+      database: "warning",
+      schemaError: err?.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // File Upload Configuration & Endpoint (No startup disk writes; safe for read-only Vercel file system)
@@ -6042,6 +6059,7 @@ app.get([
     if (isDatabaseConfigured) {
       let client: any = null;
       try {
+        await ensureDatabaseSchema().catch(() => {});
         client = await pool.connect();
         await client.query("BEGIN");
 

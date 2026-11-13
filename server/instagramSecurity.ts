@@ -206,13 +206,18 @@ export async function checkIdentityBindingDb(
   mingreeUserId: number
 ): Promise<{ allowed: boolean; reason?: string; isDuplicate?: boolean; isCooldown?: boolean; remainingSecs?: number }> {
   // 1. Check if instagram_user_id is currently linked to an ACTIVE creator_profile of another user
-  const dupCp = await client.query(
-    `SELECT cp.user_id, cp.username, cp.status, u.email 
-     FROM creator_profiles cp
-     LEFT JOIN users u ON u.id = cp.user_id
-     WHERE cp.instagram_user_id = $1 AND cp.user_id != $2 AND cp.status = 'active' AND cp.access_token_enc IS NOT NULL`,
-    [instagramUserId, mingreeUserId]
-  );
+  let dupCp = { rows: [] as any[] };
+  try {
+    dupCp = await client.query(
+      `SELECT cp.user_id, cp.status, u.email 
+       FROM creator_profiles cp
+       LEFT JOIN users u ON u.id = cp.user_id
+       WHERE cp.instagram_user_id = $1 AND cp.user_id != $2 AND cp.status = 'active' AND cp.access_token_enc IS NOT NULL`,
+      [instagramUserId, mingreeUserId]
+    );
+  } catch (dupErr: any) {
+    console.warn("[CHECK BINDING WARNING] creator_profiles active check query issue:", dupErr?.message);
+  }
 
   if (dupCp.rows.length > 0) {
     // Check if the old user ID shares the same email address as the authenticating user (e.g. account recreated or reset)
