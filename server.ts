@@ -381,6 +381,7 @@ interface InstagramOAuthState {
   browserTokenHash?: string;
 }
 const instagramOAuthStates = new Map<string, InstagramOAuthState>();
+const globalOAuthCallbackHits = new Map<string, number>();
 function cleanupExpiredOAuthStates() {
   const now = Date.now();
   for (const [stateKey, stateVal] of instagramOAuthStates.entries()) {
@@ -5503,6 +5504,18 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
   // Official Instagram Login Authorization URL (without force_reauth=true so logged-in users don't bounce through login loops)
   const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
 
+  const authDebugPayload = {
+    step: "1_AUTH_REQUEST",
+    client_id: appId,
+    redirect_uri: redirectUri,
+    response_type: "code",
+    scope: "instagram_business_basic,instagram_business_manage_insights",
+    state_length: state.length,
+    timestamp: new Date().toISOString(),
+    version: "v2.6.5-debug"
+  };
+  console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(authDebugPayload));
+
   res.json({
     authUrl,
     instagramOAuthUrl: authUrl,
@@ -5525,8 +5538,22 @@ app.get([
   const { code, state, error, error_reason, error_description } = req.query;
   const redirectUri = getInstagramRedirectUri(req);
 
-  console.log(`[INSTAGRAM OAUTH DIAGNOSTIC] Callback | host: ${req.get("host")} | path: ${req.path} | has_code: ${Boolean(code)} | version: v2.6.5-oauthruntime`);
-  console.log(`[INSTAGRAM OAUTH] Callback Received | Code: ${Boolean(code)} | State: ${Boolean(state)}`);
+  const callbackCounterKey = `cb_${String(state || code || "").slice(0, 16)}`;
+  const executionCount = (globalOAuthCallbackHits.get(callbackCounterKey) || 0) + 1;
+  globalOAuthCallbackHits.set(callbackCounterKey, executionCount);
+
+  const callbackDebugPayload = {
+    step: "2_CALLBACK_RECEIVED",
+    callback_url: req.originalUrl || req.url,
+    callback_host: req.get("host"),
+    has_code: Boolean(code),
+    has_state: Boolean(state),
+    has_error: Boolean(error),
+    execution_count: executionCount,
+    timestamp: new Date().toISOString(),
+    version: "v2.6.5-debug"
+  };
+  console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(callbackDebugPayload));
 
   // Helper to immediately redirect back to Mingree profile via HTTP 302 (or popup postMessage if opened as popup)
   const finishOAuthCallback = (result: {
@@ -5666,8 +5693,18 @@ app.get([
     let igExchangeErrorDetail = "";
 
     const tryExchangeCode = async (candidateRedirectUri: string) => {
-      console.log(`[INSTAGRAM OAUTH DIAGNOSTIC] Token Exchange | client_id: ${appId} | redirect_uri: ${candidateRedirectUri} | endpoint: https://api.instagram.com/oauth/access_token | method: POST | Content-Type: application/x-www-form-urlencoded | version: v2.6.5-oauthruntime`);
-      console.log(`[INSTAGRAM OAUTH DIAGNOSTIC COMPARISON] Match check - redirect_uri match: ${candidateRedirectUri === effectiveRedirectUri} | client_id match: true`);
+      const tokenExchangeDebugPayload = {
+        step: "3_TOKEN_EXCHANGE_REQUEST",
+        endpoint: "https://api.instagram.com/oauth/access_token",
+        client_id: appId,
+        redirect_uri: candidateRedirectUri,
+        grant_type: "authorization_code",
+        content_type: "application/x-www-form-urlencoded",
+        auth_redirect_uri_matches_token_redirect_uri: effectiveRedirectUri === candidateRedirectUri,
+        timestamp: new Date().toISOString(),
+        version: "v2.6.5-debug"
+      };
+      console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(tokenExchangeDebugPayload));
 
       const formBody = new URLSearchParams({
         client_id: appId,
@@ -5693,6 +5730,19 @@ app.get([
       try {
         tokenData = JSON.parse(rawTokenText);
       } catch {}
+
+      const responseDebugPayload = {
+        step: "4_INSTAGRAM_RESPONSE",
+        endpoint: "https://api.instagram.com/oauth/access_token",
+        http_status: igTokenRes?.status,
+        success: igTokenRes?.ok,
+        error_type: tokenData?.error?.type || tokenData?.error_type || null,
+        error_code: tokenData?.error?.code || tokenData?.code || null,
+        error_message: tokenData?.error?.message || tokenData?.error_message || (igTokenRes?.ok ? null : rawTokenText.slice(0, 300)),
+        timestamp: new Date().toISOString(),
+        version: "v2.6.5-debug"
+      };
+      console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(responseDebugPayload));
 
       // 2. If Instagram endpoint fails or returns error, fallback to Facebook Graph API OAuth token endpoint (crucial for Meta App Dashboard Instagram Login apps)
       if (!igTokenRes || !igTokenRes.ok || !tokenData?.access_token) {

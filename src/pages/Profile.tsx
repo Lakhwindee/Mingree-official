@@ -443,7 +443,7 @@ export default function Profile() {
     }
     const igHandle = (activeUser?.instagramUsername || activeUser?.handle || "").replace(/^@+/, "");
     if (igHandle) {
-      return `https://unavatar.io/instagram/${igHandle}`;
+      return `https://api.dicebear.com/7.x/initials/svg?seed=${igHandle}`;
     }
     return undefined;
   }, [activeUser?.avatar, activeUser?.avatarUrl, user?.avatar, activeUser?.instagramUsername, activeUser?.handle]);
