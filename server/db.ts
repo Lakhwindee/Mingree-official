@@ -310,12 +310,76 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
             NULL;
           END;
 
+          -- 5b. Ensure rate_cards table exists and supports all 4 deliverables (reel, story, collab_post, bio_link_story)
+          CREATE TABLE IF NOT EXISTS rate_cards (
+            id bigserial PRIMARY KEY,
+            user_id bigint REFERENCES users(id) ON DELETE CASCADE,
+            creator_id bigint REFERENCES users(id) ON DELETE CASCADE,
+            deliverable_type text NOT NULL,
+            price numeric(12,2) NOT NULL DEFAULT 0,
+            base_price numeric(12,2),
+            min_price numeric(12,2),
+            max_price numeric(12,2),
+            active boolean NOT NULL DEFAULT true,
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id) ON DELETE CASCADE;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS creator_id bigint REFERENCES users(id) ON DELETE CASCADE;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS deliverable_type text;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS price numeric(12,2) DEFAULT 0;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS base_price numeric(12,2);
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS min_price numeric(12,2);
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+          BEGIN
+            ALTER TABLE rate_cards DROP CONSTRAINT IF EXISTS rate_cards_deliverable_type_check;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'creator_id') THEN
+              ALTER TABLE rate_cards ALTER COLUMN creator_id DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'base_price') THEN
+              ALTER TABLE rate_cards ALTER COLUMN base_price DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'min_price') THEN
+              ALTER TABLE rate_cards ALTER COLUMN min_price DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'user_id') THEN
+              ALTER TABLE rate_cards ALTER COLUMN user_id DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'price') THEN
+              ALTER TABLE rate_cards ALTER COLUMN price DROP NOT NULL;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
+          BEGIN
+            UPDATE rate_cards SET user_id = creator_id WHERE user_id IS NULL AND creator_id IS NOT NULL;
+            UPDATE rate_cards SET creator_id = user_id WHERE creator_id IS NULL AND user_id IS NOT NULL;
+            UPDATE rate_cards SET price = base_price WHERE (price IS NULL OR price = 0) AND base_price IS NOT NULL;
+            UPDATE rate_cards SET base_price = price WHERE base_price IS NULL AND price IS NOT NULL;
+            DELETE FROM rate_cards a
+            USING rate_cards b
+            WHERE a.id < b.id
+              AND a.user_id IS NOT NULL
+              AND a.user_id = b.user_id
+              AND a.deliverable_type = b.deliverable_type;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_ig_uid ON creator_profiles (instagram_user_id);
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_status ON creator_profiles (status);
           CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states (expires_at);
           CREATE INDEX IF NOT EXISTS idx_instagram_identities_user ON instagram_identities (current_user_id);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_cards_user_deliverable ON rate_cards (user_id, deliverable_type);
         END $$;
       `);
       schemaEnsured = true;

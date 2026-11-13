@@ -19,6 +19,7 @@ function buildFallbackCreators(p: CreatorSearchParams): CreatorSearchResult {
   let multiplier = 1.0;
   if (deliverable === "story") multiplier = 0.5;
   else if (deliverable === "collab_post") multiplier = 1.4;
+  else if (deliverable === "bio_link_story") multiplier = 0.6;
 
   const tierBasePrices: Record<string, number> = {
     nano: 1200,

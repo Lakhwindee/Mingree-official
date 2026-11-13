@@ -79,6 +79,8 @@ export default function CreatorRequests() {
         { deliverableType: "Collab Package", price: parseFloat(collabPrice) || 5000 },
         { deliverableType: "Bio Link & Story", price: parseFloat(bioLinkPrice) || 1200 },
       ]);
+      queryClient.invalidateQueries({ queryKey: ["rateCard", user.id] });
+      queryClient.invalidateQueries({ queryKey: ["creator-panel"] });
       toast.success("Rate card saved!");
     } catch (err: any) {
       toast.error(err.message || "Failed to save rate card");

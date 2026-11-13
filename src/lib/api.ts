@@ -1968,9 +1968,12 @@ export const api = {
     },
   },
 
-  async getRateCards(userId: number): Promise<Array<{ deliverableType: string; price: number }>> {
+  async getRateCards(userId: number): Promise<Array<{ deliverableType: string; deliverableKey?: string; price: number }>> {
     try {
-      const res = await fetch(`${API_BASE}/users/${userId}/rate-cards`, { credentials: "include" });
+      const res = await fetch(`${API_BASE}/users/${userId}/rate-cards`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         const text = await res.text();
         const trimmed = text ? text.trim() : "";
@@ -1988,10 +1991,10 @@ export const api = {
       if (local) return JSON.parse(local);
     } catch {}
     return [
-      { deliverableType: "Instagram Reel", price: 2500 },
-      { deliverableType: "Instagram Story", price: 800 },
-      { deliverableType: "Collab Package", price: 5000 },
-      { deliverableType: "Bio Link & Story", price: 1200 },
+      { deliverableType: "Instagram Reel", deliverableKey: "reel", price: 2500 },
+      { deliverableType: "Instagram Story", deliverableKey: "story", price: 800 },
+      { deliverableType: "Collab Package", deliverableKey: "collab_post", price: 5000 },
+      { deliverableType: "Bio Link & Story", deliverableKey: "bio_link_story", price: 1200 },
     ];
   },
 
@@ -2000,24 +2003,27 @@ export const api = {
       localStorage.setItem(`mingree_rate_cards_${userId}`, JSON.stringify(cards));
     } catch {}
 
+    const res = await fetch(`${API_BASE}/users/${userId}/rate-cards`, {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      credentials: "include",
+      body: JSON.stringify({ cards }),
+    });
+    const text = await res.text();
+    const trimmed = text ? text.trim() : "";
+    let data: any = {};
     try {
-      const res = await fetch(`${API_BASE}/users/${userId}/rate-cards`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ cards }),
-      });
-      if (res.ok) {
-        const text = await res.text();
-        const trimmed = text ? text.trim() : "";
-        if (trimmed.startsWith("{")) {
-          return JSON.parse(trimmed);
-        }
-      }
-    } catch {
-      // Saved locally
+      if (trimmed.startsWith("{")) data = JSON.parse(trimmed);
+    } catch {}
+    if (!res.ok) {
+      throw new Error(data?.error || `Failed to save rate card (${res.status})`);
     }
-    return { success: true, cards };
+    if (Array.isArray(data?.cards)) {
+      try {
+        localStorage.setItem(`mingree_rate_cards_${userId}`, JSON.stringify(data.cards));
+      } catch {}
+    }
+    return data?.success ? data : { success: true, cards };
   },
 
   async applyWithQuote(campaignId: number, quotedPrice: number, proposalNotes?: string): Promise<any> {

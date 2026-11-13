@@ -1,8 +1,15 @@
 // Types for the "Choose creators" (manual) campaign flow.
 // Money is shown in rupees here for DISPLAY only. The server computes and checks every amount.
 
-export type DeliverableType = "reel" | "story" | "collab_post";
+export type DeliverableType = "reel" | "story" | "collab_post" | "bio_link_story";
 export type MetricsSource = "api_verified" | "creator_reported" | "none";
+
+export interface CreatorRateCard {
+  reel: number;
+  story: number;
+  collab_post: number;
+  bio_link_story: number;
+}
 
 export interface City {
   id: number;
@@ -36,6 +43,8 @@ export interface CreatorCard {
   audienceIndiaPct?: number | null;
   topAudienceCities?: string[];
   price: number; // creator's rate for the chosen deliverable (rupees)
+  rateCard?: CreatorRateCard;
+  hasCustomRateCard?: boolean;
   pricePer1kViews: number | null; // informational only
   isRealRegisteredCreator?: boolean;
 }
@@ -60,6 +69,7 @@ export interface CreatorSearchResult {
 
 export interface BillLine {
   creatorId: number;
+  deliverable?: DeliverableType;
   price: number;
   basePrice?: number;
   isCustomOffer?: boolean;
@@ -102,6 +112,7 @@ export interface SubmitPayload {
   details: CampaignDetails;
   creatorIds: number[];
   customRates?: Record<number, number>;
+  creatorDeliverables?: Record<number, DeliverableType>;
   billId: string;
 }
 
@@ -119,6 +130,7 @@ export interface ManualCampaignApi {
     deliverable: DeliverableType;
     creatorIds: number[];
     customRates?: Record<number, number>;
+    creatorDeliverables?: Record<number, DeliverableType>;
   }): Promise<Bill>;
   submit(p: SubmitPayload): Promise<SubmitResult>;
 }

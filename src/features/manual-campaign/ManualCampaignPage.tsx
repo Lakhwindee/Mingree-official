@@ -21,11 +21,23 @@ const Upload = __DummyIcon;
 const File = __DummyIcon;
 const Check = __DummyIcon;
 
-const DELIVERABLES: { id: DeliverableType; label: string }[] = [
-  { id: "reel", label: "Reel" },
-  { id: "story", label: "Story" },
-  { id: "collab_post", label: "Collab post" },
+const DELIVERABLES: { id: DeliverableType; label: string; shortLabel: string }[] = [
+  { id: "reel", label: "Instagram Reel", shortLabel: "Reel" },
+  { id: "story", label: "Instagram Story", shortLabel: "Story" },
+  { id: "collab_post", label: "Collab Package", shortLabel: "Collab" },
+  { id: "bio_link_story", label: "Bio Link & Story", shortLabel: "Bio & Story" },
 ];
+
+function getDeliverableLabel(id: DeliverableType): string {
+  return DELIVERABLES.find((d) => d.id === id)?.label || "Instagram Reel";
+}
+
+function getCreatorRateForDeliverable(c: CreatorCard, deliv: DeliverableType): number {
+  if (c.rateCard && typeof c.rateCard[deliv] === "number" && c.rateCard[deliv] > 0) {
+    return c.rateCard[deliv];
+  }
+  return c.price;
+}
 const STYLES: { id: CampaignDetails["promotionStyle"]; label: string; text: string }[] = [
   { id: "lyrics", label: "Lyrics / Page promotion", text: "Creator uses the provided audio and content only" },
   { id: "face_on_camera", label: "Face on camera", text: "Creator appears in the video" },
@@ -108,6 +120,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
   const [selected, setSelected] = useState<Map<number, CreatorCard>>(new Map());
   const [customRates, setCustomRates] = useState<Record<number, number>>({});
+  const [creatorDeliverables, setCreatorDeliverables] = useState<Record<number, DeliverableType>>({});
   const [editingRateCreatorId, setEditingRateCreatorId] = useState<number | null>(null);
   const [customRateInput, setCustomRateInput] = useState<string>("");
 
@@ -115,12 +128,23 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const resetSelection = () => {
     setSelected(new Map());
     setCustomRates({});
+    setCreatorDeliverables({});
     setEditingRateCreatorId(null);
     setBill(null);
   };
   const setDeliverable = (x: DeliverableType) => {
     set("deliverable", x);
     // Keep selected creators! Their prices will be updated in the bill preview for the new deliverable.
+  };
+  const setCreatorPackage = (creator: CreatorCard, deliv: DeliverableType) => {
+    setCreatorDeliverables((prev) => ({ ...prev, [creator.id]: deliv }));
+    // Clear stale custom offer if user switches package cleanly
+    setCustomRates((prev) => {
+      if (!prev[creator.id]) return prev;
+      const next = { ...prev };
+      delete next[creator.id];
+      return next;
+    });
   };
   const remove = (id: number) => {
     setSelected((p) => { const m = new Map(p); m.delete(id); return m; });
@@ -130,12 +154,20 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       delete next[id];
       return next;
     });
+    setCreatorDeliverables((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     if (editingRateCreatorId === id) setEditingRateCreatorId(null);
   };
 
   const openRateDialog = (creator: CreatorCard) => {
+    const activeDeliv = creatorDeliverables[creator.id] || d.deliverable;
+    const baseRate = getCreatorRateForDeliverable(creator, activeDeliv);
     setEditingRateCreatorId(creator.id);
-    setCustomRateInput(customRates[creator.id] ? String(customRates[creator.id]) : String(creator.price));
+    setCustomRateInput(customRates[creator.id] ? String(customRates[creator.id]) : String(baseRate));
   };
 
   const applyCustomRate = (creator: CreatorCard, amount: number) => {
@@ -174,11 +206,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         deliverable: d.deliverable,
         creatorIds,
         customRates: Object.keys(customRates).length > 0 ? customRates : undefined,
+        creatorDeliverables: Object.keys(creatorDeliverables).length > 0 ? creatorDeliverables : undefined,
       }));
     }
     catch (e: any) { setBillErr(e?.message || "Could not calculate the bill"); setBill(null); }
     finally { setBillLoading(false); }
-  }, [api, creatorIds, d.deliverable, customRates]);
+  }, [api, creatorIds, d.deliverable, customRates, creatorDeliverables]);
   useEffect(() => { const t = setTimeout(refreshBill, 250); return () => clearTimeout(t); }, [refreshBill]);
 
   // Live direct creator search state
@@ -245,6 +278,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         details: d,
         creatorIds,
         customRates: Object.keys(customRates).length > 0 ? customRates : undefined,
+        creatorDeliverables: Object.keys(creatorDeliverables).length > 0 ? creatorDeliverables : undefined,
         billId: bill.billId,
       });
       if (r.ok === true) return onCreated((r as { ok: true; campaignId: number }).campaignId);
@@ -567,21 +601,28 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
                       <div className="flex items-center gap-2 shrink-0">
                         <div className="text-right">
-                          {customRates[c.id] ? (
-                            <div>
-                              <div className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                                {inr(customRates[c.id])}
+                          {(() => {
+                            const activeDeliv = creatorDeliverables[c.id] || d.deliverable;
+                            const activePrice = getCreatorRateForDeliverable(c, activeDeliv);
+                            if (customRates[c.id]) {
+                              return (
+                                <div>
+                                  <div className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                                    {inr(customRates[c.id])}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground line-through tabular-nums">
+                                    {inr(activePrice)}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div>
+                                <div className="text-sm font-bold tabular-nums text-foreground">{inr(activePrice)}</div>
+                                <div className="text-[10px] text-muted-foreground">{DELIVERABLES.find((x) => x.id === activeDeliv)?.shortLabel}</div>
                               </div>
-                              <div className="text-[10px] text-muted-foreground line-through tabular-nums">
-                                {inr(c.price)}
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div className="text-sm font-bold tabular-nums text-foreground">{inr(c.price)}</div>
-                              <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
                         <Button
                           type="button"
@@ -662,6 +703,25 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                 </select>
                 {searchLoading && <span className="text-xs text-muted-foreground animate-pulse">Updating...</span>}
               </div>
+              {/* Deliverable Rate Filter Bar */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <span className="text-xs font-semibold text-muted-foreground mr-1">Default Ad Format:</span>
+                {DELIVERABLES.map((x) => (
+                  <button
+                    key={x.id}
+                    type="button"
+                    onClick={() => setDeliverable(x.id)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer",
+                      d.deliverable === x.id
+                        ? "border-primary bg-primary text-primary-foreground shadow-2xs"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground hover:border-primary/50"
+                    )}
+                  >
+                    {x.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {searchErr && <p className="text-sm text-destructive">{searchErr}</p>}
@@ -687,11 +747,14 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
             )}
 
             {/* Grid of Creators */}
-            <div className="grid gap-3.5 grid-cols-1 min-[920px]:grid-cols-2 xl:grid-cols-3 max-h-[500px] overflow-y-auto p-1">
+            <div className="grid gap-3.5 grid-cols-1 min-[920px]:grid-cols-2 xl:grid-cols-3 max-h-[680px] overflow-y-auto p-1">
               {searchResults.map((c) => {
                 const isChosen = selected.has(c.id);
                 const reachVal = c.reach || Math.round(c.followers * 2.2);
                 const creatorName = c.accountName || c.displayName || `@${c.username}`;
+                const activeDeliv = creatorDeliverables[c.id] || d.deliverable;
+                const activeRate = getCreatorRateForDeliverable(c, activeDeliv);
+                const activeLabel = getDeliverableLabel(activeDeliv);
                 return (
                   <div
                     key={c.id}
@@ -761,6 +824,59 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                           <span className="text-[10px] text-muted-foreground font-medium">{c.indiaAudiencePct}% India</span>
                         </div>
                       ) : null}
+
+                      {/* Creator's 4-Tier Rate Card */}
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between px-0.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Creator Rate Card
+                          </span>
+                          {c.hasCustomRateCard && (
+                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                              ✓ Verified Rates
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {DELIVERABLES.map((item) => {
+                            const itemPrice = getCreatorRateForDeliverable(c, item.id);
+                            const isSelectedPkg = activeDeliv === item.id;
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCreatorPackage(c, item.id);
+                                }}
+                                className={cn(
+                                  "flex flex-col items-start justify-between rounded-lg border px-2 py-1.5 text-left transition-all cursor-pointer",
+                                  isSelectedPkg
+                                    ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+                                    : "border-border/70 bg-muted/20 hover:border-primary/40 hover:bg-muted/40"
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    "text-[10px] font-semibold leading-tight truncate w-full",
+                                    isSelectedPkg ? "text-primary" : "text-muted-foreground"
+                                  )}
+                                >
+                                  {item.label}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "text-xs font-extrabold tabular-nums mt-0.5",
+                                    isSelectedPkg ? "text-primary" : "text-foreground"
+                                  )}
+                                >
+                                  {inr(itemPrice)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     {/* Rate and Custom Negotiation Offer Button */}
@@ -774,17 +890,17 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                   {inr(customRates[c.id])}
                                 </span>
                                 <span className="text-[10px] font-semibold line-through text-muted-foreground tabular-nums">
-                                  {inr(c.price)}
+                                  {inr(activeRate)}
                                 </span>
                               </div>
                               <div className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                                <span>⚡ Your Offer Rate</span>
+                                <span>⚡ Your Offer ({activeLabel})</span>
                               </div>
                             </div>
                           ) : (
                             <div>
-                              <div className="font-bold text-sm tabular-nums text-foreground">{inr(c.price)}</div>
-                              <div className="text-[10px] text-muted-foreground">per {d.deliverable === "collab_post" ? "collab" : d.deliverable}</div>
+                              <div className="font-bold text-sm tabular-nums text-foreground">{inr(activeRate)}</div>
+                              <div className="text-[10px] text-muted-foreground">{activeLabel}</div>
                             </div>
                           )}
                         </div>
@@ -836,7 +952,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                         <div className="rounded-xl border border-primary/40 bg-primary/5 p-3 space-y-2 text-xs">
                           <div className="flex items-center justify-between">
                             <span className="font-bold text-foreground">Propose Offer for @{c.username}</span>
-                            <span className="text-[10px] text-muted-foreground">Standard: {inr(c.price)}</span>
+                            <span className="text-[10px] text-muted-foreground">Standard ({activeLabel}): {inr(activeRate)}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="relative flex-1">
@@ -846,7 +962,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                 min={100}
                                 value={customRateInput}
                                 onChange={(e) => setCustomRateInput(e.target.value)}
-                                placeholder={String(c.price)}
+                                placeholder={String(activeRate)}
                                 className="h-8 pl-6 pr-2 text-xs font-bold bg-background rounded-lg"
                                 autoFocus
                                 onKeyDown={(e) => {
@@ -883,8 +999,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-[10px] text-muted-foreground font-medium">Quick:</span>
                             {[
-                              { label: "-10%", amt: Math.round(c.price * 0.9) },
-                              { label: "-20%", amt: Math.round(c.price * 0.8) },
+                              { label: "-10%", amt: Math.round(activeRate * 0.9) },
+                              { label: "-20%", amt: Math.round(activeRate * 0.8) },
                               { label: "₹1,000", amt: 1000 },
                               { label: "₹1,500", amt: 1500 },
                             ].filter((preset, idx, arr) => preset.amt > 0 && arr.findIndex(x => x.amt === preset.amt) === idx).map((preset) => (
@@ -947,8 +1063,12 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               </div>
             ) : (
               <div className="divide-y rounded-xl border bg-card overflow-hidden">
-                {[...selected.values()].map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 p-3.5 hover:bg-muted/10 transition">
+                {[...selected.values()].map((c) => {
+                  const activeDeliv = creatorDeliverables[c.id] || d.deliverable;
+                  const activePrice = getCreatorRateForDeliverable(c, activeDeliv);
+                  const activeLabel = getDeliverableLabel(activeDeliv);
+                  return (
+                  <div key={c.id} className="flex items-center gap-3 p-3.5 hover:bg-muted/10 transition flex-wrap sm:flex-nowrap">
                     <CreatorAvatar
                       avatarUrl={c.avatarUrl}
                       displayName={c.accountName || c.displayName}
@@ -956,7 +1076,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       size={36}
                     />
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold truncate flex items-center gap-1.5">
+                      <div className="text-sm font-semibold truncate flex items-center gap-1.5 flex-wrap">
                         <span className="text-foreground font-bold">{c.accountName || c.displayName || `@${c.username}`}</span>
                         <span className="text-xs text-muted-foreground font-normal">(@{c.username})</span>
                         {c.isRealRegisteredCreator && (
@@ -970,8 +1090,9 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        Instagram Creator · {compact(c.followers)} followers {c.city?.name ? `· ${c.city.name}` : ""}
+                      <div className="text-xs text-muted-foreground truncate flex items-center gap-1.5 flex-wrap">
+                        <span>Instagram Creator · {compact(c.followers)} followers {c.city?.name ? `· ${c.city.name}` : ""}</span>
+                        <span className="text-primary font-semibold">· {activeLabel}</span>
                       </div>
                     </div>
                     <div className="text-right shrink-0">
@@ -981,13 +1102,13 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             {inr(customRates[c.id])}
                           </div>
                           <div className="text-[10px] text-muted-foreground line-through tabular-nums">
-                            Base {inr(c.price)}
+                            Base {inr(activePrice)}
                           </div>
                         </div>
                       ) : (
                         <div>
-                          <div className="text-sm font-bold tabular-nums">{inr(c.price)}</div>
-                          <div className="text-[10px] text-muted-foreground">per {d.deliverable}</div>
+                          <div className="text-sm font-bold tabular-nums">{inr(activePrice)}</div>
+                          <div className="text-[10px] text-muted-foreground">{activeLabel}</div>
                         </div>
                       )}
                     </div>
@@ -1014,7 +1135,8 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       ✕
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -1116,14 +1238,20 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   <tbody className="divide-y">
                     {[...selected.values()].map((c) => {
                       const l = perCreator.get(c.id);
+                      const activeDeliv = l?.deliverable || creatorDeliverables[c.id] || d.deliverable;
+                      const activeLabel = getDeliverableLabel(activeDeliv);
+                      const standardPrice = getCreatorRateForDeliverable(c, activeDeliv);
                       const hasCustom = Boolean(customRates[c.id]);
-                      const linePrice = l?.price ?? (hasCustom ? customRates[c.id] : c.price);
+                      const linePrice = l?.price ?? (hasCustom ? customRates[c.id] : standardPrice);
                       return (
                         <tr key={c.id}>
                           <td className="p-3 font-medium">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-foreground">{c.accountName || c.displayName || `@${c.username}`}</span>
                               <span className="text-xs text-muted-foreground">(@{c.username})</span>
+                              <span className="text-[10px] font-semibold bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded-md">
+                                {activeLabel}
+                              </span>
                               {hasCustom && (
                                 <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                                   Custom Offer (Negotiating)
@@ -1138,7 +1266,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                   {inr(linePrice)}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground line-through ml-1.5">
-                                  {inr(c.price)}
+                                  {inr(standardPrice)}
                                 </span>
                               </div>
                             ) : (

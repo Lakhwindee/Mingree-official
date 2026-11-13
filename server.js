@@ -987,12 +987,76 @@ async function ensureDatabaseSchema(force = false) {
             NULL;
           END;
 
+          -- 5b. Ensure rate_cards table exists and supports all 4 deliverables (reel, story, collab_post, bio_link_story)
+          CREATE TABLE IF NOT EXISTS rate_cards (
+            id bigserial PRIMARY KEY,
+            user_id bigint REFERENCES users(id) ON DELETE CASCADE,
+            creator_id bigint REFERENCES users(id) ON DELETE CASCADE,
+            deliverable_type text NOT NULL,
+            price numeric(12,2) NOT NULL DEFAULT 0,
+            base_price numeric(12,2),
+            min_price numeric(12,2),
+            max_price numeric(12,2),
+            active boolean NOT NULL DEFAULT true,
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS user_id bigint REFERENCES users(id) ON DELETE CASCADE;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS creator_id bigint REFERENCES users(id) ON DELETE CASCADE;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS deliverable_type text;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS price numeric(12,2) DEFAULT 0;
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS base_price numeric(12,2);
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS min_price numeric(12,2);
+          ALTER TABLE rate_cards ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+          BEGIN
+            ALTER TABLE rate_cards DROP CONSTRAINT IF EXISTS rate_cards_deliverable_type_check;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'creator_id') THEN
+              ALTER TABLE rate_cards ALTER COLUMN creator_id DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'base_price') THEN
+              ALTER TABLE rate_cards ALTER COLUMN base_price DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'min_price') THEN
+              ALTER TABLE rate_cards ALTER COLUMN min_price DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'user_id') THEN
+              ALTER TABLE rate_cards ALTER COLUMN user_id DROP NOT NULL;
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rate_cards' AND column_name = 'price') THEN
+              ALTER TABLE rate_cards ALTER COLUMN price DROP NOT NULL;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
+          BEGIN
+            UPDATE rate_cards SET user_id = creator_id WHERE user_id IS NULL AND creator_id IS NOT NULL;
+            UPDATE rate_cards SET creator_id = user_id WHERE creator_id IS NULL AND user_id IS NOT NULL;
+            UPDATE rate_cards SET price = base_price WHERE (price IS NULL OR price = 0) AND base_price IS NOT NULL;
+            UPDATE rate_cards SET base_price = price WHERE base_price IS NULL AND price IS NOT NULL;
+            DELETE FROM rate_cards a
+            USING rate_cards b
+            WHERE a.id < b.id
+              AND a.user_id IS NOT NULL
+              AND a.user_id = b.user_id
+              AND a.deliverable_type = b.deliverable_type;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
+
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_ig_uid ON creator_profiles (instagram_user_id);
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_status ON creator_profiles (status);
           CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states (expires_at);
           CREATE INDEX IF NOT EXISTS idx_instagram_identities_user ON instagram_identities (current_user_id);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_cards_user_deliverable ON rate_cards (user_id, deliverable_type);
         END $$;
       `);
       schemaEnsured = true;
@@ -9599,26 +9663,164 @@ app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], req
   await saveRegisteredUsers(user);
   res.json({ success: true, message: "Subscription cancelled successfully", plan: "free", isActive: false });
 });
+var DELIVERABLE_KEY_TO_LABEL = {
+  reel: "Instagram Reel",
+  story: "Instagram Story",
+  collab_post: "Collab Package",
+  bio_link_story: "Bio Link & Story"
+};
+function normalizeDeliverableKey(raw) {
+  const s = String(raw || "reel").toLowerCase().trim();
+  if (s.includes("bio")) return "bio_link_story";
+  if (s.includes("collab")) return "collab_post";
+  if (s.includes("story")) return "story";
+  return "reel";
+}
+function getTierDefaultRateCard(tierId) {
+  const tierBasePrices = {
+    nano: 1200,
+    micro: 2800,
+    mid: 6500,
+    upper_mid: 15e3,
+    macro: 32e3,
+    large: 65e3,
+    mega: 125e3,
+    elite: 25e4
+  };
+  const basePrice = tierBasePrices[tierId] || 2800;
+  return {
+    reel: basePrice,
+    story: Math.round(basePrice * 0.5),
+    collab_post: Math.round(basePrice * 1.4),
+    bio_link_story: Math.round(basePrice * 0.6)
+  };
+}
+var memoryRateCards = /* @__PURE__ */ new Map();
+async function fetchDbRateCardsByUsers(userIds) {
+  const result = /* @__PURE__ */ new Map();
+  if (!isDatabaseConfigured) return result;
+  try {
+    await ensureDatabaseSchema().catch(() => {
+    });
+    const q = userIds && userIds.length > 0 ? await pool.query(
+      `SELECT COALESCE(user_id, creator_id) AS uid, deliverable_type,
+                  COALESCE(NULLIF(price, 0), base_price, price, 0) AS effective_price
+           FROM rate_cards
+           WHERE COALESCE(user_id, creator_id) = ANY($1::bigint[])`,
+      [userIds]
+    ) : await pool.query(
+      `SELECT COALESCE(user_id, creator_id) AS uid, deliverable_type,
+                  COALESCE(NULLIF(price, 0), base_price, price, 0) AS effective_price
+           FROM rate_cards`
+    );
+    for (const row of q.rows) {
+      const uid = Number(row.uid);
+      const priceVal = Math.round(Number(row.effective_price) || 0);
+      if (!uid || priceVal <= 0) continue;
+      const key = normalizeDeliverableKey(row.deliverable_type);
+      const existing = result.get(uid) || {};
+      existing[key] = priceVal;
+      result.set(uid, existing);
+    }
+  } catch (err) {
+    console.warn("[FETCH RATE CARDS DB WARNING]", err?.message || err);
+  }
+  return result;
+}
+function buildResolvedRateCard(userId, tierId, dbRates) {
+  const defaults = getTierDefaultRateCard(tierId);
+  const resolved = { ...defaults };
+  let hasCustom = false;
+  const memEntries = memoryRateCards.get(userId);
+  if (Array.isArray(memEntries)) {
+    for (const entry of memEntries) {
+      const priceVal = Math.round(Number(entry.price) || 0);
+      if (priceVal > 0) {
+        resolved[normalizeDeliverableKey(entry.deliverableType)] = priceVal;
+        hasCustom = true;
+      }
+    }
+  }
+  if (dbRates) {
+    for (const k of ["reel", "story", "collab_post", "bio_link_story"]) {
+      const val = dbRates[k];
+      if (typeof val === "number" && val > 0) {
+        resolved[k] = val;
+        hasCustom = true;
+      }
+    }
+  }
+  return { rateCard: resolved, hasCustomRateCard: hasCustom };
+}
+async function upsertUserRateCardEntries(userId, items) {
+  const saved = [];
+  if (isDatabaseConfigured) {
+    await ensureDatabaseSchema().catch(() => {
+    });
+  }
+  const currentMem = /* @__PURE__ */ new Map();
+  for (const prev of memoryRateCards.get(userId) || []) {
+    const p = Math.round(Number(prev.price) || 0);
+    if (p > 0) currentMem.set(normalizeDeliverableKey(prev.deliverableType), p);
+  }
+  for (const item of items) {
+    const key = normalizeDeliverableKey(item.deliverableType);
+    const price = Math.max(100, Math.round(Number(item.price) || 0));
+    currentMem.set(key, price);
+    if (isDatabaseConfigured) {
+      try {
+        await pool.query(
+          `INSERT INTO rate_cards (user_id, creator_id, deliverable_type, price, base_price, min_price, updated_at)
+           VALUES ($1, $1, $2, $3, $3, $3, now())
+           ON CONFLICT (user_id, deliverable_type) DO UPDATE SET
+             creator_id = EXCLUDED.creator_id,
+             price = EXCLUDED.price,
+             base_price = EXCLUDED.base_price,
+             min_price = EXCLUDED.min_price,
+             updated_at = now()`,
+          [userId, key, price]
+        );
+      } catch (dbErr) {
+        console.error("[POST RATE CARD DB ERROR]", dbErr.message);
+      }
+    }
+    saved.push({
+      deliverableType: key,
+      label: DELIVERABLE_KEY_TO_LABEL[key],
+      price
+    });
+  }
+  const orderedKeys = ["reel", "story", "collab_post", "bio_link_story"];
+  const mergedArray = orderedKeys.filter((k) => currentMem.has(k)).map((k) => ({ deliverableType: DELIVERABLE_KEY_TO_LABEL[k], price: currentMem.get(k) }));
+  memoryRateCards.set(userId, mergedArray);
+  return saved;
+}
 app.get(["/api/users/:id/rate-card", "/api/creators/:id/rate-card"], requireAuth, async (req, res) => {
   const targetId = Number(req.params.id);
   if (req.user.id !== targetId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
   try {
+    await ensureDatabaseSchema().catch(() => {
+    });
     const rateRes = await pool.query(
-      `SELECT deliverable_type, price, updated_at FROM rate_cards WHERE user_id = $1 ORDER BY id ASC`,
+      `SELECT deliverable_type, COALESCE(NULLIF(price, 0), base_price, price, 0) AS effective_price, updated_at
+       FROM rate_cards
+       WHERE COALESCE(user_id, creator_id) = $1
+       ORDER BY id ASC`,
       [targetId]
     );
     let rates = rateRes.rows.map((r) => ({
-      deliverableType: r.deliverable_type,
-      price: Number(r.price),
+      deliverableType: normalizeDeliverableKey(r.deliverable_type),
+      price: Number(r.effective_price),
       updatedAt: r.updated_at
     }));
     if (rates.length === 0) {
       rates = [
         { deliverableType: "reel", price: 2500, updatedAt: /* @__PURE__ */ new Date() },
         { deliverableType: "story", price: 800, updatedAt: /* @__PURE__ */ new Date() },
-        { deliverableType: "collab_post", price: 4e3, updatedAt: /* @__PURE__ */ new Date() }
+        { deliverableType: "collab_post", price: 5e3, updatedAt: /* @__PURE__ */ new Date() },
+        { deliverableType: "bio_link_story", price: 1200, updatedAt: /* @__PURE__ */ new Date() }
       ];
     }
     const lastUpdated = rates[0]?.updatedAt ? new Date(rates[0].updatedAt).getTime() : 0;
@@ -9649,31 +9851,12 @@ app.post(["/api/users/:id/rate-card", "/api/creators/:id/rate-card"], requireAut
   if (!Array.isArray(rates) || rates.length === 0) {
     return res.status(400).json({ error: "Rate card must include at least one rate entry" });
   }
-  const warnings = [];
-  const insertedRates = [];
-  for (const item of rates) {
-    const rawType = String(item.deliverableType || "reel").toLowerCase().trim();
-    let deliverableType = "reel";
-    if (rawType.includes("story")) deliverableType = "story";
-    else if (rawType.includes("collab")) deliverableType = "collab_post";
-    const price = Math.max(CONFIG.MIN_DEAL_AMOUNT || 300, Number(item.price) || 0);
-    try {
-      await pool.query(
-        `INSERT INTO rate_cards (user_id, deliverable_type, price, updated_at)
-         VALUES ($1, $2, $3, now())
-         ON CONFLICT (user_id, deliverable_type) DO UPDATE SET price = EXCLUDED.price, updated_at = now()`,
-        [targetId, deliverableType, price]
-      );
-      insertedRates.push({ deliverableType, price });
-    } catch (dbErr) {
-      console.error("[POST RATE CARD DB ERROR]", dbErr.message);
-    }
-  }
+  const saved = await upsertUserRateCardEntries(targetId, rates);
   return res.json({
     success: true,
     message: "Rate card saved successfully in database",
-    rates: insertedRates,
-    warning: warnings.length > 0 ? warnings.join(" ") : null
+    rates: saved.map((s) => ({ deliverableType: s.deliverableType, price: s.price })),
+    warning: null
   });
 });
 app.put("/api/users/:id/creator-settings", requireAuth, async (req, res) => {
@@ -10921,38 +11104,61 @@ app.post("/api/campaigns/:id/match", requireAuth, requireRole("sponsor", "admin"
   const invitedCount = await matchAndInviteCreators(campaignId, registeredUsers);
   res.json({ success: true, invitedCount, message: `Matched and invited ${invitedCount} eligible creators.` });
 });
-var memoryRateCards = /* @__PURE__ */ new Map([
-  [1, [
-    { deliverableType: "Instagram Reel", price: 2500 },
-    { deliverableType: "Instagram Story", price: 800 },
-    { deliverableType: "Collab Package", price: 5e3 }
-  ]],
-  [3, [
-    { deliverableType: "Instagram Reel", price: 3e3 },
-    { deliverableType: "Instagram Story", price: 1e3 },
-    { deliverableType: "Collab Package", price: 6e3 }
-  ]]
-]);
-app.get("/api/users/:userId/rate-cards", requireAuth, (req, res) => {
+app.get("/api/users/:userId/rate-cards", requireAuth, async (req, res) => {
   const userId = Number(req.params.userId);
-  const cards = memoryRateCards.get(userId) || [
-    { deliverableType: "Instagram Reel", price: 2500 },
-    { deliverableType: "Instagram Story", price: 800 },
-    { deliverableType: "Collab Package", price: 5e3 }
-  ];
-  res.json(cards);
+  try {
+    const dbMap = await fetchDbRateCardsByUsers([userId]);
+    const dbRates = dbMap.get(userId);
+    const memRates = memoryRateCards.get(userId);
+    const defaults = {
+      reel: 2500,
+      story: 800,
+      collab_post: 5e3,
+      bio_link_story: 1200
+    };
+    const resolved = { ...defaults };
+    if (Array.isArray(memRates)) {
+      for (const m of memRates) {
+        const p = Math.round(Number(m.price) || 0);
+        if (p > 0) resolved[normalizeDeliverableKey(m.deliverableType)] = p;
+      }
+    }
+    if (dbRates) {
+      for (const k of ["reel", "story", "collab_post", "bio_link_story"]) {
+        const val = dbRates[k];
+        if (typeof val === "number" && val > 0) resolved[k] = val;
+      }
+    }
+    const cards = ["reel", "story", "collab_post", "bio_link_story"].map((k) => ({
+      deliverableType: DELIVERABLE_KEY_TO_LABEL[k],
+      deliverableKey: k,
+      price: resolved[k]
+    }));
+    return res.json(cards);
+  } catch (err) {
+    console.error("[GET RATE CARDS ERROR]", err?.message || err);
+    return res.json([
+      { deliverableType: "Instagram Reel", deliverableKey: "reel", price: 2500 },
+      { deliverableType: "Instagram Story", deliverableKey: "story", price: 800 },
+      { deliverableType: "Collab Package", deliverableKey: "collab_post", price: 5e3 },
+      { deliverableType: "Bio Link & Story", deliverableKey: "bio_link_story", price: 1200 }
+    ]);
+  }
 });
-app.post("/api/users/:userId/rate-cards", requireAuth, (req, res) => {
+app.post("/api/users/:userId/rate-cards", requireAuth, async (req, res) => {
   const userId = Number(req.params.userId);
   if (req.user.id !== userId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
   const { cards } = req.body;
-  if (!Array.isArray(cards)) {
+  if (!Array.isArray(cards) || cards.length === 0) {
     return res.status(400).json({ error: "Invalid rate cards format" });
   }
-  memoryRateCards.set(userId, cards);
-  res.json({ success: true, cards });
+  const saved = await upsertUserRateCardEntries(userId, cards);
+  return res.json({
+    success: true,
+    cards: saved.map((s) => ({ deliverableType: s.label, deliverableKey: s.deliverableType, price: s.price }))
+  });
 });
 app.post("/api/campaign-workspaces/:id/apply-with-quote", requireAuth, requireRole("creator"), (req, res) => {
   const campaignId = Number(req.params.id);
@@ -13614,7 +13820,7 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
   try {
     const { cities: cities3, city, tier, q, sort, deliverable, minEngagement, genres } = req.query;
     const requestedTier = (tier || "").toLowerCase().trim();
-    const requestedDeliverable = (deliverable || "reel").toLowerCase().trim();
+    const requestedDeliverable = normalizeDeliverableKey(deliverable || "reel");
     const cityIds = cities3 ? cities3.split(",").map(Number).filter((n) => !isNaN(n)) : [];
     const cityParam = (city || "").trim();
     const allTiers = [
@@ -13627,9 +13833,6 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
       { id: "mega", minFollowers: 1e6, maxFollowers: 25e5, basePrice: 125e3 },
       { id: "elite", minFollowers: 25e5, maxFollowers: 1e7, basePrice: 25e4 }
     ];
-    let deliverableMultiplier = 1;
-    if (requestedDeliverable === "story") deliverableMultiplier = 0.5;
-    else if (requestedDeliverable === "collab_post") deliverableMultiplier = 1.4;
     const resolveTierId = (followers, tierLabel) => {
       const t = (tierLabel || "").toLowerCase().trim().replace(/[-_ ]+/g, "_");
       if (t === "micro" || t === "small") return "micro";
@@ -13713,6 +13916,8 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
     } catch (err) {
       console.error("[CREATOR PANEL DB QUERY ERROR]", err?.message || err);
     }
+    const creatorIdsList = Array.from(realCreatorsMap.keys());
+    const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIdsList);
     const realCreatorCards = [];
     const seenHandles = /* @__PURE__ */ new Set();
     for (const u of realCreatorsMap.values()) {
@@ -13730,8 +13935,8 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
       }
       seenHandles.add(handleKey);
       const tierId = resolveTierId(followers, u.tier);
-      const tierObj = allTiers.find((t) => t.id === tierId) || allTiers[1];
-      const price = Math.round(tierObj.basePrice * deliverableMultiplier);
+      const { rateCard, hasCustomRateCard } = buildResolvedRateCard(Number(u.id), tierId, dbRateCardsMap.get(Number(u.id)));
+      const price = rateCard[requestedDeliverable] || rateCard.reel;
       const creatorCity = u.city ? CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase()) || { id: 0, name: u.city, state: "" } : null;
       const avatarUrl = u.avatar && !u.avatar.includes("unsplash.com") ? u.avatar : null;
       const mViews = u.medianViews ? Number(u.medianViews) : followers > 0 ? Math.round(followers * 0.45) : null;
@@ -13769,6 +13974,8 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
           { thumbUrl: avatarUrl }
         ],
         price,
+        rateCard,
+        hasCustomRateCard,
         pricePer1kViews: followers > 0 ? Math.round(price / (followers * 0.4) * 1e3 * 100) / 100 : 0,
         isRealRegisteredCreator: true
       });
@@ -14069,24 +14276,11 @@ app.post("/api/admin/featured-creators", requireAuth, requireRole("admin"), asyn
 });
 app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponsor", "admin"), async (req, res) => {
   try {
-    const { deliverable, creatorIds, customRates } = req.body;
+    const { deliverable, creatorIds, customRates, creatorDeliverables } = req.body;
     if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
       return res.status(400).json({ error: "Select at least one creator" });
     }
-    const tierPrices = {
-      nano: 1200,
-      micro: 2800,
-      mid: 6500,
-      upper_mid: 15e3,
-      macro: 32e3,
-      large: 65e3,
-      mega: 125e3,
-      elite: 25e4
-    };
-    let multiplier = 1;
-    const reqDeliv = (deliverable || "reel").toLowerCase();
-    if (reqDeliv === "story") multiplier = 0.5;
-    else if (reqDeliv === "collab_post") multiplier = 1.4;
+    const defaultDeliv = normalizeDeliverableKey(deliverable || "reel");
     const creatorMap = /* @__PURE__ */ new Map();
     for (const u of registeredUsers) {
       creatorMap.set(u.id, { tier: u.tier, followers: u.instagramFollowers || u.followers });
@@ -14109,6 +14303,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
       } catch {
       }
     }
+    const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIds.map(Number));
     const lines = creatorIds.map((id) => {
       const creator = creatorMap.get(id);
       let tierKey = "nano";
@@ -14134,7 +14329,9 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
           else tierKey = "nano";
         }
       }
-      const basePrice = Math.round((tierPrices[tierKey] || 1200) * multiplier);
+      const perCreatorDeliv = creatorDeliverables && creatorDeliverables[id] ? normalizeDeliverableKey(creatorDeliverables[id]) : defaultDeliv;
+      const { rateCard } = buildResolvedRateCard(Number(id), tierKey, dbRateCardsMap.get(Number(id)));
+      const basePrice = rateCard[perCreatorDeliv] || rateCard.reel;
       let price = basePrice;
       let isCustomOffer = false;
       if (customRates && typeof customRates[id] === "number" && customRates[id] > 0) {
@@ -14146,6 +14343,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
       const artistCost = price + feeArtist;
       return {
         creatorId: id,
+        deliverable: perCreatorDeliv,
         price,
         basePrice,
         isCustomOffer,
@@ -14166,7 +14364,8 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
       sponsorId,
       creatorIds,
       customRates: customRates || null,
-      deliverable,
+      creatorDeliverables: creatorDeliverables || null,
+      deliverable: defaultDeliv,
       subtotal,
       total,
       nonce: crypto5.randomBytes(8).toString("hex"),
@@ -14190,7 +14389,7 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
 app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "admin"), async (req, res) => {
   const sponsorId = req.user.id;
   try {
-    const { details, creatorIds, customRates, billId } = req.body;
+    const { details, creatorIds, customRates, creatorDeliverables, billId } = req.body;
     if (!billId || !Array.isArray(creatorIds) || creatorIds.length === 0) {
       return res.status(400).json({ error: "Invalid submission data" });
     }
@@ -14224,21 +14423,11 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     await ensureWorkspacesLoaded();
     const allWorkspaces = loadAllWorkspaces();
     const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map((w) => w.id || 0)) + 1 : 1;
-    const tierPrices = {
-      nano: 1200,
-      micro: 2800,
-      mid: 6500,
-      upper_mid: 15e3,
-      macro: 32e3,
-      large: 65e3,
-      mega: 125e3,
-      elite: 25e4
-    };
-    let multiplier = 1;
-    const reqDeliv = (details?.deliverable || "reel").toLowerCase();
-    if (reqDeliv === "story") multiplier = 0.5;
-    else if (reqDeliv === "collab_post") multiplier = 1.4;
+    const defaultDeliv = normalizeDeliverableKey(details?.deliverable || details?.deliverableType || "reel");
+    const effectiveCreatorDeliverables = creatorDeliverables || billData.creatorDeliverables || {};
+    const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIds.map(Number));
     const offerMessages = [];
+    const chosenDeliverableLabels = /* @__PURE__ */ new Set();
     const hydratedParticipants = await Promise.all(creatorIds.map(async (cid) => {
       let memoryUser = registeredUsers.find((u) => u.id === cid);
       let creatorName = memoryUser?.name;
@@ -14287,7 +14476,11 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
         } catch {
         }
       }
-      const baseRate = Math.round((tierPrices[tierKey] || 1200) * multiplier);
+      const perCreatorDeliv = effectiveCreatorDeliverables[cid] ? normalizeDeliverableKey(effectiveCreatorDeliverables[cid]) : defaultDeliv;
+      const perCreatorLabel = DELIVERABLE_KEY_TO_LABEL[perCreatorDeliv];
+      chosenDeliverableLabels.add(perCreatorLabel);
+      const { rateCard } = buildResolvedRateCard(Number(cid), tierKey, dbRateCardsMap.get(Number(cid)));
+      const baseRate = rateCard[perCreatorDeliv] || rateCard.reel;
       const effectiveCustom = customRates && typeof customRates[cid] === "number" && customRates[cid] > 0 ? Math.round(customRates[cid]) : null;
       const isOffer = effectiveCustom !== null && effectiveCustom !== baseRate;
       const perCreatorPayout = effectiveCustom !== null ? effectiveCustom : baseRate;
@@ -14300,7 +14493,7 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
           senderRole: "sponsor",
           senderAvatar: req.user.avatar || "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120",
           recipientId: cid,
-          content: `\u{1F4B0} Brand Rate Offer: \u20B9${perCreatorPayout.toLocaleString("en-IN")} (Creator Standard Rate: \u20B9${baseRate.toLocaleString("en-IN")})`,
+          content: `\u{1F4B0} Brand Rate Offer (${perCreatorLabel}): \u20B9${perCreatorPayout.toLocaleString("en-IN")} (Creator Standard Rate: \u20B9${baseRate.toLocaleString("en-IN")})`,
           negotiationOffer: {
             action: "offer",
             amount: perCreatorPayout,
@@ -14322,6 +14515,8 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
         creatorAvatar: creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
         creatorFollowers: creatorFollowers || 1e4,
         creatorMedianViews: creatorMedianViews || 4e3,
+        deliverableType: perCreatorDeliv,
+        deliverableLabel: perCreatorLabel,
         status: "pending",
         payoutAmount: perCreatorPayout,
         baseRate,
@@ -14350,7 +14545,7 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
       description: details?.description || captionNoteStr || "Manual choose creators campaign",
       genre: details?.genre || "Music",
       language: details?.language || "Hindi",
-      contentTypes: [details?.deliverable || details?.deliverableType || "Reel"],
+      contentTypes: chosenDeliverableLabels.size > 0 ? Array.from(chosenDeliverableLabels) : [DELIVERABLE_KEY_TO_LABEL[defaultDeliv]],
       promotionStyle: details?.promotionStyle || "Hook Step",
       audioUrl: details?.songUrl || details?.audioUrl || "",
       referenceVideoUrl: details?.referenceVideoUrl || "",
