@@ -2592,21 +2592,25 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
         );
       }
 
-      // 3. Insert audit log row into security_audit_logs
-      await client.query(
-        `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          "DISCONNECT_RECORDED",
-          targetId,
-          previousUsername || "unknown",
-          0,
-          JSON.stringify([]),
-          "ALLOW",
-          clientIp,
-          JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
-        ]
-      );
+      // 3. Insert audit log row into security_audit_logs (non-fatal)
+      try {
+        await client.query(
+          `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+           VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            "DISCONNECT_RECORDED",
+            targetId,
+            previousUsername || "unknown",
+            0,
+            JSON.stringify([]),
+            "ALLOW",
+            clientIp,
+            JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
+          ]
+        );
+      } catch (auditErr: any) {
+        console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
+      }
 
       await client.query("COMMIT");
     } catch (err: any) {
@@ -6134,21 +6138,25 @@ app.get([
           [igUserId, stateRecord.userId, igUsername]
         );
 
-        // Record audit log entry in security_audit_logs table
-        await client.query(
-          `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            "LINK_APPROVED",
-            stateRecord.userId,
-            igUsername,
-            riskEval.riskScore,
-            JSON.stringify(riskEval.riskFactors),
-            riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
-            clientIp,
-            JSON.stringify({ message: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.` })
-          ]
-        );
+        // Record audit log entry in security_audit_logs table (non-fatal: audit log issues never fail account connection)
+        try {
+          await client.query(
+            `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+             VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              "LINK_APPROVED",
+              stateRecord.userId,
+              igUsername,
+              riskEval.riskScore,
+              JSON.stringify(riskEval.riskFactors),
+              riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
+              clientIp,
+              JSON.stringify({ message: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.` })
+            ]
+          );
+        } catch (auditErr: any) {
+          console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
+        }
 
         await client.query("COMMIT");
       } catch (pgErr: any) {

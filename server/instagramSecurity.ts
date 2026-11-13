@@ -631,8 +631,8 @@ export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "time
   if (!event.skipDbPersist) {
     try {
       pool.query(
-        `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           entry.event,
           entry.mingreeUserId,
@@ -643,7 +643,7 @@ export function recordSecurityEvent(event: Omit<SecurityAuditEvent, "id" | "time
           entry.ipAddress,
           JSON.stringify({ message: entry.details }),
         ]
-      ).catch((err: any) => console.error("[PG AUDIT LOG ERROR]", err.message));
+      ).catch((err: any) => console.warn("[PG AUDIT LOG WARNING]", err.message));
     } catch (err: any) {
       console.error("[PG AUDIT LOG ERROR]", err.message);
     }

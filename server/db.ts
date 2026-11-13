@@ -265,7 +265,8 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           -- 5. Ensure security_audit_logs table exists
           CREATE TABLE IF NOT EXISTS security_audit_logs (
             id bigserial PRIMARY KEY,
-            event text NOT NULL,
+            event text NOT NULL DEFAULT 'LOG',
+            action text NOT NULL DEFAULT 'LOG',
             user_id bigint,
             instagram_username text,
             risk_score int DEFAULT 0,
@@ -276,7 +277,8 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
             created_at timestamptz NOT NULL DEFAULT now()
           );
 
-          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS event text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS event text DEFAULT 'LOG';
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS action text DEFAULT 'LOG';
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS user_id bigint;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS instagram_username text;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS risk_score int DEFAULT 0;
@@ -284,6 +286,20 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS decision text;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS ip text;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS details text;
+
+          -- Relax any NOT NULL constraints on event or action in security_audit_logs
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'security_audit_logs' AND column_name = 'action') THEN
+              ALTER TABLE security_audit_logs ALTER COLUMN action DROP NOT NULL;
+              ALTER TABLE security_audit_logs ALTER COLUMN action SET DEFAULT 'LOG';
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'security_audit_logs' AND column_name = 'event') THEN
+              ALTER TABLE security_audit_logs ALTER COLUMN event DROP NOT NULL;
+              ALTER TABLE security_audit_logs ALTER COLUMN event SET DEFAULT 'LOG';
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
 
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));

@@ -608,6 +608,7 @@ var notifications = pgTable("notifications", {
 var securityAuditLogs = pgTable("security_audit_logs", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   event: text("event").notNull(),
+  action: text("action").default("LOG"),
   mingreeUserId: bigint("mingree_user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
   userId: bigint("user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
   instagramUsername: text("instagram_username"),
@@ -941,7 +942,8 @@ async function ensureDatabaseSchema(force = false) {
           -- 5. Ensure security_audit_logs table exists
           CREATE TABLE IF NOT EXISTS security_audit_logs (
             id bigserial PRIMARY KEY,
-            event text NOT NULL,
+            event text NOT NULL DEFAULT 'LOG',
+            action text NOT NULL DEFAULT 'LOG',
             user_id bigint,
             instagram_username text,
             risk_score int DEFAULT 0,
@@ -952,7 +954,8 @@ async function ensureDatabaseSchema(force = false) {
             created_at timestamptz NOT NULL DEFAULT now()
           );
 
-          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS event text;
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS event text DEFAULT 'LOG';
+          ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS action text DEFAULT 'LOG';
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS user_id bigint;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS instagram_username text;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS risk_score int DEFAULT 0;
@@ -960,6 +963,20 @@ async function ensureDatabaseSchema(force = false) {
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS decision text;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS ip text;
           ALTER TABLE security_audit_logs ADD COLUMN IF NOT EXISTS details text;
+
+          -- Relax any NOT NULL constraints on event or action in security_audit_logs
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'security_audit_logs' AND column_name = 'action') THEN
+              ALTER TABLE security_audit_logs ALTER COLUMN action DROP NOT NULL;
+              ALTER TABLE security_audit_logs ALTER COLUMN action SET DEFAULT 'LOG';
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'security_audit_logs' AND column_name = 'event') THEN
+              ALTER TABLE security_audit_logs ALTER COLUMN event DROP NOT NULL;
+              ALTER TABLE security_audit_logs ALTER COLUMN event SET DEFAULT 'LOG';
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            NULL;
+          END;
 
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
@@ -1682,8 +1699,8 @@ function recordSecurityEvent(event) {
   if (!event.skipDbPersist) {
     try {
       pool.query(
-        `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           entry.event,
           entry.mingreeUserId,
@@ -1694,7 +1711,7 @@ function recordSecurityEvent(event) {
           entry.ipAddress,
           JSON.stringify({ message: entry.details })
         ]
-      ).catch((err) => console.error("[PG AUDIT LOG ERROR]", err.message));
+      ).catch((err) => console.warn("[PG AUDIT LOG WARNING]", err.message));
     } catch (err) {
       console.error("[PG AUDIT LOG ERROR]", err.message);
     }
@@ -9404,20 +9421,24 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req, res) =>
           [previousUsername.toLowerCase()]
         );
       }
-      await client.query(
-        `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          "DISCONNECT_RECORDED",
-          targetId,
-          previousUsername || "unknown",
-          0,
-          JSON.stringify([]),
-          "ALLOW",
-          clientIp,
-          JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
-        ]
-      );
+      try {
+        await client.query(
+          `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+           VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            "DISCONNECT_RECORDED",
+            targetId,
+            previousUsername || "unknown",
+            0,
+            JSON.stringify([]),
+            "ALLOW",
+            clientIp,
+            JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
+          ]
+        );
+      } catch (auditErr) {
+        console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
+      }
       await client.query("COMMIT");
     } catch (err) {
       if (client) {
@@ -12465,20 +12486,24 @@ app.get([
              unlinked_at = NULL`,
           [igUserId, stateRecord.userId, igUsername]
         );
-        await client.query(
-          `INSERT INTO security_audit_logs (event, user_id, instagram_username, risk_score, flags, decision, ip, details)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            "LINK_APPROVED",
-            stateRecord.userId,
-            igUsername,
-            riskEval.riskScore,
-            JSON.stringify(riskEval.riskFactors),
-            riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
-            clientIp,
-            JSON.stringify({ message: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.` })
-          ]
-        );
+        try {
+          await client.query(
+            `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+             VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              "LINK_APPROVED",
+              stateRecord.userId,
+              igUsername,
+              riskEval.riskScore,
+              JSON.stringify(riskEval.riskFactors),
+              riskEval.riskLevel === "MEDIUM" ? "MONITOR" : "ALLOW",
+              clientIp,
+              JSON.stringify({ message: `Instagram account @${igUsername} (${followersCount.toLocaleString()} followers) linked successfully to User #${stateRecord.userId}.` })
+            ]
+          );
+        } catch (auditErr) {
+          console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
+        }
         await client.query("COMMIT");
       } catch (pgErr) {
         if (client) {

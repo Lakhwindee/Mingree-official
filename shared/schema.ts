@@ -578,6 +578,7 @@ export const notifications = pgTable("notifications", {
 export const securityAuditLogs = pgTable("security_audit_logs", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   event: text("event").notNull(),
+  action: text("action").default("LOG"),
   mingreeUserId: bigint("mingree_user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
   userId: bigint("user_id", { mode: "number" }).references(() => users.id, { onDelete: "set null" }),
   instagramUsername: text("instagram_username"),

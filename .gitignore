@@ -18,6 +18,8 @@ security_audit_logs.json
 instagram_identities.json
 category_subscriptions.json
 *.json.bak
-.aistudio/
-tmp/
+# Lockfiles causing Cloudflare CI/CD cross-platform/version issues
+bun.lock
+bun.lockb
+package-lock.json
 
