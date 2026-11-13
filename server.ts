@@ -382,12 +382,22 @@ interface InstagramOAuthState {
 }
 const instagramOAuthStates = new Map<string, InstagramOAuthState>();
 const globalOAuthCallbackHits = new Map<string, number>();
+const consumedOAuthCodes = new Map<string, number>();
+
 function cleanupExpiredOAuthStates() {
   const now = Date.now();
   for (const [stateKey, stateVal] of instagramOAuthStates.entries()) {
     if (now - stateVal.createdAt > 15 * 60 * 1000) {
       instagramOAuthStates.delete(stateKey);
     }
+  }
+  for (const [codeHash, ts] of consumedOAuthCodes.entries()) {
+    if (now - ts > 15 * 60 * 1000) {
+      consumedOAuthCodes.delete(codeHash);
+    }
+  }
+  if (isDatabaseConfigured) {
+    pool.query(`DELETE FROM oauth_states WHERE expires_at < now()`).catch(() => {});
   }
 }
 
@@ -5686,46 +5696,127 @@ app.get([
     });
   }
 
+  // Hash authorization code for safe tracking and single-exchange locking without logging raw code
+  const codeHash = crypto.createHash("sha256").update(cleanCode).digest("hex");
+
+  // Protection 1: Worker isolate in-memory check
+  if (consumedOAuthCodes.has(codeHash)) {
+    console.warn(`[INSTAGRAM OAUTH] Duplicate callback: code ${codeHash.slice(0, 8)} already processed in this isolate.`);
+    if (isDatabaseConfigured && stateRecord.userId) {
+      try {
+        const linked = await pool.query(
+          `SELECT username, followers FROM creator_profiles
+           WHERE user_id = $1 AND status = 'active' AND instagram_user_id IS NOT NULL
+           LIMIT 1`,
+          [stateRecord.userId]
+        );
+        if (linked.rows.length > 0 && linked.rows[0].username) {
+          return finishOAuthCallback({
+            success: true,
+            username: String(linked.rows[0].username),
+            followers: Number(linked.rows[0].followers) || 0,
+            returnTo: clientReturnTo,
+          });
+        }
+      } catch {}
+    }
+    return finishOAuthCallback({
+      success: false,
+      error: "This authorization code has already been processed. Please refresh your profile.",
+      returnTo: clientReturnTo,
+    });
+  }
+
+  // Protection 2: Cross-isolate atomic persistent lock in PostgreSQL using existing oauth_states table
+  if (isDatabaseConfigured && stateRecord.userId) {
+    try {
+      const lockKey = `code_lock:${codeHash}`;
+      const lockRes = await pool.query(
+        `INSERT INTO oauth_states (state, user_id, browser_token_hash, redirect_uri, return_to, expires_at)
+         VALUES ($1, $2, 'code_lock', $3, $4, now() + interval '10 minutes')
+         ON CONFLICT (state) DO NOTHING
+         RETURNING state`,
+        [lockKey, stateRecord.userId, effectiveRedirectUri, clientReturnTo]
+      );
+
+      // If lock was not acquired (0 rows returned), another isolate or concurrent callback has already claimed this code
+      if (lockRes.rows.length === 0) {
+        console.warn(`[INSTAGRAM OAUTH] Code ${codeHash.slice(0, 8)} already claimed by another isolate/request. Skipping duplicate Meta token exchange.`);
+
+        // Wait briefly (up to ~1.6s) to allow concurrent isolate to finish writing profile to DB
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await new Promise((r) => setTimeout(r, 800));
+          try {
+            const linked = await pool.query(
+              `SELECT username, followers FROM creator_profiles
+               WHERE user_id = $1 AND status = 'active' AND instagram_user_id IS NOT NULL
+               LIMIT 1`,
+              [stateRecord.userId]
+            );
+            if (linked.rows.length > 0 && linked.rows[0].username) {
+              return finishOAuthCallback({
+                success: true,
+                username: String(linked.rows[0].username),
+                followers: Number(linked.rows[0].followers) || 0,
+                returnTo: clientReturnTo,
+              });
+            }
+          } catch {}
+        }
+
+        return finishOAuthCallback({
+          success: false,
+          error: "This authorization code has already been submitted and processed. Please refresh your profile.",
+          returnTo: clientReturnTo,
+        });
+      }
+    } catch (lockErr: any) {
+      console.warn("[INSTAGRAM OAUTH] Atomic code lock check warning:", lockErr?.message || lockErr);
+    }
+  }
+
+  // Register in memory for this worker isolate
+  consumedOAuthCodes.set(codeHash, Date.now());
+
   try {
-    // 3. Exchange authorization code for access token server-side via official Instagram endpoint
+    // 3. Exchange authorization code for access token: EXACTLY ONE REQUEST to official Instagram endpoint
+    const tokenExchangeDebugPayload = {
+      step: "3_TOKEN_EXCHANGE_REQUEST",
+      endpoint: "https://api.instagram.com/oauth/access_token",
+      client_id: appId,
+      redirect_uri: effectiveRedirectUri,
+      grant_type: "authorization_code",
+      content_type: "application/x-www-form-urlencoded",
+      auth_redirect_uri_matches_token_redirect_uri: effectiveRedirectUri === redirectUri,
+      timestamp: new Date().toISOString(),
+      version: "v2.6.6-single-exchange"
+    };
+    console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(tokenExchangeDebugPayload));
+
+    const formBody = new URLSearchParams({
+      client_id: appId,
+      client_secret: appSecret,
+      grant_type: "authorization_code",
+      redirect_uri: effectiveRedirectUri,
+      code: cleanCode,
+    }).toString();
+
     let shortLivedAccessToken = "";
     let igUserId = "";
     let igExchangeErrorDetail = "";
 
-    const tryExchangeCode = async (candidateRedirectUri: string) => {
-      const tokenExchangeDebugPayload = {
-        step: "3_TOKEN_EXCHANGE_REQUEST",
-        endpoint: "https://api.instagram.com/oauth/access_token",
-        client_id: appId,
-        redirect_uri: candidateRedirectUri,
-        grant_type: "authorization_code",
-        content_type: "application/x-www-form-urlencoded",
-        auth_redirect_uri_matches_token_redirect_uri: effectiveRedirectUri === candidateRedirectUri,
-        timestamp: new Date().toISOString(),
-        version: "v2.6.5-debug"
-      };
-      console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(tokenExchangeDebugPayload));
-
-      const formBody = new URLSearchParams({
-        client_id: appId,
-        client_secret: appSecret,
-        grant_type: "authorization_code",
-        redirect_uri: candidateRedirectUri,
-        code: cleanCode,
-      }).toString();
-
-      // 1. Try official Instagram endpoint
-      let igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
+    try {
+      const igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "Accept": "application/json",
         },
         body: formBody,
-        signal: AbortSignal.timeout(3500),
-      }).catch(() => null);
+        signal: AbortSignal.timeout(8000),
+      });
 
-      let rawTokenText = igTokenRes ? await igTokenRes.text() : "";
+      const rawTokenText = await igTokenRes.text();
       let tokenData: any = null;
       try {
         tokenData = JSON.parse(rawTokenText);
@@ -5734,67 +5825,33 @@ app.get([
       const responseDebugPayload = {
         step: "4_INSTAGRAM_RESPONSE",
         endpoint: "https://api.instagram.com/oauth/access_token",
-        http_status: igTokenRes?.status,
-        success: igTokenRes?.ok,
+        http_status: igTokenRes.status,
+        success: igTokenRes.ok,
         error_type: tokenData?.error?.type || tokenData?.error_type || null,
         error_code: tokenData?.error?.code || tokenData?.code || null,
-        error_message: tokenData?.error?.message || tokenData?.error_message || (igTokenRes?.ok ? null : rawTokenText.slice(0, 300)),
+        error_message: tokenData?.error?.message || tokenData?.error_message || (igTokenRes.ok ? null : rawTokenText.slice(0, 300)),
         timestamp: new Date().toISOString(),
-        version: "v2.6.5-debug"
+        version: "v2.6.6-single-exchange"
       };
       console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(responseDebugPayload));
 
-      // 2. If Instagram endpoint fails or returns error, fallback to Facebook Graph API OAuth token endpoint (crucial for Meta App Dashboard Instagram Login apps)
-      if (!igTokenRes || !igTokenRes.ok || !tokenData?.access_token) {
-        console.log(`[INSTAGRAM OAUTH] api.instagram.com token exchange failed; trying graph.facebook.com fallback...`);
-        const fbTokenRes = await fetch("https://graph.facebook.com/v19.0/oauth/access_token", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-          },
-          body: formBody,
-          signal: AbortSignal.timeout(3500),
-        }).catch(() => null);
-
-        if (fbTokenRes) {
-          igTokenRes = fbTokenRes;
-          rawTokenText = await fbTokenRes.text();
-          try {
-            tokenData = JSON.parse(rawTokenText);
-          } catch {}
-        }
-      }
-
-      console.log(`[INSTAGRAM OAUTH] Token Exchange Status (${candidateRedirectUri}): ${igTokenRes?.status}`);
-
-      if (igTokenRes && igTokenRes.ok && tokenData) {
+      if (igTokenRes.ok && tokenData) {
         const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
         shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
         igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
-        return Boolean(shortLivedAccessToken);
       } else {
         igExchangeErrorDetail =
-          tokenData?.error_message ||
           tokenData?.error?.message ||
-          rawTokenText.slice(0, 240) ||
-          `HTTP ${igTokenRes?.status || 500}`;
-        return false;
-      }
-    };
-
-    try {
-      const ok = await tryExchangeCode(effectiveRedirectUri);
-      if (!ok && effectiveRedirectUri !== redirectUri) {
-        await tryExchangeCode(redirectUri);
+          tokenData?.error_message ||
+          (rawTokenText.length > 0 ? rawTokenText.slice(0, 240) : `HTTP ${igTokenRes.status}`);
       }
     } catch (igErr: any) {
       igExchangeErrorDetail = igErr?.message || String(igErr);
-      console.error("[INSTAGRAM OAUTH] Token network error:", igExchangeErrorDetail);
+      console.error("[INSTAGRAM OAUTH] Token exchange network error:", igExchangeErrorDetail);
     }
 
     if (!shortLivedAccessToken) {
-      // Check if a parallel duplicate request already connected this user's Instagram in the last 2 minutes
+      // Check if a parallel request already connected this user's Instagram
       if (isDatabaseConfigured && stateRecord.userId) {
         try {
           const recentConn = await pool.query(
@@ -5812,19 +5869,6 @@ app.get([
             });
           }
         } catch {}
-      }
-
-      // If user refreshed an old callback URL with an already-used or expired code, auto-redirect to a fresh OAuth handshake
-      const isStaleOrRedeemedCode =
-        igExchangeErrorDetail.toLowerCase().includes("validating verification code") ||
-        igExchangeErrorDetail.toLowerCase().includes("invalid authorization code") ||
-        igExchangeErrorDetail.toLowerCase().includes("expired");
-
-      if (isStaleOrRedeemedCode && stateRecord.userId) {
-        const freshState = createSignedOAuthState(stateRecord.userId, clientReturnTo, appSecret, redirectUri);
-        const freshAuthUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(freshState)}`;
-        console.log(`[INSTAGRAM OAUTH] Stale/replayed code detected on callback; auto-redirecting user #${stateRecord.userId} to fresh OAuth dialog`);
-        return res.redirect(302, freshAuthUrl);
       }
 
       return finishOAuthCallback({
