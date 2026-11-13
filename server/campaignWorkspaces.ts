@@ -207,7 +207,7 @@ export async function ensureWorkspacesLoaded(force = false): Promise<CampaignWor
   }
 
   const now = Date.now();
-  if (!force && lastSettingsLoadTime > 0 && now - lastSettingsLoadTime < 15000) {
+  if (!force && lastSettingsLoadTime > 0 && now - lastSettingsLoadTime < 300000) {
     return loadAllWorkspaces();
   }
 

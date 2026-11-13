@@ -38,5 +38,13 @@
     "CASHFREE_MODE": "production",
     "REVIEW_WINDOW_HOURS": "48",
     "STILL_LIVE_HOURS": "24"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "persist": true
+    }
   }
 }

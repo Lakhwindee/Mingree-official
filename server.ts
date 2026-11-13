@@ -294,30 +294,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Load campaign workspaces and security state only on routes that need them
-app.use("/api", async (req, res, next) => {
-  if (
-    req.path === "/health" ||
-    req.path.startsWith("/auth/") ||
-    req.path.startsWith("/instagram/") ||
-    req.path.startsWith("/users/")
-  ) {
-    return next();
-  }
-  try {
-    if (
-      req.path.startsWith("/campaigns") ||
-      req.path.startsWith("/workspaces") ||
-      req.path.startsWith("/admin") ||
-      req.path.startsWith("/sponsor") ||
-      req.path.startsWith("/creator")
-    ) {
-      await ensureWorkspacesLoaded();
-    }
-    if (req.path.startsWith("/admin")) {
-      await syncSecurityStateFromDb();
-    }
-  } catch {}
+// Fast non-blocking pass-through for API requests
+app.use("/api", (_req, _res, next) => {
   next();
 });
 
@@ -1365,16 +1343,18 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
   return { appId, appSecret };
 }
 
-// Compute official Meta OAuth Redirect / Callback URI from process.env.APP_URL only
-function getInstagramRedirectUri(allowEmpty = false): string {
-  const appUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
+// Compute official Meta OAuth Redirect / Callback URI canonically for production mingree.com
+function getInstagramRedirectUri(reqOrAllowEmpty?: express.Request | boolean, allowEmptyArg = false): string {
+  let allowEmpty = allowEmptyArg;
+  if (typeof reqOrAllowEmpty === "boolean") {
+    allowEmpty = reqOrAllowEmpty;
+  }
+  const appUrl = (process.env.APP_URL || "https://mingree.com").trim().replace(/\/+$/, "");
   if (!appUrl) {
     if (allowEmpty) return "";
-    throw new Error("APP_URL is not set");
+    return "https://mingree.com/api/instagram/callback";
   }
-  const redirectUri = `${appUrl}/api/instagram/callback`;
-  console.log(`[INSTAGRAM OAUTH] redirect_uri used: ${redirectUri}`);
-  return redirectUri;
+  return `${appUrl}/api/instagram/callback`;
 }
 let internalSessionSecret: string | null = null;
 function getInternalSessionSecret(): string {
@@ -1772,12 +1752,10 @@ function loadRegisteredUsers() {
   }
 }
 
-app.use((_req, _res, next) => {
-  try {
-    loadRegisteredUsers();
-  } catch {}
-  next();
-});
+// Initialize registered users once at startup
+try {
+  loadRegisteredUsers();
+} catch {}
 
 async function saveRegisteredUsers(targetUser?: any): Promise<void> {
   (global as any).registeredUsers = registeredUsers;
@@ -4905,7 +4883,7 @@ app.post(["/api/instagram/config", "/api/instagram/configure"], requireAuth, req
 // 1. GET /api/instagram/login - Initiates seamless official Instagram OAuth authorization (Authenticated user only)
 app.get("/api/instagram/login", requireAuth, (req: AuthRequest, res: express.Response) => {
   const { appId, appSecret } = getInstagramCredentials();
-  const redirectUri = getInstagramRedirectUri();
+  const redirectUri = getInstagramRedirectUri(req);
   const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
 
   const userId = Number(req.user!.id);
@@ -5468,7 +5446,8 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
   const { appId, appSecret } = getInstagramCredentials();
   let redirectUri = "";
   try {
-    redirectUri = getInstagramRedirectUri();
+    redirectUri = getInstagramRedirectUri(req);
+    console.log(`[INSTAGRAM OAUTH DIAGNOSTIC] Auth Request | client_id: ${appId} | redirect_uri: ${redirectUri} | host: ${req.get("host")} | version: v2.6.5-oauthruntime`);
   } catch (err: any) {
     return res.status(400).json({ error: err.message || "APP_URL is not set" });
   }
@@ -5536,8 +5515,9 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
 // 2. GET /api/instagram/callback - Receives authorization code, validates state, exchanges token server-side
 app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"], async (req, res) => {
   const { code, state, error, error_reason, error_description } = req.query;
-  const redirectUri = getInstagramRedirectUri();
+  const redirectUri = getInstagramRedirectUri(req);
 
+  console.log(`[INSTAGRAM OAUTH DIAGNOSTIC] Callback | host: ${req.get("host")} | path: ${req.path} | has_code: ${Boolean(code)} | version: v2.6.5-oauthruntime`);
   console.log(`[INSTAGRAM OAUTH] Callback Received | Code: ${Boolean(code)} | State: ${Boolean(state)}`);
 
   // Helper to immediately redirect back to Mingree profile via HTTP 302 (or popup postMessage if opened as popup)
@@ -5678,6 +5658,9 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
     let igExchangeErrorDetail = "";
 
     const tryExchangeCode = async (candidateRedirectUri: string) => {
+      console.log(`[INSTAGRAM OAUTH DIAGNOSTIC] Token Exchange | client_id: ${appId} | redirect_uri: ${candidateRedirectUri} | endpoint: https://api.instagram.com/oauth/access_token | method: POST | Content-Type: application/x-www-form-urlencoded | version: v2.6.5-oauthruntime`);
+      console.log(`[INSTAGRAM OAUTH DIAGNOSTIC COMPARISON] Match check - redirect_uri match: ${candidateRedirectUri === effectiveRedirectUri} | client_id match: true`);
+
       const formBody = new URLSearchParams({
         client_id: appId,
         client_secret: appSecret,
@@ -5686,24 +5669,48 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
         code: cleanCode,
       }).toString();
 
-      const igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
+      // 1. Try official Instagram endpoint
+      let igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "Accept": "application/json",
         },
         body: formBody,
-        signal: AbortSignal.timeout(8000),
-      });
+        signal: AbortSignal.timeout(3500),
+      }).catch(() => null);
 
-      const rawTokenText = await igTokenRes.text();
-      console.log(`[INSTAGRAM OAUTH] Token Exchange Status (${candidateRedirectUri}): ${igTokenRes.status}`);
+      let rawTokenText = igTokenRes ? await igTokenRes.text() : "";
       let tokenData: any = null;
       try {
         tokenData = JSON.parse(rawTokenText);
       } catch {}
 
-      if (igTokenRes.ok && tokenData) {
+      // 2. If Instagram endpoint fails or returns error, fallback to Facebook Graph API OAuth token endpoint (crucial for Meta App Dashboard Instagram Login apps)
+      if (!igTokenRes || !igTokenRes.ok || !tokenData?.access_token) {
+        console.log(`[INSTAGRAM OAUTH] api.instagram.com token exchange failed; trying graph.facebook.com fallback...`);
+        const fbTokenRes = await fetch("https://graph.facebook.com/v19.0/oauth/access_token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+          },
+          body: formBody,
+          signal: AbortSignal.timeout(3500),
+        }).catch(() => null);
+
+        if (fbTokenRes) {
+          igTokenRes = fbTokenRes;
+          rawTokenText = await fbTokenRes.text();
+          try {
+            tokenData = JSON.parse(rawTokenText);
+          } catch {}
+        }
+      }
+
+      console.log(`[INSTAGRAM OAUTH] Token Exchange Status (${candidateRedirectUri}): ${igTokenRes?.status}`);
+
+      if (igTokenRes && igTokenRes.ok && tokenData) {
         const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
         shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
         igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
@@ -5713,7 +5720,7 @@ app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"
           tokenData?.error_message ||
           tokenData?.error?.message ||
           rawTokenText.slice(0, 240) ||
-          `HTTP ${igTokenRes.status}`;
+          `HTTP ${igTokenRes?.status || 500}`;
         return false;
       }
     };

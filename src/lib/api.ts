@@ -1576,13 +1576,8 @@ export const api = {
     return res.json();
   },
 
-  async getInstagramAuthUrl(userId: number): Promise<{ authUrl: string }> {
-    const res = await fetch(`${API_BASE}/instagram/auth-url?userId=${userId}`);
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || "Failed to get Instagram auth URL");
-    }
-    return res.json();
+  async getInstagramAuthUrl(_userId?: number): Promise<{ authUrl: string }> {
+    return { authUrl: "/api/instagram/login" };
   },
 
   async getInstagramConfig(): Promise<{ configured: boolean; appId: string; appSecretConfigured: boolean; redirectUri: string }> {

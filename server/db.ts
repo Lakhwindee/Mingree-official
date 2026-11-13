@@ -94,6 +94,11 @@ export function reconfigureDatabase(newConnectionString: string, workerMode = tr
   isWorkerRuntime = workerMode;
 }
 
+export function runWithWorkerDbUrl<T>(newConnectionString: string, fn: () => T): T {
+  reconfigureDatabase(newConnectionString, true);
+  return fn();
+}
+
 async function runWorkerQuery(...args: any[]): Promise<any> {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });

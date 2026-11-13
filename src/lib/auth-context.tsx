@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async function checkSession() {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
         const res = await fetch("/api/users/current", { credentials: "include", signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {
@@ -77,6 +77,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(data);
             localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(data));
           }
+        } else if (res.status === 401 && isMounted) {
+          localStorage.removeItem(AUTH_STORAGE_KEY);
+          setUser(null);
         }
       } catch (err) {
         // Keep local user session if offline or backend check fails

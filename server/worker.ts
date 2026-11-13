@@ -1,7 +1,7 @@
 import http from "node:http";
 import app from "../server";
 import { httpServerHandler } from "cloudflare:node";
-import { reconfigureDatabase, isDatabaseConfigured } from "./db";
+import { reconfigureDatabase, isDatabaseConfigured, runWithWorkerDbUrl } from "./db";
 import { setWorkerR2Bucket } from "./storage";
 import {
   runDealExpirationCheck,
@@ -38,7 +38,7 @@ export default {
     // 3. Populate process.env for Node.js modules reading config
     if (env && typeof process !== "undefined" && process.env) {
       for (const [key, value] of Object.entries(env)) {
-        if (typeof value === "string" && !process.env[key]) {
+        if (typeof value === "string") {
           process.env[key] = value;
         }
       }
@@ -94,7 +94,11 @@ export default {
       }
     }
 
-    // 6. Delegate to Express API handler via cloudflare:node
+    // 6. Delegate to Express API handler via cloudflare:node with per-request DB binding
+    const activeConn = env.HYPERDRIVE?.connectionString || env.DATABASE_URL;
+    if (activeConn) {
+      return runWithWorkerDbUrl(activeConn, () => nodeHttpHandler.fetch(request, env, ctx));
+    }
     return nodeHttpHandler.fetch(request, env, ctx);
   },
 
@@ -110,7 +114,8 @@ export default {
 
     console.log(`[CF WORKER CRON] Executing scheduled task for pattern: '${event.cron}' at ${new Date(event.scheduledTime).toISOString()}`);
 
-    const taskPromise = (async () => {
+    const activeCronConn = env.HYPERDRIVE?.connectionString || env.DATABASE_URL || "";
+    const runCron = async () => {
       try {
         if (event.cron === "*/5 * * * *") {
           const result = await runDealExpirationCheck();
@@ -132,7 +137,8 @@ export default {
       } catch (err: any) {
         console.error(`[CF WORKER CRON ERROR] ${event.cron} execution failed:`, err?.message || err);
       }
-    })();
+    };
+    const taskPromise = activeCronConn ? runWithWorkerDbUrl(activeCronConn, runCron) : runCron();
 
     if (ctx && typeof ctx.waitUntil === "function") {
       ctx.waitUntil(taskPromise);
