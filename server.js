@@ -8101,11 +8101,8 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
   }
 });
 function getInstagramCredentials() {
-  const settings = typeof loadSettings === "function" ? loadSettings() : {};
-  const appId = (process.env.INSTAGRAM_APP_ID || settings?.instagram_app_id || "3167123270152518").trim();
-  const verifiedInstagramSecret = "a80adcabcc62abb2e66c3d1048a50e76";
-  const envSecret = (process.env.INSTAGRAM_APP_SECRET || settings?.instagram_app_secret || inMemorySettings?.instagram_app_secret || "").trim();
-  const appSecret = envSecret || verifiedInstagramSecret;
+  const appId = "3167123270152518";
+  const appSecret = "a80adcabcc62abb2e66c3d1048a50e76";
   return { appId, appSecret };
 }
 function getInstagramRedirectUri(reqOrAllowEmpty, allowEmptyArg = false) {
@@ -11828,7 +11825,7 @@ app.get([
       returnTo: clientReturnTo
     });
   }
-  let cleanCode = String(code).split("#")[0].replace(/%23_$/i, "").trim();
+  let cleanCode = String(code).split("#")[0].split("%23")[0].replace(/_$/i, "").trim();
   if (cleanCode.includes(" ")) {
     cleanCode = cleanCode.replace(/ /g, "+");
   }
