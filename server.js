@@ -796,6 +796,9 @@ async function ensureDatabaseSchema(force = false) {
           ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS handle text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS city text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS tier text DEFAULT 'Unlinked';
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS followers int DEFAULT 0;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_followers int DEFAULT 0;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS gstin text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_address text;
@@ -860,7 +863,7 @@ async function ensureDatabaseSchema(force = false) {
           ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
           ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
-          -- Backfill username from legacy columns if present
+          -- Backfill username from legacy columns if present and ensure linked creators are active
           BEGIN
             IF EXISTS (
               SELECT 1 FROM information_schema.columns 
@@ -874,6 +877,12 @@ async function ensureDatabaseSchema(force = false) {
             ) THEN
               UPDATE creator_profiles SET username = handle WHERE username IS NULL AND handle IS NOT NULL;
             END IF;
+
+            -- Any creator with a linked Instagram account has active status
+            UPDATE creator_profiles SET status = 'active' WHERE (status IS NULL OR status = 'pending') AND username IS NOT NULL AND username != '';
+
+            -- Any user with a linked creator profile has role creator (unless admin)
+            UPDATE users SET role = 'creator' WHERE (role != 'admin' OR role IS NULL) AND id IN (SELECT user_id FROM creator_profiles WHERE username IS NOT NULL AND username != '');
           EXCEPTION WHEN OTHERS THEN
             NULL;
           END;
@@ -9699,7 +9708,7 @@ app.get(["/api/creators", "/api/creators/directory"], requireAuth, async (req, r
               cp.engagement_rate, cp.india_audience_pct, cp.risk_score, cp.status as creator_status
        FROM users u
        LEFT JOIN creator_profiles cp ON cp.user_id = u.id
-       WHERE u.role = 'creator'`
+       WHERE u.role = 'creator' OR (cp.username IS NOT NULL AND cp.username != '')`
     );
     let creators = dbRes.rows.map((r) => ({
       id: Number(r.id),
@@ -12440,6 +12449,7 @@ app.get([
           `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, avatar, avatar_url)
            VALUES ($1, $2, '!', $3, 'creator', true, 'active', $4, $4)
            ON CONFLICT (id) DO UPDATE SET
+             role = CASE WHEN users.role = 'admin' THEN 'admin' ELSE 'creator' END,
              avatar = COALESCE(EXCLUDED.avatar, users.avatar),
              avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)`,
           [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account", savedAvatarUrl || null]
@@ -13639,11 +13649,11 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
       if (f >= 5e4) return "mid";
       if (f >= 1e4) return "micro";
       if (f >= 5e3) return "nano";
-      return "micro";
+      return "nano";
     };
     const realCreatorsMap = /* @__PURE__ */ new Map();
     const fakeEmails = /* @__PURE__ */ new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com", "platform@mingree.internal"]);
-    const fakeHandles = /* @__PURE__ */ new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
+    const fakeHandles = /* @__PURE__ */ new Set(["@creator", "creator", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
     for (const u of registeredUsers) {
       const email = (u.email || "").toLowerCase().trim();
       const handle = (u.handle || "").toLowerCase().trim();
@@ -13651,35 +13661,34 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
         continue;
       }
       const isConnected = Boolean(
-        u.role === "creator" && u.instagramUsername && u.isInstagramVerified && u.instagramVerificationStatus !== "unlinked"
+        u.instagramUsername && u.instagramVerificationStatus !== "unlinked"
       );
       if (isConnected) {
         realCreatorsMap.set(u.id, { ...u });
       }
     }
     try {
+      await ensureDatabaseSchema().catch(() => {
+      });
       const dbRes = await pool.query(`
         SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.avatar_url as user_avatar_url, u.tier, u.city, u.company_name, u.status,
                cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate, cp.avatar_url as cp_avatar_url,
                cp.status as cp_status
         FROM users u
         INNER JOIN creator_profiles cp ON cp.user_id = u.id
-        WHERE u.role = 'creator'
-          AND cp.username IS NOT NULL
+        WHERE cp.username IS NOT NULL
           AND cp.username != ''
-          AND cp.status = 'active'
+          AND (cp.status != 'blocked' OR cp.status IS NULL)
           AND LOWER(u.email) NOT IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com', 'platform@mingree.internal')
-          AND LOWER(COALESCE(u.handle, '')) NOT IN ('@creator', 'creator', '@sponsor', 'sponsor', '@brandpartner', 'brandpartner', '@rohanmusic', 'rohanmusic', '@platform', 'platform')
       `);
       for (const row of dbRes.rows) {
         const id = Number(row.id);
         const email = (row.email || "").toLowerCase().trim();
-        const handle = (row.handle || "").toLowerCase().trim();
         const igUser = (row.instagram_username || "").toLowerCase().trim();
-        if (fakeEmails.has(email) || fakeHandles.has(handle) || fakeHandles.has(igUser)) {
+        if (fakeEmails.has(email) || fakeHandles.has(igUser)) {
           continue;
         }
-        if (!row.instagram_username || row.cp_status !== "active") {
+        if (!row.instagram_username || row.cp_status === "blocked") {
           realCreatorsMap.delete(id);
           continue;
         }
@@ -13689,7 +13698,7 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
           email: row.email,
           name: row.name,
           role: "creator",
-          handle: row.handle,
+          handle: row.instagram_username ? `@${row.instagram_username}` : row.handle || `@user${id}`,
           avatar: resolvedAvatar,
           avatarUrl: resolvedAvatar,
           tier: row.tier || row.tier_label,
@@ -13701,12 +13710,13 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
           instagramVerificationStatus: "verified"
         });
       }
-    } catch {
+    } catch (err) {
+      console.error("[CREATOR PANEL DB QUERY ERROR]", err?.message || err);
     }
     const realCreatorCards = [];
     const seenHandles = /* @__PURE__ */ new Set();
     for (const u of realCreatorsMap.values()) {
-      if (!u.instagramUsername || !u.isInstagramVerified || u.instagramVerificationStatus === "unlinked") {
+      if (!u.instagramUsername || u.instagramVerificationStatus && u.instagramVerificationStatus === "unlinked") {
         continue;
       }
       const followers = Number(u.instagramFollowers || u.followers) || 0;

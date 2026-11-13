@@ -2918,7 +2918,7 @@ app.get(["/api/creators", "/api/creators/directory"], requireAuth, async (req: A
               cp.engagement_rate, cp.india_audience_pct, cp.risk_score, cp.status as creator_status
        FROM users u
        LEFT JOIN creator_profiles cp ON cp.user_id = u.id
-       WHERE u.role = 'creator'`
+       WHERE u.role = 'creator' OR (cp.username IS NOT NULL AND cp.username != '')`
     );
 
     let creators = dbRes.rows.map((r) => ({
@@ -6087,6 +6087,7 @@ app.get([
           `INSERT INTO users (id, email, password_hash, name, role, email_verified, status, avatar, avatar_url)
            VALUES ($1, $2, '!', $3, 'creator', true, 'active', $4, $4)
            ON CONFLICT (id) DO UPDATE SET
+             role = CASE WHEN users.role = 'admin' THEN 'admin' ELSE 'creator' END,
              avatar = COALESCE(EXCLUDED.avatar, users.avatar),
              avatar_url = COALESCE(EXCLUDED.avatar_url, users.avatar_url)`,
           [stateRecord.userId, targetUser?.email || `user${stateRecord.userId}@mingree.com`, targetUser?.name || "Creator Account", savedAvatarUrl || null]
@@ -7499,13 +7500,13 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       if (f >= 50000) return "mid";
       if (f >= 10000) return "micro";
       if (f >= 5000) return "nano";
-      return "micro";
+      return "nano";
     };
 
     // 1. Collect all real registered creators from memory and database who have an ACTIVE, CONNECTED Instagram account
     const realCreatorsMap = new Map<number, any>();
     const fakeEmails = new Set(["creator@mingree.com", "brand@mingree.com", "artist@mingree.com", "sponsor@mingree.com", "platform@mingree.internal"]);
-    const fakeHandles = new Set(["@creator", "creator", "@sponsor", "sponsor", "@brandpartner", "brandpartner", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
+    const fakeHandles = new Set(["@creator", "creator", "@rohanmusic", "rohanmusic", "@platform", "platform"]);
 
     for (const u of registeredUsers) {
       const email = (u.email || "").toLowerCase().trim();
@@ -7513,11 +7514,9 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       if (fakeEmails.has(email) || fakeHandles.has(handle) || email.includes("demo") || email.includes("example") || email.includes("platform")) {
         continue;
       }
-      // ONLY creators with an active, verified Instagram account can appear to sponsors
+      // Any account with a connected Instagram account can appear to sponsors
       const isConnected = Boolean(
-        u.role === "creator" &&
         u.instagramUsername &&
-        u.isInstagramVerified &&
         u.instagramVerificationStatus !== "unlinked"
       );
       if (isConnected) {
@@ -7526,28 +7525,26 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
     }
 
     try {
+      await ensureDatabaseSchema().catch(() => {});
       const dbRes = await pool.query(`
         SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.avatar_url as user_avatar_url, u.tier, u.city, u.company_name, u.status,
                cp.username as instagram_username, cp.followers as cp_followers, cp.tier_label, cp.median_views, cp.engagement_rate, cp.avatar_url as cp_avatar_url,
                cp.status as cp_status
         FROM users u
         INNER JOIN creator_profiles cp ON cp.user_id = u.id
-        WHERE u.role = 'creator'
-          AND cp.username IS NOT NULL
+        WHERE cp.username IS NOT NULL
           AND cp.username != ''
-          AND cp.status = 'active'
+          AND (cp.status != 'blocked' OR cp.status IS NULL)
           AND LOWER(u.email) NOT IN ('creator@mingree.com', 'artist@mingree.com', 'brand@mingree.com', 'sponsor@mingree.com', 'platform@mingree.internal')
-          AND LOWER(COALESCE(u.handle, '')) NOT IN ('@creator', 'creator', '@sponsor', 'sponsor', '@brandpartner', 'brandpartner', '@rohanmusic', 'rohanmusic', '@platform', 'platform')
       `);
       for (const row of dbRes.rows) {
         const id = Number(row.id);
         const email = (row.email || "").toLowerCase().trim();
-        const handle = (row.handle || "").toLowerCase().trim();
         const igUser = (row.instagram_username || "").toLowerCase().trim();
-        if (fakeEmails.has(email) || fakeHandles.has(handle) || fakeHandles.has(igUser)) {
+        if (fakeEmails.has(email) || fakeHandles.has(igUser)) {
           continue;
         }
-        if (!row.instagram_username || row.cp_status !== "active") {
+        if (!row.instagram_username || row.cp_status === "blocked") {
           realCreatorsMap.delete(id);
           continue;
         }
@@ -7557,7 +7554,7 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
           email: row.email,
           name: row.name,
           role: "creator",
-          handle: row.handle,
+          handle: row.instagram_username ? `@${row.instagram_username}` : (row.handle || `@user${id}`),
           avatar: resolvedAvatar,
           avatarUrl: resolvedAvatar,
           tier: row.tier || row.tier_label,
@@ -7569,15 +7566,15 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
           instagramVerificationStatus: "verified",
         });
       }
-    } catch {
-      // Memory fallback handles state
+    } catch (err: any) {
+      console.error("[CREATOR PANEL DB QUERY ERROR]", err?.message || err);
     }
 
     const realCreatorCards: any[] = [];
     const seenHandles = new Set<string>();
     for (const u of realCreatorsMap.values()) {
       // Strictly exclude unlinked creators
-      if (!u.instagramUsername || !u.isInstagramVerified || u.instagramVerificationStatus === "unlinked") {
+      if (!u.instagramUsername || (u.instagramVerificationStatus && u.instagramVerificationStatus === "unlinked")) {
         continue;
       }
 

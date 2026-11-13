@@ -119,6 +119,9 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           ALTER TABLE users ADD COLUMN IF NOT EXISTS phone text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS handle text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS city text;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS tier text DEFAULT 'Unlinked';
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS followers int DEFAULT 0;
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS instagram_followers int DEFAULT 0;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS gstin text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_address text;
@@ -183,7 +186,7 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
           ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 
-          -- Backfill username from legacy columns if present
+          -- Backfill username from legacy columns if present and ensure linked creators are active
           BEGIN
             IF EXISTS (
               SELECT 1 FROM information_schema.columns 
@@ -197,6 +200,12 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
             ) THEN
               UPDATE creator_profiles SET username = handle WHERE username IS NULL AND handle IS NOT NULL;
             END IF;
+
+            -- Any creator with a linked Instagram account has active status
+            UPDATE creator_profiles SET status = 'active' WHERE (status IS NULL OR status = 'pending') AND username IS NOT NULL AND username != '';
+
+            -- Any user with a linked creator profile has role creator (unless admin)
+            UPDATE users SET role = 'creator' WHERE (role != 'admin' OR role IS NULL) AND id IN (SELECT user_id FROM creator_profiles WHERE username IS NOT NULL AND username != '');
           EXCEPTION WHEN OTHERS THEN
             NULL;
           END;
