@@ -1343,18 +1343,19 @@ function getInstagramCredentials(): { appId: string; appSecret: string } {
   return { appId, appSecret };
 }
 
-// Compute official Meta OAuth Redirect / Callback URI canonically for production mingree.com
+// Compute official Meta OAuth Redirect / Callback URI canonically using https://mingree.com (or process.env.APP_URL forced to https)
 function getInstagramRedirectUri(reqOrAllowEmpty?: express.Request | boolean, allowEmptyArg = false): string {
   let allowEmpty = allowEmptyArg;
   if (typeof reqOrAllowEmpty === "boolean") {
     allowEmpty = reqOrAllowEmpty;
   }
   const appUrl = (process.env.APP_URL || "https://mingree.com").trim().replace(/\/+$/, "");
-  if (!appUrl) {
+  let canonicalAppUrl = appUrl.startsWith("http://") ? appUrl.replace("http://", "https://") : appUrl;
+  if (!canonicalAppUrl) {
     if (allowEmpty) return "";
-    return "https://mingree.com/api/instagram/callback";
+    canonicalAppUrl = "https://mingree.com";
   }
-  return `${appUrl}/api/instagram/callback`;
+  return `${canonicalAppUrl}/api/instagram/callback`.replace(/\/+$/, "");
 }
 let internalSessionSecret: string | null = null;
 function getInternalSessionSecret(): string {
@@ -5513,7 +5514,14 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
 });
 
 // 2. GET /api/instagram/callback - Receives authorization code, validates state, exchanges token server-side
-app.get(["/api/instagram/callback", "/api/instagram/oauth-callback", "/callback"], async (req, res) => {
+app.get([
+  "/api/instagram/callback",
+  "/api/instagram/callback/",
+  "/api/instagram/oauth-callback",
+  "/api/instagram/oauth-callback/",
+  "/callback",
+  "/callback/"
+], async (req, res) => {
   const { code, state, error, error_reason, error_description } = req.query;
   const redirectUri = getInstagramRedirectUri(req);
 

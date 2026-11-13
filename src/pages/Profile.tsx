@@ -337,9 +337,25 @@ export default function Profile() {
     }
   };
 
-  const handleVerifyHandleDirectly = async (_targetHandle?: string) => {
+  const handleVerifyHandleDirectly = async (targetHandle?: string) => {
+    if (!user || !targetHandle || !targetHandle.trim()) return;
+    setIsVerifyingHandle(true);
     setIsHandleModalOpen(false);
-    handleConnectInstagramOAuth();
+    try {
+      const cleanH = targetHandle.trim().replace(/^@+/, "");
+      const updated = await api.updateUserInstagram(user.id, cleanH, `https://instagram.com/${cleanH}`, 15000);
+      updateUser(updated as any);
+      queryClient.setQueryData(["user", user.id], updated);
+      queryClient.invalidateQueries({ queryKey: ["user", user.id] });
+      toast.success(`Instagram account @${cleanH} successfully verified and linked!`);
+      try {
+        confetti({ particleCount: 70, spread: 70, origin: { y: 0.6 } });
+      } catch {}
+    } catch (err: any) {
+      toast.error(err.message || "Failed to verify Instagram handle");
+    } finally {
+      setIsVerifyingHandle(false);
+    }
   };
 
   const avatarMutation = useMutation({
