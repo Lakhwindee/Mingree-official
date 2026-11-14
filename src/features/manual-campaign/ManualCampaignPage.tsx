@@ -416,6 +416,54 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       {step === 1 && (
         <section className="rounded-2xl border bg-card p-5 sm:p-6 space-y-5">
           <header><h2 className="text-xl font-bold">Campaign Details</h2><p className="text-sm text-muted-foreground">Tell us about your song and where it should be promoted.</p></header>
+          
+          <Field id="asset" label="Promotional Video / Asset File (optional)" hint="Upload video or banner for creators to download and post">
+            <div className="flex items-center gap-2">
+              <Input
+                type="file"
+                id="manual-asset-upload"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    try {
+                      const res = await fetch("/api/upload", { method: "POST", body: fd });
+                      if (res.ok) {
+                        const data = await res.json();
+                        set("assetUrl", data.url);
+                        set("assetFileName", data.fileName || file.name);
+                        toast.success("File uploaded successfully!");
+                      } else {
+                        toast.error("Upload failed");
+                      }
+                    } catch {
+                      toast.error("Upload failed");
+                    }
+                  }
+                }}
+              />
+              <label
+                htmlFor="manual-asset-upload"
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 text-xs font-semibold cursor-pointer text-primary transition"
+              >
+                {d.assetFileName || (d.assetUrl ? "Change File" : "Upload Video / File")}
+              </label>
+              {d.assetUrl && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 text-rose-500 hover:bg-rose-50 shrink-0"
+                  onClick={() => { set("assetUrl", ""); set("assetFileName", ""); }}
+                >
+                  ✕
+                </Button>
+              )}
+            </div>
+          </Field>
+
           <div className="grid sm:grid-cols-2 gap-4">
             <Field id="title" label="Campaign title" required><Input id="title" value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="Summer single promo" /></Field>
             <Field id="song" label="Song link" required hint="Instagram audio, Reel or Spotify link"><Input id="song" value={d.songUrl} onChange={(e) => set("songUrl", e.target.value)} placeholder="https://" /></Field>
@@ -450,58 +498,9 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           <Field id="disclosure" label="FTC / Disclosure Instructions">
             <Input id="disclosure" value={d.disclosureInstructions || ""} onChange={(e) => set("disclosureInstructions", e.target.value)} placeholder="#ad | Paid Partnership" />
           </Field>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <Field id="websiteUrl" label="Website / Landing Page Link (optional)" hint="Link for creators to promote in bio/caption">
-              <Input id="websiteUrl" value={d.websiteUrl || ""} onChange={(e) => set("websiteUrl", e.target.value)} placeholder="https://yourbrand.com" />
-            </Field>
-            <Field id="asset" label="Promotional Video / Asset File (optional)" hint="Upload video or banner for creators to download and post">
-              <div className="flex items-center gap-2">
-                <Input
-                  type="file"
-                  id="manual-asset-upload"
-                  className="hidden"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const fd = new FormData();
-                      fd.append("file", file);
-                      try {
-                        const res = await fetch("/api/upload", { method: "POST", body: fd });
-                        if (res.ok) {
-                          const data = await res.json();
-                          set("assetUrl", data.url);
-                          set("assetFileName", data.fileName || file.name);
-                          toast.success("File uploaded successfully!");
-                        } else {
-                          toast.error("Upload failed");
-                        }
-                      } catch {
-                        toast.error("Upload failed");
-                      }
-                    }
-                  }}
-                />
-                <label
-                  htmlFor="manual-asset-upload"
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 text-xs font-semibold cursor-pointer text-primary transition"
-                >
-                  
-                  {d.assetFileName || (d.assetUrl ? "Change File" : "Upload Video / File")}
-                </label>
-                {d.assetUrl && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-10 w-10 text-rose-500 hover:bg-rose-50 shrink-0"
-                    onClick={() => { set("assetUrl", ""); set("assetFileName", ""); }}
-                  >
-                    
-                  </Button>
-                )}
-              </div>
-            </Field>
-          </div>
+          <Field id="websiteUrl" label="Website / Landing Page Link (optional)" hint="Link for creators to promote in bio/caption">
+            <Input id="websiteUrl" value={d.websiteUrl || ""} onChange={(e) => set("websiteUrl", e.target.value)} placeholder="https://yourbrand.com" />
+          </Field>
         </section>
       )}
 
