@@ -1,11 +1,14 @@
 node_modules/
 build/
 dist/
+.wrangler/
+.aistudio/
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+!.env.production.template
 
 # Runtime JSON data & secret store files
 app_settings.json
@@ -18,8 +21,7 @@ security_audit_logs.json
 instagram_identities.json
 category_subscriptions.json
 *.json.bak
+mingree-security-patch.zip
 # Lockfiles causing Cloudflare CI/CD cross-platform/version issues
-bun.lock
 bun.lockb
 package-lock.json
-
