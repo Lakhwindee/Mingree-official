@@ -19,6 +19,10 @@ pg.types.setTypeParser(20, (val: string) => {
 
 export const isLocalFallbackAllowed = process.env.NODE_ENV !== "production";
 
+export function isInMemoryFallbackAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" && !isDatabaseConfigured;
+}
+
 function getValidDatabaseUrl(): string | undefined {
   const raw = (
     process.env.DATABASE_URL ||
@@ -83,19 +87,32 @@ activePool.on("error", (err: any) => {
 });
 
 let schemaEnsured = false;
+let schemaEnsuredForUrl: string | null = null;
 let schemaPromise: Promise<void> | null = null;
+let lastSchemaError: string | null = null;
+
+export function isSchemaEnsured(): boolean {
+  return Boolean(schemaEnsured && currentDbUrl && schemaEnsuredForUrl === currentDbUrl);
+}
 
 /**
  * Idempotently verifies and patches core database tables and columns (such as creator_profiles.username)
- * so serverless workers and production databases never throw "column cp.username does not exist".
+ * once per isolate/connection string, safe under concurrent Worker requests.
  */
 export async function ensureDatabaseSchema(force = false): Promise<void> {
-  if (schemaEnsured && !force) return;
-  if (schemaPromise && !force) return schemaPromise;
+  if (!currentDbUrl) {
+    throw new Error("Database is not configured");
+  }
+  if (schemaEnsured && schemaEnsuredForUrl === currentDbUrl && !force) {
+    return;
+  }
+  if (schemaPromise && !force) {
+    return schemaPromise;
+  }
 
-  schemaPromise = (async () => {
-    if (!currentDbUrl) return;
-    const client = new Client(getPgClientConfig(currentDbUrl));
+  const targetUrl = currentDbUrl;
+  const runPromise = (async () => {
+    const client = new Client(getPgClientConfig(targetUrl));
     client.on("error", () => {});
     try {
       await client.connect();
@@ -128,6 +145,18 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
           ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version int NOT NULL DEFAULT 1;
+
+          -- 1b. Ensure email_otps table exists for cross-isolate OTP persistence
+          CREATE TABLE IF NOT EXISTS email_otps (
+            id bigserial PRIMARY KEY,
+            email text NOT NULL,
+            purpose text NOT NULL DEFAULT 'signup',
+            otp_hash text NOT NULL,
+            expires_at timestamptz NOT NULL,
+            attempts int NOT NULL DEFAULT 0,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (email, purpose)
+          );
 
           -- 2. Ensure creator_profiles exists with all required columns
           CREATE TABLE IF NOT EXISTS creator_profiles (
@@ -462,38 +491,66 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
         END $$;
       `);
       schemaEnsured = true;
+      schemaEnsuredForUrl = targetUrl;
+      lastSchemaError = null;
       console.log("[DB SCHEMA] Successfully ensured creator_profiles schema & required columns");
     } catch (err: any) {
-      console.warn("[DB SCHEMA ENSURE WARNING]", err?.message || err);
+      schemaEnsured = false;
+      lastSchemaError = err?.message || String(err);
+      console.warn("[DB SCHEMA ENSURE WARNING]", lastSchemaError);
+      throw err;
     } finally {
       await client.end().catch(() => {});
-      schemaPromise = null;
+      if (schemaPromise === runPromise) {
+        schemaPromise = null;
+      }
     }
   })();
 
-  return schemaPromise;
+  schemaPromise = runPromise;
+  return runPromise;
 }
 
 /**
  * Dynamically reconfigures the active PostgreSQL connection (e.g. when Cloudflare Hyperdrive
  * provides env.HYPERDRIVE.connectionString at runtime).
+ * Reconfigures and resets schema state ONLY when the connection string actually changes.
  */
 export function reconfigureDatabase(newConnectionString: string, workerMode = true): void {
   if (!newConnectionString) return;
   const clean = newConnectionString.trim();
+  if (!clean) return;
+  try {
+    new URL(clean);
+  } catch {
+    return;
+  }
+
+  const urlChanged = currentDbUrl !== clean;
+  const modeChanged = isWorkerRuntime !== workerMode;
+
+  if (!urlChanged && !modeChanged && isDatabaseConfigured) {
+    return;
+  }
+
   currentDbUrl = clean;
   isDatabaseConfigured = true;
   isWorkerRuntime = workerMode;
-  schemaEnsured = false;
-  schemaPromise = null;
-  if (!workerMode) {
-    try {
-      activePool?.end().catch(() => {});
-    } catch {}
-    activePool = createPgPool(clean);
-    activePool.on("error", (err: any) => {
-      console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
-    });
+
+  if (urlChanged) {
+    schemaEnsured = false;
+    schemaEnsuredForUrl = null;
+    schemaPromise = null;
+    lastSchemaError = null;
+    if (!workerMode) {
+      try {
+        activePool?.end().catch(() => {});
+      } catch {}
+      activePool = createPgPool(clean);
+      activePool.on("error", (err: any) => {
+        console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
+      });
+    }
   }
 }
 
@@ -502,12 +559,26 @@ export function runWithWorkerDbUrl<T>(newConnectionString: string, fn: () => T):
   return fn();
 }
 
+export function markSchemaEnsuredForTest(url?: string): void {
+  const target = (url || currentDbUrl || "").trim();
+  if (!target) return;
+  schemaEnsured = true;
+  schemaEnsuredForUrl = target;
+}
+
+export function resetDatabaseConfigForTest(): void {
+  currentDbUrl = getValidDatabaseUrl();
+  isDatabaseConfigured = Boolean(currentDbUrl);
+  isWorkerRuntime = false;
+  schemaEnsured = false;
+  schemaEnsuredForUrl = null;
+  schemaPromise = null;
+  lastSchemaError = null;
+}
+
 async function runWorkerQuery(...args: any[]): Promise<any> {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
-  }
-  if (!schemaEnsured) {
-    await ensureDatabaseSchema().catch(() => {});
   }
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {});
@@ -522,9 +593,6 @@ async function runWorkerQuery(...args: any[]): Promise<any> {
 async function connectWorkerClient(): Promise<any> {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
-  }
-  if (!schemaEnsured) {
-    await ensureDatabaseSchema().catch(() => {});
   }
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {});
@@ -543,9 +611,6 @@ export const pool = new Proxy({} as pg.Pool, {
         if (!isDatabaseConfigured) {
           throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
         }
-        if (!schemaEnsured) {
-          await ensureDatabaseSchema().catch(() => {});
-        }
         if (isWorkerRuntime) {
           return runWorkerQuery(...args);
         }
@@ -556,9 +621,6 @@ export const pool = new Proxy({} as pg.Pool, {
       return async () => {
         if (!isDatabaseConfigured) {
           throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
-        }
-        if (!schemaEnsured) {
-          await ensureDatabaseSchema().catch(() => {});
         }
         if (isWorkerRuntime) {
           return connectWorkerClient();
@@ -580,6 +642,43 @@ export const db = new Proxy({} as ReturnType<typeof drizzle>, {
     return typeof val === "function" ? val.bind(activeDb) : val;
   },
 });
+
+export interface DatabaseHealthResult {
+  healthy: boolean;
+  connected: boolean;
+  schemaEnsured: boolean;
+  error?: string;
+}
+
+export async function checkDatabaseHealth(forceSchemaSync = false): Promise<DatabaseHealthResult> {
+  if (!isDatabaseConfigured) {
+    const isProd = process.env.NODE_ENV === "production";
+    return {
+      healthy: !isProd,
+      connected: false,
+      schemaEnsured: false,
+      error: isProd ? "Database is not configured in production" : undefined,
+    };
+  }
+  try {
+    if (!isSchemaEnsured() || forceSchemaSync) {
+      await ensureDatabaseSchema(forceSchemaSync);
+    }
+    await pool.query("SELECT 1 FROM users LIMIT 1");
+    return {
+      healthy: true,
+      connected: true,
+      schemaEnsured: true,
+    };
+  } catch (err: any) {
+    return {
+      healthy: false,
+      connected: false,
+      schemaEnsured: isSchemaEnsured(),
+      error: err?.message || lastSchemaError || "Database connection or schema check failed",
+    };
+  }
+}
 
 /**
  * Explicit migration runner invoked ONLY by the dedicated migration CLI (`scripts/migrate.ts`).

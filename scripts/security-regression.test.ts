@@ -14,7 +14,18 @@ import {
   recordOtpFailedAttempt,
   clearOtpAttempts,
   setSecurityRedisRequesterForTest,
+  consumeSingleUseJti,
+  isSessionJtiRevoked,
+  getUserTokenVersion,
 } from "../server/security";
+import {
+  reconfigureDatabase,
+  isInMemoryFallbackAllowed,
+  isSchemaEnsured,
+  markSchemaEnsuredForTest,
+  resetDatabaseConfigForTest,
+} from "../server/db";
+import { validateWorkerProductionLifecycle } from "../server/envValidation";
 
 interface TestResult {
   id: number;
@@ -1045,6 +1056,106 @@ async function runSecurityRegressionSuite() {
         else process.env.UPSTASH_REDIS_REST_URL = savedRedisUrl;
         if (savedRedisTok === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
         else process.env.UPSTASH_REDIS_REST_TOKEN = savedRedisTok;
+      }
+    }
+
+    // 22. Production-readiness fail-closed DB/JTI/Auth/Health, Worker schema idempotency & Cashfree mode-mismatch blocking
+    {
+      const savedCfMode = process.env.CASHFREE_MODE;
+      const savedCfSecret = process.env.CASHFREE_SECRET_KEY;
+      try {
+        // 22a: Worker reconfigureDatabase preserves schemaEnsured on identical URL and resets only on changed URL
+        const urlA = "postgres://postgres:postgres@127.0.0.1:59998/mingree_test_a";
+        const urlB = "postgres://postgres:postgres@127.0.0.1:59998/mingree_test_b";
+        reconfigureDatabase(urlA, true);
+        markSchemaEnsuredForTest(urlA);
+        const ensuredBeforeRepeat = isSchemaEnsured();
+        reconfigureDatabase(urlA, true);
+        const ensuredAfterIdenticalUrl = isSchemaEnsured();
+        reconfigureDatabase(urlB, true);
+        const ensuredAfterChangedUrl = isSchemaEnsured();
+
+        // 22b: When PostgreSQL is configured and unreachable, in-memory fallback is disabled and JTI/session/auth/health fail closed (503)
+        const fallbackAllowedWhenDbConfigured = isInMemoryFallbackAllowed();
+        let jtiFailedClosed = false;
+        let sessionCheckFailedClosed = false;
+        let tokenVerFailedClosed = false;
+        try {
+          await consumeSingleUseJti("jti_failclosed_test", "test", 60_000);
+        } catch (err) {
+          jtiFailedClosed = err instanceof SecurityStoreUnavailableError;
+        }
+        try {
+          await isSessionJtiRevoked("sess_failclosed_test");
+        } catch (err) {
+          sessionCheckFailedClosed = err instanceof SecurityStoreUnavailableError;
+        }
+        try {
+          await getUserTokenVersion(creatorA.id);
+        } catch (err) {
+          tokenVerFailedClosed = err instanceof SecurityStoreUnavailableError;
+        }
+
+        const rAuthWithDownDb = await fetch(`${baseUrl}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${creatorAToken}` },
+        });
+        const rHealthWithDownDb = await fetch(`${baseUrl}/api/health`);
+        const healthBody: any = await rHealthWithDownDb.json().catch(() => ({}));
+
+        resetDatabaseConfigForTest();
+
+        // 22c: Cashfree production mode with sandbox test key (cfsk_ma_test_*) is blocked across config, create-order, and verify
+        process.env.CASHFREE_MODE = "production";
+        process.env.CASHFREE_SECRET_KEY = "cfsk_ma_test_mismatch_secret_key";
+        const rCfConfig = await fetch(`${baseUrl}/api/cashfree/config`);
+        const cfConfigData: any = await rCfConfig.json().catch(() => ({}));
+        const rCfCreateMismatch = await fetch(`${baseUrl}/api/cashfree/create-order`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${sponsorAToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ amount: 500 }),
+        });
+
+        // 22d: Worker production lifecycle validation checks presence only without exposing secret values
+        const lifecycleReport = validateWorkerProductionLifecycle({
+          NODE_ENV: "production",
+          JWT_SECRET: "a".repeat(32),
+          ENCRYPTION_KEY: "b".repeat(32),
+          CASHFREE_SECRET_KEY: "cfsk_ma_prod_live_secret_value_do_not_log",
+          CASHFREE_MODE: "production",
+        });
+
+        const passed =
+          ensuredBeforeRepeat === true &&
+          ensuredAfterIdenticalUrl === true &&
+          ensuredAfterChangedUrl === false &&
+          fallbackAllowedWhenDbConfigured === false &&
+          jtiFailedClosed &&
+          sessionCheckFailedClosed &&
+          tokenVerFailedClosed &&
+          rAuthWithDownDb.status === 503 &&
+          rHealthWithDownDb.status === 503 &&
+          healthBody.database === "disconnected" &&
+          cfConfigData.configured === false &&
+          cfConfigData.modeMismatch === true &&
+          rCfCreateMismatch.status === 503 &&
+          lifecycleReport.isProduction === true &&
+          lifecycleReport.databaseConfigured === false;
+
+        record(
+          22,
+          "Fail-closed DB/Auth/JTI/Health (503), Worker schema idempotency & Cashfree mode-mismatch blocking",
+          passed,
+          `schemaIdempotent=${ensuredAfterIdenticalUrl && !ensuredAfterChangedUrl}, dbFallback=${fallbackAllowedWhenDbConfigured}, jti503=${jtiFailedClosed}, authMe=${rAuthWithDownDb.status}, health=${rHealthWithDownDb.status}, cfMismatch=${rCfCreateMismatch.status}`
+        );
+      } finally {
+        resetDatabaseConfigForTest();
+        if (savedCfMode === undefined) delete process.env.CASHFREE_MODE;
+        else process.env.CASHFREE_MODE = savedCfMode;
+        if (savedCfSecret === undefined) delete process.env.CASHFREE_SECRET_KEY;
+        else process.env.CASHFREE_SECRET_KEY = savedCfSecret;
       }
     }
   } finally {
