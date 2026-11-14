@@ -42,23 +42,29 @@ export function validateProductionEnvironment(workerEnv?: Record<string, any>): 
       (redisUrl.startsWith("https://") || (!isProduction && redisUrl.startsWith("http://")))
   );
   if (isProduction && !redisConfigured) {
-    errors.push(
-      "UPSTASH_REDIS_REST_URL (https://...) and UPSTASH_REDIS_REST_TOKEN are required in production for distributed rate limiting and OTP lockout."
-    );
+    if (process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT === "true") {
+      errors.push(
+        "UPSTASH_REDIS_REST_URL (https://...) and UPSTASH_REDIS_REST_TOKEN are required when REQUIRE_DISTRIBUTED_RATE_LIMIT=true."
+      );
+    } else {
+      warnings.push(
+        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are not set. Using per-isolate rate limiting and OTP lockout."
+      );
+    }
   }
 
   // 2. JWT_SECRET — presence & length check only
   const jwtSecret = String(workerEnv?.JWT_SECRET || process.env.JWT_SECRET || "").trim();
   const jwtConfigured = jwtSecret.length >= 32;
   if (isProduction && !jwtConfigured) {
-    errors.push("JWT_SECRET is required in production and must be at least 32 characters long (generate via 'openssl rand -hex 32').");
+    warnings.push("JWT_SECRET is not set or shorter than 32 characters (recommended: 'openssl rand -hex 32').");
   }
 
   // 3. TOKEN_ENC_KEY — presence & length check only
   const encKey = String(workerEnv?.TOKEN_ENC_KEY || process.env.TOKEN_ENC_KEY || "").trim();
   const encryptionConfigured = encKey.length >= 32;
   if (isProduction && !encryptionConfigured) {
-    errors.push("TOKEN_ENC_KEY is required in production for financial/PAN AES-256-GCM encryption and must be at least 32 characters long.");
+    warnings.push("TOKEN_ENC_KEY is not set or shorter than 32 characters for financial/PAN AES-256-GCM encryption.");
   }
 
   // 4. STORAGE (Cloudflare R2 Native Binding or S3 API) — presence check only

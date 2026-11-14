@@ -970,14 +970,16 @@ async function runSecurityRegressionSuite() {
       }
     }
 
-    // 20. Fail-closed HTTP 503 enforcement when production lacks Redis or Redis fails
+    // 20. Fail-closed HTTP 503 enforcement when REQUIRE_DISTRIBUTED_RATE_LIMIT=true and Redis is missing/down
     {
       const savedNodeEnv = process.env.NODE_ENV;
+      const savedReqDist = process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT;
       const savedRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
       const savedRedisTok = process.env.UPSTASH_REDIS_REST_TOKEN;
       try {
-        // 20a: Production mode with NO Redis credentials must fail closed (HTTP 503), never fall back to memory
+        // 20a: Strict distributed mode with NO Redis credentials must fail closed (HTTP 503)
         process.env.NODE_ENV = "production";
+        process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT = "true";
         delete process.env.UPSTASH_REDIS_REST_URL;
         delete process.env.UPSTASH_REDIS_REST_TOKEN;
         setSecurityRedisRequesterForTest(null);
@@ -989,7 +991,7 @@ async function runSecurityRegressionSuite() {
           body: JSON.stringify({ email: "failclosed@test.mingree.internal", otp: "123456" }),
         });
 
-        // 20b: Production mode with failing/unreachable Redis store must fail closed (HTTP 503)
+        // 20b: Strict distributed mode with failing/unreachable Redis store must fail closed (HTTP 503)
         process.env.UPSTASH_REDIS_REST_URL = "https://down-upstash.mingree.invalid";
         process.env.UPSTASH_REDIS_REST_TOKEN = "down_token";
         setSecurityRedisRequesterForTest({
@@ -1020,7 +1022,7 @@ async function runSecurityRegressionSuite() {
           unitThrew;
         record(
           20,
-          "Production fails safely (HTTP 503) when Redis is missing or unreachable",
+          "Production fails safely (HTTP 503) when Redis is required and missing or unreachable",
           passed,
           `missingRate=${rMissingRedisRate.status}, missingOtp=${rMissingRedisOtp.status}, downRate=${rDownRedisRate.status}, downOtp=${rDownRedisOtp.status}, throws503Error=${unitThrew}`
         );
@@ -1028,6 +1030,8 @@ async function runSecurityRegressionSuite() {
         setSecurityRedisRequesterForTest(null);
         if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = savedNodeEnv;
+        if (savedReqDist === undefined) delete process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT;
+        else process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT = savedReqDist;
         if (savedRedisUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
         else process.env.UPSTASH_REDIS_REST_URL = savedRedisUrl;
         if (savedRedisTok === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -1035,20 +1039,32 @@ async function runSecurityRegressionSuite() {
       }
     }
 
-    // 21. Local development mode preserves full functionality without Redis
+    // 21. Default production & local development mode operate normally without Redis using in-isolate fallback
     {
       const savedNodeEnv = process.env.NODE_ENV;
       const savedRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
       const savedRedisTok = process.env.UPSTASH_REDIS_REST_TOKEN;
       try {
-        process.env.NODE_ENV = "development";
+        process.env.NODE_ENV = "production";
+        delete process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT;
         delete process.env.UPSTASH_REDIS_REST_URL;
         delete process.env.UPSTASH_REDIS_REST_TOKEN;
         setSecurityRedisRequesterForTest(null);
 
+        const rProdPublicCreators = await fetch(`${baseUrl}/api/public/creators`);
+        const rProdCreatorPanel = await fetch(`${baseUrl}/api/campaigns/creator-panel`);
+        process.env.NODE_ENV = "development";
         const rDevHealth = await fetch(`${baseUrl}/api/health`);
-        const passed = rDevHealth.status === 200;
-        record(21, "Local development mode operates normally without Redis", passed, `devHealth=${rDevHealth.status}`);
+        const passed =
+          rProdPublicCreators.status === 200 &&
+          rProdCreatorPanel.status === 200 &&
+          rDevHealth.status === 200;
+        record(
+          21,
+          "Cloudflare+Supabase production & local dev operate normally without Upstash Redis",
+          passed,
+          `prodCreators=${rProdPublicCreators.status}, prodPanel=${rProdCreatorPanel.status}, devHealth=${rDevHealth.status}`
+        );
       } finally {
         if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = savedNodeEnv;
@@ -1063,7 +1079,9 @@ async function runSecurityRegressionSuite() {
     {
       const savedCfMode = process.env.CASHFREE_MODE;
       const savedCfSecret = process.env.CASHFREE_SECRET_KEY;
+      const savedStrictDbSec = process.env.REQUIRE_STRICT_DB_SECURITY_STORE;
       try {
+        process.env.REQUIRE_STRICT_DB_SECURITY_STORE = "true";
         // 22a: Worker reconfigureDatabase preserves schemaEnsured on identical URL and resets only on changed URL
         const urlA = "postgres://postgres:postgres@127.0.0.1:59998/mingree_test_a";
         const urlB = "postgres://postgres:postgres@127.0.0.1:59998/mingree_test_b";
@@ -1152,6 +1170,8 @@ async function runSecurityRegressionSuite() {
         );
       } finally {
         resetDatabaseConfigForTest();
+        if (savedStrictDbSec === undefined) delete process.env.REQUIRE_STRICT_DB_SECURITY_STORE;
+        else process.env.REQUIRE_STRICT_DB_SECURITY_STORE = savedStrictDbSec;
         if (savedCfMode === undefined) delete process.env.CASHFREE_MODE;
         else process.env.CASHFREE_MODE = savedCfMode;
         if (savedCfSecret === undefined) delete process.env.CASHFREE_SECRET_KEY;

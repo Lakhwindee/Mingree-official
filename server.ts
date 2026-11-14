@@ -435,14 +435,92 @@ app.use(
   })
 );
 
-// GET /api/creators/:id/avatar - Securely streams creator's profile picture
-app.get("/api/creators/:id/avatar", (req, res) => {
+// GET /api/creators/:id/avatar - Securely streams creator's profile picture (from DB, memory, or live Meta Graph API refresh)
+app.get("/api/creators/:id/avatar", async (req, res) => {
   const userId = Number(req.params.id);
-  const user = registeredUsers.find((u) => u.id === userId);
-  const avatar = user?.avatar || user?.avatarUrl;
-  if (!avatar) {
+  if (isNaN(userId)) {
+    return res.status(400).json({ error: "Invalid creator ID" });
+  }
+
+  let avatar: string | null = null;
+  let igUsername: string | null = null;
+  let igAccessToken: string | null = null;
+
+  const memUser = registeredUsers.find((u) => Number(u.id) === userId);
+  if (memUser) {
+    avatar = memUser.avatar || memUser.avatarUrl || memUser.avatar_url || null;
+    igUsername = memUser.instagramUsername || null;
+    igAccessToken = memUser.instagramAccessToken || null;
+  }
+
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query(
+        `SELECT u.avatar, u.avatar_url, cp.avatar_url AS cp_avatar_url, cp.username, cp.access_token_enc
+         FROM users u
+         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+         WHERE u.id = $1`,
+        [userId]
+      );
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        const dbAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || null;
+        if (dbAvatar && !String(dbAvatar).includes("unsplash.com")) {
+          avatar = dbAvatar;
+        }
+        if (row.username) igUsername = row.username;
+        if (row.access_token_enc) igAccessToken = row.access_token_enc;
+      }
+    } catch {}
+  }
+
+  const isStaleOrMissing =
+    !avatar ||
+    avatar.includes("unsplash.com") ||
+    avatar.startsWith("/api/creators/") ||
+    avatar.includes("cdninstagram.com") ||
+    avatar.includes("fbcdn.net");
+
+  if (isStaleOrMissing && igAccessToken) {
+    try {
+      const profileRes = await fetch(
+        `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url&access_token=${encodeURIComponent(igAccessToken)}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (profileRes.ok) {
+        const pData: any = await profileRes.json();
+        if (pData?.profile_picture_url) {
+          const refreshed = await saveCreatorProfilePicture(
+            userId,
+            igUsername || pData.username || `creator_${userId}`,
+            String(pData.profile_picture_url)
+          );
+          if (refreshed) {
+            avatar = refreshed;
+          }
+        }
+      }
+    } catch {}
+  }
+
+  if (!avatar || avatar.startsWith("/api/creators/")) {
     return res.status(404).json({ error: "Avatar not found" });
   }
+
+  if (avatar.startsWith("data:image/")) {
+    const commaIdx = avatar.indexOf(",");
+    if (commaIdx !== -1) {
+      const meta = avatar.slice(5, commaIdx);
+      const mimeType = meta.split(";")[0] || "image/jpeg";
+      const base64Data = avatar.slice(commaIdx + 1);
+      const imgBuffer = Buffer.from(base64Data, "base64");
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(imgBuffer);
+    }
+  }
+
   if (avatar.startsWith("/uploads/")) {
     const uploadsRoot = path.resolve(process.cwd(), "public", "uploads");
     const filePath = path.resolve(process.cwd(), "public", avatar.replace(/^\/+/, ""));
@@ -1902,34 +1980,61 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
       return res.status(503).json({ error: "Database service unavailable" });
     }
     try {
-      const dbRes = await pool.query(
-        `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
-                u.token_version AS token_version,
-                cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
-                cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
-                cp.tier_label AS cp_tier_label, cp.status AS cp_status
-         FROM users u
-         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
-         WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
-         ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
-         LIMIT 1`,
-        [targetUserId, targetUserEmail]
-      );
+      let dbRes;
+      try {
+        dbRes = await pool.query(
+          `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                  u.avatar, u.avatar_url, u.city, u.handle,
+                  u.token_version AS token_version,
+                  cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
+                  cp.engagement_rate AS cp_engagement_rate, cp.avatar_url AS cp_avatar_url,
+                  cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
+                  cp.tier_label AS cp_tier_label, cp.status AS cp_status
+           FROM users u
+           LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+           WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
+           ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
+           LIMIT 1`,
+          [targetUserId, targetUserEmail]
+        );
+      } catch (firstQueryErr: any) {
+        if (firstQueryErr?.code === "42703" || firstQueryErr?.code === "42P01") {
+          await ensureDatabaseSchema(true).catch(() => {});
+          dbRes = await pool.query(
+            `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                    u.avatar, u.avatar_url, u.city, u.handle,
+                    cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
+                    cp.engagement_rate AS cp_engagement_rate, cp.avatar_url AS cp_avatar_url,
+                    cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
+                    cp.tier_label AS cp_tier_label, cp.status AS cp_status
+             FROM users u
+             LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+             WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
+             ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
+             LIMIT 1`,
+            [targetUserId, targetUserEmail]
+          );
+        } else {
+          throw firstQueryErr;
+        }
+      }
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = 0;
         let medianViews: number | null = null;
         let reach: number | null = null;
+        let engagementRate: number | null = null;
         let instagramUsername: string | null = null;
         let isInstagramVerified = false;
         let tierLabel = "Nano";
 
-        if (row.role === "creator") {
+        if (row.role === "creator" || row.cp_username) {
           if (row.cp_username) instagramUsername = row.cp_username;
           if (row.cp_followers !== null && row.cp_followers !== undefined) followers = Number(row.cp_followers);
           if (row.cp_median_views !== null && row.cp_median_views !== undefined) medianViews = Number(row.cp_median_views);
+          if (row.cp_engagement_rate !== null && row.cp_engagement_rate !== undefined) engagementRate = Number(row.cp_engagement_rate);
           if (row.cp_tier_label) tierLabel = row.cp_tier_label;
-          if (row.cp_status === "active" && (row.cp_access_token_enc || row.cp_instagram_user_id)) {
+          if (row.cp_username && row.cp_status !== "blocked" && row.cp_status !== "pending") {
             isInstagramVerified = true;
           }
         }
@@ -1943,6 +2048,14 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
           medianViews = 0;
         }
 
+        const rawAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || null;
+        const cleanAvatar =
+          rawAvatar && !String(rawAvatar).includes("photo-1534528741775-53994a69daeb")
+            ? rawAvatar
+            : isVerifiedConnection
+              ? `/api/creators/${row.id}/avatar`
+              : null;
+
         user = {
           id: Number(row.id),
           email: row.email,
@@ -1950,15 +2063,20 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
           name: row.name,
           role: row.role,
           tokenVersion: Number(row.token_version || 1),
-          handle: `@${row.email.split("@")[0]}`,
-          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          handle: row.handle || (instagramUsername ? `@${instagramUsername}` : `@${row.email.split("@")[0]}`),
+          avatar: cleanAvatar,
+          avatarUrl: cleanAvatar,
+          city: row.city || "",
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
           status: row.status,
           followers: isVerifiedConnection ? followers : 0,
           medianViews: isVerifiedConnection ? medianViews : 0,
           reach: isVerifiedConnection ? reach : 0,
+          engagementRate: isVerifiedConnection ? (engagementRate || 4.8) : 0,
           instagramUsername: isVerifiedConnection ? instagramUsername : null,
+          instagramUserId: isVerifiedConnection ? (row.cp_instagram_user_id || null) : null,
+          instagramAccessToken: isVerifiedConnection ? (row.cp_access_token_enc || null) : null,
           instagramProfileUrl: isVerifiedConnection ? `https://instagram.com/${instagramUsername}` : null,
           instagramFollowers: isVerifiedConnection ? followers : 0,
           isInstagramVerified: isVerifiedConnection,
@@ -2748,14 +2866,21 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const dbRes = await pool.query(
         `SELECT u.id, u.email, u.name, u.role, u.email_verified, u.status, u.company_name, u.gstin,
-                k.pan_masked AS pan, u.billing_address, u.avatar, u.avatar_url, u.city, u.created_at
+                u.billing_address, u.avatar, u.avatar_url, u.city, u.handle, u.created_at
          FROM users u
-         LEFT JOIN kyc k ON k.user_id = u.id
          WHERE u.id = $1`,
         [targetId]
       );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
+        let maskedPan: string | null = null;
+        try {
+          const kycRes = await pool.query(`SELECT pan_masked FROM kyc WHERE user_id = $1 LIMIT 1`, [targetId]);
+          if (kycRes.rows.length > 0) {
+            maskedPan = kycRes.rows[0].pan_masked || null;
+          }
+        } catch {}
+
         let followers = 0;
         let medianViews: number | null = null;
         let reach: number | null = null;
@@ -2764,9 +2889,13 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
         let isInstagramVerified = false;
         let tierLabel = "Nano";
         let cpAvatar: string | null = null;
+        let cpAccessToken: string | null = null;
 
         try {
-          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status, avatar_url FROM creator_profiles WHERE user_id = $1", [targetId]);
+          const cpRes = await pool.query(
+            "SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status, avatar_url FROM creator_profiles WHERE user_id = $1",
+            [targetId]
+          );
           if (cpRes.rows.length > 0) {
             const cp = cpRes.rows[0];
             if (cp.username) instagramUsername = cp.username;
@@ -2775,7 +2904,8 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
             if (cp.engagement_rate !== null && cp.engagement_rate !== undefined) engagementRate = Number(cp.engagement_rate);
             if (cp.tier_label) tierLabel = cp.tier_label;
             if (cp.avatar_url) cpAvatar = cp.avatar_url;
-            if (cp.status === "active" && (cp.access_token_enc || cp.instagram_user_id)) {
+            if (cp.access_token_enc) cpAccessToken = cp.access_token_enc;
+            if (cp.username && cp.status !== "blocked" && cp.status !== "pending") {
               isInstagramVerified = true;
             }
           }
@@ -2792,16 +2922,45 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
         }
 
         const regUser = registeredUsers.find((u) => u.id === targetId) || (req.user?.id === targetId ? req.user : null);
-        const resolvedAvatar = row.avatar || row.avatar_url || cpAvatar || (regUser ? regUser.avatar : null) || null;
+        let resolvedAvatar = cpAvatar || row.avatar_url || row.avatar || (regUser ? regUser.avatar : null) || null;
+        if (resolvedAvatar && String(resolvedAvatar).includes("photo-1534528741775-53994a69daeb")) {
+          resolvedAvatar = null;
+        }
+
+        // If connected to Instagram and avatar is missing or an expired Instagram CDN link, refresh from Meta Graph API
+        if (
+          isVerifiedConnection &&
+          cpAccessToken &&
+          (!resolvedAvatar || resolvedAvatar.includes("cdninstagram.com") || resolvedAvatar.includes("fbcdn.net"))
+        ) {
+          try {
+            const syncProfileRes = await fetch(
+              `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url&access_token=${encodeURIComponent(cpAccessToken)}`,
+              { signal: AbortSignal.timeout(4000) }
+            );
+            if (syncProfileRes.ok) {
+              const syncPData: any = await syncProfileRes.json();
+              if (syncPData?.profile_picture_url) {
+                const refreshed = await saveCreatorProfilePicture(targetId, instagramUsername!, String(syncPData.profile_picture_url));
+                if (refreshed) resolvedAvatar = refreshed;
+              }
+            }
+          } catch {}
+        }
+
+        if (isVerifiedConnection && !resolvedAvatar) {
+          resolvedAvatar = `/api/creators/${targetId}/avatar`;
+        }
 
         authoritativeUser = {
           id: Number(row.id),
           email: row.email,
           name: row.name,
           role: row.role,
-          handle: `@${row.email.split("@")[0]}`,
+          handle: row.handle || (instagramUsername ? `@${instagramUsername}` : `@${row.email.split("@")[0]}`),
           avatar: resolvedAvatar,
           avatarUrl: resolvedAvatar,
+          pan: maskedPan,
           city: row.city || (regUser ? regUser.city : ""),
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
@@ -2809,7 +2968,7 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
           followers: isVerifiedConnection ? followers : 0,
           medianViews: isVerifiedConnection ? medianViews : 0,
           reach: isVerifiedConnection ? reach : 0,
-          engagementRate: isVerifiedConnection ? engagementRate : 0,
+          engagementRate: isVerifiedConnection ? (engagementRate || 4.8) : 0,
           instagramUsername: isVerifiedConnection ? instagramUsername : null,
           instagramProfileUrl: isVerifiedConnection ? `https://instagram.com/${instagramUsername}` : null,
           instagramFollowers: isVerifiedConnection ? followers : 0,
@@ -2821,7 +2980,11 @@ app.get("/api/users/:id", requireAuth, async (req: AuthRequest, res) => {
       }
     } catch (err: any) {
       console.error("[DB USER FETCH ERROR]", err?.message || err);
-      return res.status(503).json({ error: "Database temporarily unavailable" });
+      if (req.user && req.user.id === targetId) {
+        authoritativeUser = req.user;
+      } else {
+        return res.status(503).json({ error: "Database temporarily unavailable" });
+      }
     }
   } else if (isInMemoryFallbackAllowed()) {
     if (req.user!.id === targetId) {
@@ -2994,9 +3157,10 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
   const previousFollowers = user.instagramFollowers || 0;
   const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
 
-  // Perform disconnect inside ONE atomic database transaction
+  // Perform disconnect inside ONE atomic database transaction for core user & creator_profiles tables
   let dbTransactionError: string | null = null;
   if (isDatabaseConfigured) {
+    await ensureDatabaseSchema().catch(() => {});
     let client;
     try {
       client = await pool.connect();
@@ -3029,43 +3193,6 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
         [targetId]
       );
 
-      // 2. Unbind identity on instagram_identities
-      if (previousIgId) {
-        await client.query(
-          `UPDATE instagram_identities
-           SET current_user_id = NULL, unlinked_at = now()
-           WHERE instagram_user_id = $1`,
-          [previousIgId]
-        );
-      } else if (previousUsername) {
-        await client.query(
-          `UPDATE instagram_identities
-           SET current_user_id = NULL, unlinked_at = now()
-           WHERE LOWER(username) = LOWER($1)`,
-          [previousUsername.toLowerCase()]
-        );
-      }
-
-      // 3. Insert audit log row into security_audit_logs (non-fatal)
-      try {
-        await client.query(
-          `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
-           VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            "DISCONNECT_RECORDED",
-            targetId,
-            previousUsername || "unknown",
-            0,
-            JSON.stringify([]),
-            "ALLOW",
-            clientIp,
-            JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
-          ]
-        );
-      } catch (auditErr: any) {
-        console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
-      }
-
       await client.query("COMMIT");
     } catch (err: any) {
       if (client) {
@@ -3075,6 +3202,43 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req: AuthReq
       console.error("[PG DISCONNECT TRANSACTION ERROR]", dbTransactionError);
     } finally {
       if (client) client.release();
+    }
+
+    // 2. Unbind identity on instagram_identities (best-effort outside main tx so optional table schema doesn't abort disconnect)
+    if (!dbTransactionError) {
+      if (previousIgId) {
+        await pool.query(
+          `UPDATE instagram_identities
+           SET current_user_id = NULL, unlinked_at = now()
+           WHERE instagram_user_id = $1`,
+          [previousIgId]
+        ).catch(() => {});
+      } else if (previousUsername) {
+        await pool.query(
+          `UPDATE instagram_identities
+           SET current_user_id = NULL, unlinked_at = now()
+           WHERE LOWER(username) = LOWER($1)`,
+          [previousUsername.toLowerCase()]
+        ).catch(() => {});
+      }
+
+      // 3. Insert audit log row into security_audit_logs (non-fatal)
+      await pool.query(
+        `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          "DISCONNECT_RECORDED",
+          targetId,
+          previousUsername || "unknown",
+          0,
+          JSON.stringify([]),
+          "ALLOW",
+          clientIp,
+          JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
+        ]
+      ).catch((auditErr: any) => {
+        console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
+      });
     }
   }
 
@@ -6106,12 +6270,12 @@ export async function saveCreatorProfilePicture(userId: number, username: string
   // 2. Base64 / local disk storage fallback (works across serverless Cloudflare Workers & Node)
   if (!finalUrl) {
     try {
-      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(2500) });
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(6000) });
       if (response.ok) {
         const contentType = response.headers.get("content-type") || "image/jpeg";
         const arrayBuf = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
-        if (buffer.length > 0 && buffer.length <= 512 * 1024) {
+        if (buffer.length > 0 && buffer.length <= 2 * 1024 * 1024) {
           finalUrl = `data:${contentType.split(";")[0]};base64,${buffer.toString("base64")}`;
         } else {
           finalUrl = imageUrl;
@@ -8313,7 +8477,11 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
           realCreatorsMap.delete(id);
           continue;
         }
-        const resolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
+        const rawResolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
+        const resolvedAvatar =
+          rawResolvedAvatar && !String(rawResolvedAvatar).includes("unsplash.com")
+            ? rawResolvedAvatar
+            : `/api/creators/${id}/avatar`;
         realCreatorsMap.set(id, {
           id,
           email: row.email,
@@ -8327,6 +8495,8 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
           instagramUsername: row.instagram_username,
           instagramFollowers: Number(row.cp_followers || 0),
           followers: Number(row.cp_followers || 0),
+          medianViews: Number(row.median_views || 0),
+          engagementRate: Number(row.engagement_rate || 4.8),
           isInstagramVerified: true,
           instagramVerificationStatus: "verified",
         });
@@ -8366,7 +8536,10 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
         ? (CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase()) || { id: 0, name: u.city, state: "" })
         : null;
 
-      const avatarUrl = (u.avatar && !u.avatar.includes("unsplash.com")) ? u.avatar : null;
+      const avatarUrl =
+        u.avatar && !String(u.avatar).includes("unsplash.com")
+          ? u.avatar
+          : `/api/creators/${u.id}/avatar`;
 
       const mViews = u.medianViews ? Number(u.medianViews) : (followers > 0 ? Math.round(followers * 0.45) : null);
       const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : null);

@@ -298,7 +298,52 @@ export async function buildPublicCreatorsResponse(registeredUsers: any[]): Promi
   }
 
   // 2. Map registered users who are creators
-  for (const u of registeredUsers) {
+  const combinedCreators: any[] = [...registeredUsers];
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query(`
+        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.avatar_url AS user_avatar_url, u.tier, u.city,
+               cp.username AS instagram_username, cp.followers AS cp_followers, cp.tier_label, cp.median_views,
+               cp.engagement_rate, cp.india_audience_pct, cp.avatar_url AS cp_avatar_url, cp.status AS cp_status,
+               cp.completed_deals
+        FROM users u
+        INNER JOIN creator_profiles cp ON cp.user_id = u.id
+        WHERE cp.username IS NOT NULL
+          AND cp.username != ''
+          AND (cp.status != 'blocked' OR cp.status IS NULL)
+      `);
+      for (const row of dbRes.rows) {
+        const resolvedAvatar =
+          row.cp_avatar_url ||
+          row.user_avatar_url ||
+          row.avatar ||
+          `/api/creators/${row.id}/avatar`;
+        combinedCreators.push({
+          id: Number(row.id),
+          name: row.name,
+          displayName: row.name,
+          email: row.email,
+          role: "creator",
+          handle: row.instagram_username ? `@${row.instagram_username}` : row.handle,
+          instagramUsername: row.instagram_username,
+          avatar: resolvedAvatar,
+          avatarUrl: resolvedAvatar,
+          city: row.city || "Mumbai",
+          tier: row.tier_label || row.tier,
+          followers: Number(row.cp_followers || 0),
+          instagramFollowers: Number(row.cp_followers || 0),
+          medianViews: Number(row.median_views || 0),
+          engagementRate: Number(row.engagement_rate || 4.8),
+          indiaAudiencePct: Number(row.india_audience_pct || 95),
+          completedDeals: Number(row.completed_deals || 0),
+        });
+      }
+    } catch (dbErr: any) {
+      console.warn("[PUBLIC CREATORS DB FETCH WARNING]", dbErr?.message || dbErr);
+    }
+  }
+
+  for (const u of combinedCreators) {
     if (u.role === "creator") {
       const id = Number(u.id);
       const followers = Number(u.instagramFollowers || u.followers) || 0;
@@ -314,7 +359,7 @@ export async function buildPublicCreatorsResponse(registeredUsers: any[]): Promi
         username: cleanHandle,
         displayName: u.displayName || u.name || cleanHandle,
         handle: `@${cleanHandle}`,
-        avatar: u.avatar || u.avatarUrl || existing?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
+        avatar: u.avatar || u.avatarUrl || existing?.avatar || `/api/creators/${id}/avatar`,
         city: u.city || existing?.city || "Mumbai",
         tier,
         followers: followers || existing?.followers || 50000,

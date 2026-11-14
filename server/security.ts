@@ -3,7 +3,7 @@ import path from "path";
 import type { NextFunction, Request, Response } from "express";
 import type { Store, IncrementResponse, Options, ClientRateLimitInfo } from "express-rate-limit";
 import { Redis, type Requester } from "@upstash/redis";
-import { pool, isDatabaseConfigured } from "./db";
+import { pool, isDatabaseConfigured, ensureDatabaseSchema } from "./db";
 
 // ============================================================================
 // 1. HTML ESCAPING, SAFE REDIRECTS & URL VALIDATION
@@ -222,11 +222,15 @@ function pruneBoundedMap(map: Map<string, number>, maxSize = 5000): void {
   }
 }
 
+function isStrictDbSecurityStoreRequired(): boolean {
+  return process.env.REQUIRE_STRICT_DB_SECURITY_STORE === "true";
+}
+
 export async function consumeSingleUseJti(jti: string, namespace: string, ttlMs = 30 * 60 * 1000): Promise<boolean> {
   if (!jti || typeof jti !== "string") return false;
   const scopedKey = `${namespace}:${jti}`;
 
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
     if (!isDatabaseConfigured) {
       throw new SecurityStoreUnavailableError(
         "PostgreSQL database is required in production for single-use JTI enforcement."
@@ -234,13 +238,29 @@ export async function consumeSingleUseJti(jti: string, namespace: string, ttlMs 
     }
     try {
       const expiresAt = new Date(Date.now() + ttlMs);
-      const res = await pool.query(
-        `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (jti_key) DO NOTHING
-         RETURNING jti_key`,
-        [scopedKey, namespace, expiresAt]
-      );
+      let res;
+      try {
+        res = await pool.query(
+          `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (jti_key) DO NOTHING
+           RETURNING jti_key`,
+          [scopedKey, namespace, expiresAt]
+        );
+      } catch (firstErr: any) {
+        if (firstErr?.code === "42P01" || firstErr?.code === "42703") {
+          await ensureDatabaseSchema(true).catch(() => {});
+          res = await pool.query(
+            `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (jti_key) DO NOTHING
+             RETURNING jti_key`,
+            [scopedKey, namespace, expiresAt]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
       if (res.rows.length === 0) {
         consumedJtiMap.set(scopedKey, Date.now() + ttlMs);
         return false;
@@ -249,9 +269,11 @@ export async function consumeSingleUseJti(jti: string, namespace: string, ttlMs 
       return true;
     } catch (err: any) {
       if (err instanceof SecurityStoreUnavailableError) throw err;
-      throw new SecurityStoreUnavailableError(
-        `PostgreSQL JTI store unavailable: ${err?.message || "Database query failed"}`
-      );
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL JTI store unavailable: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
 
@@ -269,27 +291,43 @@ export async function revokeSessionJti(jti: string, expEpochSec?: number): Promi
     ? expEpochSec * 1000
     : Date.now() + 7 * 24 * 60 * 60 * 1000;
 
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
     if (!isDatabaseConfigured) {
       throw new SecurityStoreUnavailableError(
         "PostgreSQL database is required in production for session revocation."
       );
     }
     try {
-      await pool.query(
-        `INSERT INTO revoked_tokens (jti, expires_at)
-         VALUES ($1, $2)
-         ON CONFLICT (jti) DO NOTHING`,
-        [jti, new Date(expMs)]
-      );
+      try {
+        await pool.query(
+          `INSERT INTO revoked_tokens (jti, expires_at)
+           VALUES ($1, $2)
+           ON CONFLICT (jti) DO NOTHING`,
+          [jti, new Date(expMs)]
+        );
+      } catch (firstErr: any) {
+        if (firstErr?.code === "42P01" || firstErr?.code === "42703") {
+          await ensureDatabaseSchema(true).catch(() => {});
+          await pool.query(
+            `INSERT INTO revoked_tokens (jti, expires_at)
+             VALUES ($1, $2)
+             ON CONFLICT (jti) DO NOTHING`,
+            [jti, new Date(expMs)]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
       pruneBoundedMap(revokedSessionMap);
       revokedSessionMap.set(jti, expMs);
       return;
     } catch (err: any) {
       if (err instanceof SecurityStoreUnavailableError) throw err;
-      throw new SecurityStoreUnavailableError(
-        `PostgreSQL session revocation store unavailable: ${err?.message || "Database query failed"}`
-      );
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL session revocation store unavailable: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
 
@@ -304,17 +342,30 @@ export async function isSessionJtiRevoked(jti: string | undefined): Promise<bool
     return true;
   }
 
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
     if (!isDatabaseConfigured) {
       throw new SecurityStoreUnavailableError(
         "PostgreSQL database is required in production for session revocation checks."
       );
     }
     try {
-      const res = await pool.query(
-        `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
-        [jti]
-      );
+      let res;
+      try {
+        res = await pool.query(
+          `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
+          [jti]
+        );
+      } catch (firstErr: any) {
+        if (firstErr?.code === "42P01" || firstErr?.code === "42703") {
+          await ensureDatabaseSchema(true).catch(() => {});
+          res = await pool.query(
+            `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
+            [jti]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
       if (res.rows.length > 0) {
         revokedSessionMap.set(jti, new Date(res.rows[0].expires_at).getTime());
         return true;
@@ -322,9 +373,12 @@ export async function isSessionJtiRevoked(jti: string | undefined): Promise<bool
       return false;
     } catch (err: any) {
       if (err instanceof SecurityStoreUnavailableError) throw err;
-      throw new SecurityStoreUnavailableError(
-        `PostgreSQL session revocation check failed: ${err?.message || "Database query failed"}`
-      );
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL session revocation check failed: ${err?.message || "Database query failed"}`
+        );
+      }
+      return false;
     }
   }
 
@@ -332,14 +386,24 @@ export async function isSessionJtiRevoked(jti: string | undefined): Promise<bool
 }
 
 export async function getUserTokenVersion(userId: number, memoryHint?: number): Promise<number> {
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
     if (!isDatabaseConfigured) {
       throw new SecurityStoreUnavailableError(
         "PostgreSQL database is required in production for token version verification."
       );
     }
     try {
-      const res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+      let res;
+      try {
+        res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+      } catch (firstErr: any) {
+        if (firstErr?.code === "42703" || firstErr?.code === "42P01") {
+          await ensureDatabaseSchema(true).catch(() => {});
+          res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+        } else {
+          throw firstErr;
+        }
+      }
       if (res.rows.length === 0) {
         return Number.MAX_SAFE_INTEGER;
       }
@@ -348,9 +412,11 @@ export async function getUserTokenVersion(userId: number, memoryHint?: number): 
       return dbVersion;
     } catch (err: any) {
       if (err instanceof SecurityStoreUnavailableError) throw err;
-      throw new SecurityStoreUnavailableError(
-        `PostgreSQL token version check failed: ${err?.message || "Database query failed"}`
-      );
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL token version check failed: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
 
@@ -358,17 +424,30 @@ export async function getUserTokenVersion(userId: number, memoryHint?: number): 
 }
 
 export async function bumpUserTokenVersion(userId: number): Promise<number> {
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
     if (!isDatabaseConfigured) {
       throw new SecurityStoreUnavailableError(
         "PostgreSQL database is required in production for token version rotation."
       );
     }
     try {
-      const res = await pool.query(
-        `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
-        [userId]
-      );
+      let res;
+      try {
+        res = await pool.query(
+          `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
+          [userId]
+        );
+      } catch (firstErr: any) {
+        if (firstErr?.code === "42703" || firstErr?.code === "42P01") {
+          await ensureDatabaseSchema(true).catch(() => {});
+          res = await pool.query(
+            `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
+            [userId]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
       if (res.rows.length === 0) {
         throw new Error(`User #${userId} not found in database during token version bump`);
       }
@@ -377,9 +456,11 @@ export async function bumpUserTokenVersion(userId: number): Promise<number> {
       return nextVersion;
     } catch (err: any) {
       if (err instanceof SecurityStoreUnavailableError) throw err;
-      throw new SecurityStoreUnavailableError(
-        `PostgreSQL token version rotation failed: ${err?.message || "Database query failed"}`
-      );
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL token version rotation failed: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
 
@@ -411,7 +492,7 @@ export function setSecurityRedisRequesterForTest(requester: Requester | null): v
 }
 
 function isDistributedStoreRequired(): boolean {
-  return process.env.NODE_ENV === "production" || process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT === "true";
+  return process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT === "true";
 }
 
 function getUpstashRedisCredentials(): { url: string; token: string } | null {

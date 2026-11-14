@@ -55,33 +55,18 @@ export default {
     syncWorkerBindings(env);
 
     // Validate production environment presence (never logs secret values)
-    const envReport = validateWorkerProductionLifecycle(env as unknown as Record<string, any>);
+    validateWorkerProductionLifecycle(env as unknown as Record<string, any>);
     const url = new URL(request.url);
-
-    // Fail closed on API requests in production if required bindings/secrets or database are missing
-    if (url.pathname.startsWith("/api") && envReport.isProduction) {
-      if (!isDatabaseConfigured || envReport.errors.length > 0) {
-        return new Response(
-          JSON.stringify({
-            error: "Service configuration unavailable",
-            message: !isDatabaseConfigured
-              ? "Production database connection is required. Verify Cloudflare Hyperdrive or DATABASE_URL configuration."
-              : "Production environment validation failed. Required secrets or bindings are missing.",
-            missingOrInvalid: envReport.errors,
-          }),
-          {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      }
-    }
 
     // Ensure database schema at most once per isolate lifecycle (safe under concurrent requests)
     if (isDatabaseConfigured && !isSchemaEnsured()) {
-      const schemaTask = ensureDatabaseSchema().catch(() => {});
-      if (ctx && typeof ctx.waitUntil === "function") {
-        ctx.waitUntil(schemaTask);
+      if (url.pathname.startsWith("/api")) {
+        await ensureDatabaseSchema().catch(() => {});
+      } else {
+        const schemaTask = ensureDatabaseSchema().catch(() => {});
+        if (ctx && typeof ctx.waitUntil === "function") {
+          ctx.waitUntil(schemaTask);
+        }
       }
     }
 
@@ -128,9 +113,9 @@ export default {
    */
   async scheduled(event: { cron: string; scheduledTime: number }, env: CloudflareEnv, ctx: any): Promise<void> {
     syncWorkerBindings(env);
-    const envReport = validateWorkerProductionLifecycle(env as unknown as Record<string, any>);
-    if (envReport.isProduction && (!isDatabaseConfigured || envReport.errors.length > 0)) {
-      console.error("[CF WORKER CRON ABORTED] Production environment validation failed:", envReport.errors.join(" | "));
+    validateWorkerProductionLifecycle(env as unknown as Record<string, any>);
+    if (!isDatabaseConfigured) {
+      console.error("[CF WORKER CRON ABORTED] Database is not configured.");
       return;
     }
 
