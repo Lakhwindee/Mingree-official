@@ -665,10 +665,7 @@ async function setOtpRecord(identifier: string, data: StoredOtp): Promise<void> 
   if (!key) return;
   cleanupExpiredOtps();
 
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-    if (!isDatabaseConfigured) {
-      throw new SecurityStoreUnavailableError("Database is required in production for OTP persistence.");
-    }
+  if (isDatabaseConfigured) {
     try {
       await pool.query(
         `INSERT INTO email_otps (email, purpose, otp_hash, expires_at, attempts)
@@ -677,10 +674,8 @@ async function setOtpRecord(identifier: string, data: StoredOtp): Promise<void> 
          SET otp_hash = EXCLUDED.otp_hash, expires_at = EXCLUDED.expires_at, attempts = EXCLUDED.attempts`,
         [key, data.otpHash, data.expiresAt, data.attempts]
       );
-      otpStore.set(key, data);
-      return;
     } catch (err: any) {
-      throw new SecurityStoreUnavailableError(`OTP database persistence failed: ${err?.message || "DB error"}`);
+      console.warn("[OTP DB PERSISTENCE FALLBACK]", err?.message);
     }
   }
 
@@ -691,10 +686,7 @@ async function getOtpRecord(identifier: string): Promise<StoredOtp | undefined> 
   const key = String(identifier || "").toLowerCase().trim();
   if (!key) return undefined;
 
-  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-    if (!isDatabaseConfigured) {
-      throw new SecurityStoreUnavailableError("Database is required in production for OTP verification.");
-    }
+  if (isDatabaseConfigured) {
     try {
       const res = await pool.query(
         `SELECT otp_hash, (EXTRACT(EPOCH FROM expires_at) * 1000)::bigint AS expires_at_ms, attempts
@@ -703,23 +695,21 @@ async function getOtpRecord(identifier: string): Promise<StoredOtp | undefined> 
          LIMIT 1`,
         [key]
       );
-      if (res.rows.length === 0) {
-        return undefined;
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        const expiresAt = Number(row.expires_at_ms);
+        if (Date.now() > expiresAt) {
+          await deleteOtpRecord(key);
+          return undefined;
+        }
+        return {
+          otpHash: String(row.otp_hash),
+          expiresAt,
+          attempts: Number(row.attempts || 0),
+        };
       }
-      const row = res.rows[0];
-      const expiresAt = Number(row.expires_at_ms);
-      if (Date.now() > expiresAt) {
-        await deleteOtpRecord(key);
-        return undefined;
-      }
-      return {
-        otpHash: String(row.otp_hash),
-        expiresAt,
-        attempts: Number(row.attempts || 0),
-      };
     } catch (err: any) {
-      if (err instanceof SecurityStoreUnavailableError) throw err;
-      throw new SecurityStoreUnavailableError(`OTP database read failed: ${err?.message || "DB error"}`);
+      console.warn("[OTP DB READ FALLBACK]", err?.message);
     }
   }
 

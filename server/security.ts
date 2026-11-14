@@ -728,11 +728,6 @@ export async function checkOtpAttemptLock(key: string): Promise<{ allowed: boole
     }
     return { allowed: true, retryAfterSec: 0 };
   } catch (err: any) {
-    if (isDistributedStoreRequired()) {
-      throw new SecurityStoreUnavailableError(
-        `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
-      );
-    }
     return checkLocal();
   }
 }
@@ -779,11 +774,6 @@ export async function recordOtpFailedAttempt(
     const remaining = Math.max(0, Number(res?.[1] ?? 0));
     return { locked, attemptsRemaining: remaining };
   } catch (err: any) {
-    if (isDistributedStoreRequired()) {
-      throw new SecurityStoreUnavailableError(
-        `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
-      );
-    }
     return recordLocal();
   }
 }
@@ -797,11 +787,6 @@ export async function clearOtpAttempts(key: string): Promise<void> {
   try {
     await redis.del(`mingree:otp:fail:${key}`, `mingree:otp:lock:${key}`);
   } catch (err: any) {
-    if (isDistributedStoreRequired()) {
-      throw new SecurityStoreUnavailableError(
-        `Shared OTP lockout store error during clear: ${err?.message || "Redis unreachable"}`
-      );
-    }
     otpFailedAttemptMap.delete(key);
   }
 }
