@@ -100,6 +100,7 @@ export default function Privacy() {
               { id: "rights", label: "6. Your DPDP Rights" },
               { id: "sharing", label: "7. Third-Party Sharing" },
               { id: "cookies", label: "8. Cookies & Analytics" },
+              { id: "age-policy", label: "Age Policy (13+)" },
               { id: "grievance", label: "9. Grievance Redressal" },
             ].map((sec) => (
               <button
@@ -479,6 +480,26 @@ export default function Privacy() {
                 detect server latency, prevent DDoS attacks, and improve mobile browser compatibility.
               </li>
             </ul>
+          </section>
+
+          {/* Section 8b: Children & Minimum Age Policy */}
+          <section id="age-policy" className="space-y-4 pt-6 border-t border-slate-200">
+            <div className="flex items-center gap-2 text-rose-600 font-bold text-xs uppercase tracking-wider">
+              <span>Age Requirement</span>
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">
+              Minimum Age (13+) &amp; Children's Privacy
+            </h2>
+            <p className="text-slate-600 text-xs sm:text-sm leading-relaxed">
+              Mingree is intended for users aged <strong>13 years and above</strong>, and we do not
+              knowingly collect personal information from children under 13. If we learn that data
+              from anyone under 13 has been collected without authorization, we will promptly delete
+              it upon notification at{" "}
+              <a href="mailto:privacy@mingree.com" className="text-rose-600 underline font-semibold">
+                privacy@mingree.com
+              </a>
+              .
+            </p>
           </section>
 
           {/* Section 9: Grievance Redressal */}

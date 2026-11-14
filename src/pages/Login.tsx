@@ -166,6 +166,10 @@ export default function Login() {
                 </div>
               </div>
 
+              <div className="rounded-lg border border-border/80 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
+                <span className="font-semibold text-foreground">Age Requirement (13+):</span> You must be at least 13 years old to use Mingree.
+              </div>
+
               <Button
                 type="submit"
                 className="w-full h-10 text-xs font-semibold cursor-pointer"
@@ -195,9 +199,9 @@ export default function Login() {
       {/* Footer */}
       <div className="max-w-md w-full mx-auto text-center py-2">
         <p className="text-[11px] text-muted-foreground">
-          By continuing, you agree to Mingree's{" "}
+          By logging in, you confirm you are 13+ years old and agree to Mingree's{" "}
           <Link href="/terms"><span className="underline cursor-pointer">Terms</span></Link> and{" "}
-          <Link href="/privacy"><span className="underline cursor-pointer">Privacy Policy</span></Link>
+          <Link href="/privacy"><span className="underline cursor-pointer">Privacy Policy</span></Link>.
         </p>
       </div>
     </div>

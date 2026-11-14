@@ -1847,7 +1847,7 @@ app.use(["/api/users/:id", "/api/users/:id/*", "/api/sponsors/:id", "/api/sponso
 
 // Auth Endpoints
 app.post("/api/auth/signup", async (req, res) => {
-  const { name, email, password, role, city, country, companyName, verifiedToken, otpVerified, phone } = req.body || {};
+  const { name, email, password, role, city, country, companyName, verifiedToken, otpVerified, phone, ageConfirmed } = req.body || {};
   const cleanEmail = (email || "").toLowerCase().trim();
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const formattedPhone = cleanPhone ? `+91${cleanPhone}` : null;
@@ -1865,6 +1865,11 @@ app.post("/api/auth/signup", async (req, res) => {
   }
   if (requestedRole !== "creator" && requestedRole !== "sponsor") {
     return res.status(400).json({ error: "Role can only be creator or sponsor." });
+  }
+  if (ageConfirmed !== true) {
+    return res.status(400).json({
+      error: "You must confirm that you are at least 13 years old and accept our Terms of Service.",
+    });
   }
 
   // Check DB for existing account with same email

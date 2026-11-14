@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -153,6 +153,10 @@ export default function SponsorLogin() {
                 </div>
               </div>
 
+              <div className="rounded-lg border border-border/80 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground leading-relaxed">
+                <span className="font-semibold text-foreground">Age Requirement (13+):</span> You must be at least 13 years old to use Mingree.
+              </div>
+
               <Button
                 type="submit"
                 className="w-full text-xs font-semibold h-9 cursor-pointer"
@@ -183,6 +187,11 @@ export default function SponsorLogin() {
                 >
                   Sign in as creator
                 </button>
+              </p>
+              <p className="pt-2 text-[11px] text-muted-foreground">
+                By signing in, you agree to Mingree's{" "}
+                <Link href="/terms"><span className="underline cursor-pointer">Terms</span></Link> and{" "}
+                <Link href="/privacy"><span className="underline cursor-pointer">Privacy Policy</span></Link>.
               </p>
             </div>
           </CardContent>

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
@@ -55,6 +56,7 @@ export default function Signup() {
   const [billingPincode, setBillingPincode] = useState("");
   const [website, setWebsite] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
@@ -91,6 +93,13 @@ export default function Signup() {
 
     if (password.length < 6) {
       const msg = "Password must be at least 6 characters.";
+      setErrorMessage(msg);
+      toast.error(msg);
+      return;
+    }
+
+    if (!ageConfirmed) {
+      const msg = "You must confirm that you are at least 13 years old and agree to our Terms & Privacy Policy.";
       setErrorMessage(msg);
       toast.error(msg);
       return;
@@ -198,6 +207,8 @@ export default function Signup() {
             role,
             verifiedToken,
             otpVerified: true,
+            ageConfirmed,
+            minimumAgeRequired: 13,
             companyName: role === "sponsor" ? companyName.trim() : undefined,
             gstNumber: role === "sponsor" ? gstNumber.trim() : undefined,
             panNumber: role === "sponsor" ? panNumber.trim() : undefined,
@@ -224,6 +235,8 @@ export default function Signup() {
             role,
             verifiedToken,
             otpVerified: true,
+            ageConfirmed,
+            minimumAgeRequired: 13,
             companyName: role === "sponsor" ? companyName.trim() : undefined,
             gstNumber: role === "sponsor" ? gstNumber.trim() : undefined,
             panNumber: role === "sponsor" ? panNumber.trim() : undefined,
@@ -504,19 +517,33 @@ export default function Signup() {
                   </button>
                 </div>
 
+                <label
+                  htmlFor="signup-age-confirm"
+                  className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 p-3 cursor-pointer select-none"
+                >
+                  <Checkbox
+                    id="signup-age-confirm"
+                    checked={ageConfirmed}
+                    onCheckedChange={(checked) => setAgeConfirmed(Boolean(checked))}
+                    className="mt-0.5"
+                    data-testid="checkbox-age-confirm"
+                  />
+                  <span className="text-[11px] text-muted-foreground leading-relaxed">
+                    I confirm that I am at least <strong className="text-foreground">13 years old</strong> and agree to Mingree's{" "}
+                    <Link href="/terms" onClick={(e) => e.stopPropagation()}><span className="underline text-foreground">Terms of Service</span></Link> and{" "}
+                    <Link href="/privacy" onClick={(e) => e.stopPropagation()}><span className="underline text-foreground">Privacy Policy</span></Link>.
+                  </span>
+                </label>
+
                 <Button
                   type="button"
                   onClick={sendOtp}
                   className="w-full text-xs font-semibold h-9"
-                  disabled={isLoading || !name || !email || !password || (role === "sponsor" && !companyName)}
+                  disabled={isLoading || !name || !email || !password || !ageConfirmed || (role === "sponsor" && !companyName)}
                   data-testid="button-signup"
                 >
                   {isLoading ? "Please wait..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
                 </Button>
-
-                <p className="text-center text-[11px] text-muted-foreground">
-                  By signing up, you agree to our Terms of Service
-                </p>
 
                     <div className="border-t border-border pt-3 mt-3">
                       <p className="text-center text-muted-foreground text-xs">

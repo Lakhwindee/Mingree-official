@@ -519,7 +519,7 @@ async function runVerification() {
     // Check all bigint columns in shared/schema.ts
     const schemaSource = fs.readFileSync(path.join(process.cwd(), "shared", "schema.ts"), "utf-8");
     // Find all bigserial and bigint occurrences
-    const bigintMatches = schemaSource.match(/(bigserial|bigint)\([^)]*\)/g) || [];
+    const bigintMatches: string[] = schemaSource.match(/(bigserial|bigint)\([^)]*\)/g) || [];
     const unconfiguredBigints = bigintMatches.filter((m) => !m.includes('mode: "number"') && !m.includes("mode: 'number'"));
 
     record(
