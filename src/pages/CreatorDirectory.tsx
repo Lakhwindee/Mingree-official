@@ -39,6 +39,7 @@ interface PublicCreator {
   pricePerStory: number;
   pricePerSimplePost: number;
   pricePerCollab: number;
+  pricePerBioLinkStory: number;
   completedDeals: number;
   onTimeRate: number;
   category: string;
@@ -63,6 +64,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 1400,
     pricePerSimplePost: 2000,
     pricePerCollab: 3900,
+    pricePerBioLinkStory: 1600,
     completedDeals: 24,
     onTimeRate: 100,
     category: "Fashion & Lifestyle",
@@ -85,6 +87,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 3250,
     pricePerSimplePost: 4500,
     pricePerCollab: 9100,
+    pricePerBioLinkStory: 3900,
     completedDeals: 31,
     onTimeRate: 98,
     category: "Dance & Music",
@@ -107,6 +110,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 3250,
     pricePerSimplePost: 4500,
     pricePerCollab: 9100,
+    pricePerBioLinkStory: 3900,
     completedDeals: 39,
     onTimeRate: 100,
     category: "Comedy & Entertainment",
@@ -129,6 +133,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 1400,
     pricePerSimplePost: 2000,
     pricePerCollab: 3900,
+    pricePerBioLinkStory: 1600,
     completedDeals: 19,
     onTimeRate: 100,
     category: "Wellness & Fitness",
@@ -151,6 +156,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 3250,
     pricePerSimplePost: 4500,
     pricePerCollab: 9100,
+    pricePerBioLinkStory: 3900,
     completedDeals: 42,
     onTimeRate: 100,
     category: "Comedy & Entertainment",
@@ -173,6 +179,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 600,
     pricePerSimplePost: 900,
     pricePerCollab: 1700,
+    pricePerBioLinkStory: 700,
     completedDeals: 15,
     onTimeRate: 100,
     category: "Food & Cafes",
@@ -195,6 +202,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 3250,
     pricePerSimplePost: 4500,
     pricePerCollab: 9100,
+    pricePerBioLinkStory: 3900,
     completedDeals: 27,
     onTimeRate: 100,
     category: "Travel & Cafes",
@@ -217,6 +225,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 1400,
     pricePerSimplePost: 2000,
     pricePerCollab: 3900,
+    pricePerBioLinkStory: 1600,
     completedDeals: 18,
     onTimeRate: 100,
     category: "Beauty & Skincare",
@@ -239,6 +248,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     pricePerStory: 1400,
     pricePerSimplePost: 2000,
     pricePerCollab: 3900,
+    pricePerBioLinkStory: 1600,
     completedDeals: 21,
     onTimeRate: 100,
     category: "Tech & Gadgets",
@@ -689,7 +699,7 @@ export default function CreatorDirectory() {
                       <span>Standardized Rates</span>
                       <span className="text-slate-500 font-medium text-[10px]">Platform Verified</span>
                     </div>
-                    <div className="grid grid-cols-4 gap-1.5 text-xs">
+                    <div className="grid grid-cols-5 gap-1 text-[11px]">
                       <div className="p-2 rounded-xl bg-rose-50/80 border border-rose-300 text-center">
                         <div className="text-[11px] text-slate-600 font-semibold">Reel</div>
                         <div className="text-rose-600 font-black text-xs mt-0.5 font-mono tabular-nums">
@@ -712,6 +722,12 @@ export default function CreatorDirectory() {
                         <div className="text-[11px] text-slate-600 font-semibold">Collab</div>
                         <div className="text-slate-900 font-black text-xs mt-0.5 font-mono tabular-nums">
                           {formatINR(c.pricePerCollab)}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded-xl bg-slate-50/80 border border-slate-200 text-center">
+                        <div className="text-[11px] text-slate-600 font-semibold">Bio &amp; Story</div>
+                        <div className="text-slate-900 font-black text-xs mt-0.5 font-mono tabular-nums">
+                          {formatINR(c.pricePerBioLinkStory || Math.round(c.pricePerReel * 0.6))}
                         </div>
                       </div>
                     </div>

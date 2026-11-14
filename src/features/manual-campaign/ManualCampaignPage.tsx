@@ -40,6 +40,9 @@ function getCreatorRateForDeliverable(c: CreatorCard, deliv: DeliverableType): n
   if (deliv === "simple_post") {
     return Math.round((c.rateCard?.reel || c.price) * 0.7);
   }
+  if (deliv === "bio_link_story") {
+    return Math.round((c.rateCard?.reel || c.price) * 0.6);
+  }
   return c.price;
 }
 const STYLES: { id: CampaignDetails["promotionStyle"]; label: string; text: string }[] = [
@@ -751,6 +754,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                   { id: "story", label: "Story", price: getCreatorRateForDeliverable(c, "story") },
                   { id: "simple_post", label: "Post", price: getCreatorRateForDeliverable(c, "simple_post") },
                   { id: "collab_post", label: "Collab", price: getCreatorRateForDeliverable(c, "collab_post") },
+                  { id: "bio_link_story", label: "Bio & Story", price: getCreatorRateForDeliverable(c, "bio_link_story") },
                 ];
 
                 return (
@@ -845,7 +849,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             Platform Verified
                           </span>
                         </div>
-                        <div className="grid grid-cols-4 gap-1.5 text-xs">
+                        <div className="grid grid-cols-5 gap-1 text-[11px]">
                           {cardRates.map((item) => {
                             const isSelectedPkg = activeDeliv === item.id;
                             return (
