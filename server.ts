@@ -24,7 +24,6 @@ import {
   isCorsOriginAllowed,
   stripDangerousKeysMiddleware,
   normalizePhoneE164,
-  verifyFirebasePhoneIdToken,
   consumeSingleUseJti,
   revokeSessionJti,
   isSessionJtiRevoked,
@@ -728,8 +727,8 @@ export function verifySignedOtpToken(
   }
 }
 
-function createVerifiedEmailToken(email: string): string {
-  const expiresAt = Date.now() + 30 * 60 * 1000; // 30 mins
+export function createVerifiedEmailToken(email: string, customExpiresAt?: number): string {
+  const expiresAt = customExpiresAt ?? (Date.now() + 30 * 60 * 1000); // 30 mins
   const jti = crypto.randomBytes(12).toString("hex");
   const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt, jti })).toString("base64url");
   const sig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
@@ -2346,44 +2345,58 @@ app.post("/api/auth/login", async (req, res) => {
 
 app.post("/api/auth/phone-login", async (req, res) => {
   try {
-    const { phoneNumber, role, name, idToken, verifiedPhoneToken } = req.body || {};
+    const { phoneNumber, role, name, verifiedPhoneToken } = req.body || {};
 
-    let verifiedPhone = "";
-    if (idToken) {
-      try {
-        const fbToken = await verifyFirebasePhoneIdToken(String(idToken), "gen-lang-client-0314158911");
-        verifiedPhone = fbToken.phoneNumber;
-      } catch (fbErr: any) {
-        return res.status(401).json({
-          error: fbErr?.message || "Unauthorized: Invalid or expired Firebase authentication token",
-        });
-      }
-
-      if (phoneNumber) {
-        const requestedNormalized = normalizePhoneE164(String(phoneNumber));
-        if (requestedNormalized && requestedNormalized !== verifiedPhone) {
-          return res.status(403).json({
-            error: "Forbidden: Verified phone number does not match requested account phone number",
-          });
-        }
-      }
-    } else if (verifiedPhoneToken && phoneNumber) {
-      const normalized = normalizePhoneE164(String(phoneNumber));
-      const clean10 = normalized.replace(/[^0-9]/g, "").slice(-10);
-      const tokenEmails = [
-        `${clean10}@phone.mingree.com`,
-        `${normalized.replace(/\+/g, "")}@phone.mingree.com`,
-      ];
-      const consumed = await consumeVerifiedEmailToken(String(verifiedPhoneToken), tokenEmails);
-      if (!consumed) {
-        return res.status(401).json({ error: "Unauthorized: Invalid, expired, or already-used phone verification proof" });
-      }
-      verifiedPhone = normalized;
-    } else {
+    if (!verifiedPhoneToken || !phoneNumber || typeof verifiedPhoneToken !== "string" || !verifiedPhoneToken.includes(".")) {
       return res.status(401).json({
-        error: "Unauthorized: Valid Firebase ID token or verified SMS OTP proof is required for phone login",
+        error: "Unauthorized: Verified SMS OTP proof is required for phone login",
       });
     }
+
+    const [tPayload, tSig] = verifiedPhoneToken.split(".");
+    if (!tPayload || !tSig) {
+      return res.status(401).json({ error: "Unauthorized: Malformed phone verification token" });
+    }
+    const expectedSig = crypto.createHmac("sha256", getOtpSigningSecret()).update(tPayload).digest("hex");
+    const sigBuf = Buffer.from(tSig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      return res.status(401).json({ error: "Unauthorized: Invalid phone verification signature" });
+    }
+
+    let decodedProof: any;
+    try {
+      decodedProof = JSON.parse(Buffer.from(tPayload, "base64url").toString("utf-8"));
+    } catch {
+      return res.status(401).json({ error: "Unauthorized: Invalid phone verification payload" });
+    }
+
+    if (decodedProof?.verified !== true || Date.now() > Number(decodedProof?.expiresAt)) {
+      return res.status(401).json({ error: "Unauthorized: Phone verification token has expired" });
+    }
+
+    const normalized = normalizePhoneE164(String(phoneNumber));
+    const clean10 = normalized.replace(/[^0-9]/g, "").slice(-10);
+    if (!clean10 || clean10.length !== 10) {
+      return res.status(400).json({ error: "Valid 10-digit phone number is required" });
+    }
+    const tokenEmails = [
+      `${clean10}@phone.mingree.com`,
+      `${normalized.replace(/\+/g, "")}@phone.mingree.com`,
+    ];
+    const proofEmail = String(decodedProof.email || "").toLowerCase().trim();
+    if (!tokenEmails.includes(proofEmail)) {
+      return res.status(403).json({
+        error: "Forbidden: Verified phone number does not match requested account phone number",
+      });
+    }
+
+    const consumed = await consumeVerifiedEmailToken(String(verifiedPhoneToken), tokenEmails);
+    if (!consumed) {
+      return res.status(401).json({ error: "Unauthorized: Phone verification token has already been used" });
+    }
+
+    const verifiedPhone = normalized;
 
     const formattedPhone = verifiedPhone;
     const clean10Digits = formattedPhone.replace(/[^0-9]/g, "").slice(-10);

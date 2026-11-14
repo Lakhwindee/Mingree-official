@@ -85,7 +85,7 @@ async function runIntegrationTests() {
         const rPhoneAcc = await fetch(`${baseUrl}/api/auth/phone-accounts`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone: "9876543210", otp: code, firebaseVerified: true }),
+          body: JSON.stringify({ phone: "9876543210", otp: code }),
         });
         const rPhoneReset = await fetch(`${baseUrl}/api/auth/phone-reset-password`, {
           method: "POST",

@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import jwt from "jsonwebtoken";
 import assert from "assert";
-import app, { getJwtSecret, createSignedOtpToken } from "../server";
+import app, { getJwtSecret, createSignedOtpToken, createVerifiedEmailToken } from "../server";
 import { createPaymentOrder, getOrCreateWallet } from "../server/walletAndPayments";
 import { saveSingleWorkspace } from "../server/campaignWorkspaces";
 import {
@@ -30,47 +30,6 @@ function record(id: number, name: string, passed: boolean, details: string) {
   console.log(`[SEC-${String(id).padStart(2, "0")}] ${passed ? "✓ PASS" : "✗ FAIL"} — ${name}: ${details}`);
 }
 
-function signMockFirebaseToken(params: {
-  privateKeyPem: string;
-  kid: string;
-  phoneNumber: string;
-  sub?: string;
-  aud?: string;
-  iss?: string;
-  expOffsetSec?: number;
-  alg?: string;
-}): string {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(
-    JSON.stringify({
-      alg: params.alg ?? "RS256",
-      kid: params.kid,
-      typ: "JWT",
-    })
-  ).toString("base64url");
-  const payload = Buffer.from(
-    JSON.stringify({
-      iss: params.iss ?? "https://securetoken.google.com/gen-lang-client-0314158911",
-      aud: params.aud ?? "gen-lang-client-0314158911",
-      auth_time: nowSec - 10,
-      user_id: params.sub ?? "fb-uid-test-1",
-      sub: params.sub ?? "fb-uid-test-1",
-      iat: nowSec - 10,
-      exp: nowSec + (params.expOffsetSec ?? 3600),
-      phone_number: params.phoneNumber,
-    })
-  ).toString("base64url");
-
-  if (params.alg === "none") {
-    return `${header}.${payload}.`;
-  }
-  const signer = crypto.createSign("RSA-SHA256");
-  signer.update(`${header}.${payload}`);
-  signer.end();
-  const sig = signer.sign(params.privateKeyPem).toString("base64url");
-  return `${header}.${payload}.${sig}`;
-}
-
 function signCashfreeWebhook(rawBody: string, timestamp: string, secretKey: string): string {
   return crypto.createHmac("sha256", secretKey).update(`${timestamp}${rawBody}`).digest("base64");
 }
@@ -80,16 +39,7 @@ async function runSecurityRegressionSuite() {
   console.log("   MINGREE COMPREHENSIVE SECURITY REGRESSION & ATTACK SUITE      ");
   console.log("=================================================================\n");
 
-  const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" }).toString();
-  const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-
-  const { privateKey: roguePrivateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const roguePrivatePem = roguePrivateKey.export({ type: "pkcs8", format: "pem" }).toString();
-
   const prevEnv = {
-    FIREBASE_TEST_PUBLIC_KEY: process.env.FIREBASE_TEST_PUBLIC_KEY,
-    FIREBASE_TEST_KID: process.env.FIREBASE_TEST_KID,
     CASHFREE_APP_ID: process.env.CASHFREE_APP_ID,
     CASHFREE_SECRET_KEY: process.env.CASHFREE_SECRET_KEY,
     INSTAGRAM_APP_ID: process.env.INSTAGRAM_APP_ID,
@@ -97,8 +47,6 @@ async function runSecurityRegressionSuite() {
     CRON_SECRET: process.env.CRON_SECRET,
   };
 
-  process.env.FIREBASE_TEST_PUBLIC_KEY = publicKeyPem;
-  process.env.FIREBASE_TEST_KID = "sec-test-kid";
   process.env.CASHFREE_APP_ID = "TEST_CF_APP_ID";
   process.env.CASHFREE_SECRET_KEY = "TEST_CF_SECRET_" + crypto.randomBytes(8).toString("hex");
   process.env.INSTAGRAM_APP_ID = "999888777666555";
@@ -263,7 +211,7 @@ async function runSecurityRegressionSuite() {
   } as any);
 
   try {
-    // 1. Login without OTP / without Firebase idToken
+    // 1. Login without verified SMS OTP proof
     {
       const r1 = await fetch(`${baseUrl}/api/auth/phone-login`, {
         method: "POST",
@@ -276,83 +224,62 @@ async function runSecurityRegressionSuite() {
         body: JSON.stringify({ phoneNumber: "+919876543210", uid: "fake-uid-no-token", role: "creator" }),
       });
       const passed = r1.status === 401 && r2.status === 401;
-      record(1, "Login without OTP / Firebase idToken rejected", passed, `Statuses: [${r1.status}, ${r2.status}]`);
+      record(1, "Login without verified SMS OTP proof rejected", passed, `Statuses: [${r1.status}, ${r2.status}]`);
     }
 
-    // 2. Login using another person's phone number with someone else's valid Firebase ID token
+    // 2. Login using another person's phone number with someone else's valid phone verification token
     {
-      const validTokenForVictim = signMockFirebaseToken({
-        privateKeyPem,
-        kid: "sec-test-kid",
-        phoneNumber: "+919111111111",
-      });
+      const validProofForVictim = createVerifiedEmailToken("9111111111@phone.mingree.com");
       const rMismatch = await fetch(`${baseUrl}/api/auth/phone-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           phoneNumber: "+919999999999",
-          idToken: validTokenForVictim,
+          verifiedPhoneToken: validProofForVictim,
           role: "creator",
         }),
       });
       const passed = rMismatch.status === 403;
-      record(2, "Login with another user's phone vs Firebase ID token rejected", passed, `Status: ${rMismatch.status}`);
+      record(2, "Login with another user's phone vs verified phone token rejected", passed, `Status: ${rMismatch.status}`);
     }
 
-    // 3. Invalid Firebase ID token (wrong signature key, alg:none, garbage string)
+    // 3. Invalid/forged phone verification tokens (wrong signature, malformed, tampered payload)
     {
-      const rogueSigToken = signMockFirebaseToken({
-        privateKeyPem: roguePrivatePem,
-        kid: "sec-test-kid",
-        phoneNumber: "+919876543210",
-      });
-      const algNoneToken = signMockFirebaseToken({
-        privateKeyPem,
-        kid: "sec-test-kid",
-        phoneNumber: "+919876543210",
-        alg: "none",
-      });
-      const wrongAudToken = signMockFirebaseToken({
-        privateKeyPem,
-        kid: "sec-test-kid",
-        phoneNumber: "+919876543210",
-        aud: "attacker-firebase-project",
-      });
+      const validProof = createVerifiedEmailToken("9876543210@phone.mingree.com");
+      const [payloadPart] = validProof.split(".");
+      const rogueSigToken = `${payloadPart}.${crypto.randomBytes(32).toString("hex")}`;
+      const unsignedToken = `${payloadPart}.`;
+      const garbageToken = "forged.token.value";
 
       const rRogue = await fetch(`${baseUrl}/api/auth/phone-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: "+919876543210", idToken: rogueSigToken }),
+        body: JSON.stringify({ phoneNumber: "+919876543210", verifiedPhoneToken: rogueSigToken }),
       });
       const rNone = await fetch(`${baseUrl}/api/auth/phone-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: "+919876543210", idToken: algNoneToken }),
+        body: JSON.stringify({ phoneNumber: "+919876543210", verifiedPhoneToken: unsignedToken }),
       });
-      const rAud = await fetch(`${baseUrl}/api/auth/phone-login`, {
+      const rGarbage = await fetch(`${baseUrl}/api/auth/phone-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: "+919876543210", idToken: wrongAudToken }),
+        body: JSON.stringify({ phoneNumber: "+919876543210", verifiedPhoneToken: garbageToken }),
       });
-      const passed = rRogue.status === 401 && rNone.status === 401 && rAud.status === 401;
-      record(3, "Invalid/forged Firebase ID tokens rejected", passed, `Statuses: [${rRogue.status}, ${rNone.status}, ${rAud.status}]`);
+      const passed = rRogue.status === 401 && rNone.status === 401 && rGarbage.status === 401;
+      record(3, "Invalid/forged phone verification tokens rejected", passed, `Statuses: [${rRogue.status}, ${rNone.status}, ${rGarbage.status}]`);
     }
 
-    // 4. Expired Firebase ID token
+    // 4. Expired phone verification token
     {
-      const expiredToken = signMockFirebaseToken({
-        privateKeyPem,
-        kid: "sec-test-kid",
-        phoneNumber: "+919876543210",
-        expOffsetSec: -120,
-      });
+      const expiredToken = createVerifiedEmailToken("9876543210@phone.mingree.com", Date.now() - 120_000);
       const rExp = await fetch(`${baseUrl}/api/auth/phone-login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: "+919876543210", idToken: expiredToken }),
+        body: JSON.stringify({ phoneNumber: "+919876543210", verifiedPhoneToken: expiredToken }),
       });
       const passed = rExp.status === 401;
-      record(4, "Expired Firebase ID token rejected", passed, `Status: ${rExp.status}`);
+      record(4, "Expired phone verification token rejected", passed, `Status: ${rExp.status}`);
     }
 
     // 5. Client-forged otpVerified: true without server OTP verification

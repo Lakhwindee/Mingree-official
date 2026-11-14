@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,8 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
-import { setupRecaptcha, sendPhoneOtp, verifyPhoneOtpCode } from "@/lib/firebase";
-import { ConfirmationResult } from "firebase/auth";
 import {
   Smartphone,
   KeyRound,
@@ -48,14 +46,11 @@ export default function ForgotPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
   // Multi-account states
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<LinkedAccount | null>(null);
   const [resetVerificationToken, setResetVerificationToken] = useState<string | null>(null);
-
-  const recaptchaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -121,16 +116,6 @@ export default function ForgotPassword() {
     setIsLoading(true);
     try {
       const cleanDigits = phoneNumber.replace(/[^0-9]/g, "").slice(-10);
-      let firebaseVerified = false;
-
-      if (confirmationResult) {
-        try {
-          await verifyPhoneOtpCode(confirmationResult, otp);
-          firebaseVerified = true;
-        } catch (confirmErr: any) {
-          console.warn("[FIREBASE VERIFY FAILED, CHECKING BACKEND]", confirmErr?.message);
-        }
-      }
 
       // Query all accounts associated with this verified phone number
       const accountsRes = await fetch("/api/auth/phone-accounts", {
@@ -141,7 +126,6 @@ export default function ForgotPassword() {
           phone: cleanDigits,
           otp: otp.trim(),
           otpToken: otpToken || undefined,
-          firebaseVerified,
         }),
       });
 
@@ -233,9 +217,6 @@ export default function ForgotPassword() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col justify-between p-4 sm:p-6">
-      {/* Hidden reCAPTCHA container */}
-      <div id="forgot-password-recaptcha" ref={recaptchaRef}></div>
-
       {/* Top Header */}
       <div className="flex items-center justify-between max-w-md w-full mx-auto pt-2">
         <Link href="/">

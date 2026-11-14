@@ -10,8 +10,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { queryClient } from "@/lib/queryClient";
 import { getCitiesByCountry } from "@shared/cities";
 import { useAuth } from "@/lib/auth-context";
-import { ConfirmationResult } from "firebase/auth";
-import { setupRecaptcha, sendPhoneOtp, verifyPhoneOtpCode } from "@/lib/firebase";
 
 const COUNTRIES = [
   { code: "IN", name: "India" }
@@ -63,7 +61,6 @@ export default function Signup() {
   const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
   const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
   const [resendTimer, setResendTimer] = useState(0);
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
   useEffect(() => {
     if (resendTimer > 0) {
@@ -160,14 +157,6 @@ export default function Signup() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      if (confirmationResult) {
-        try {
-          await verifyPhoneOtpCode(confirmationResult, cleanOtp);
-        } catch (fbVerifyErr: any) {
-          console.warn("[FIREBASE CONFIRMATION VERIFY FAILED, CHECKING BACKEND]", fbVerifyErr?.message);
-        }
-      }
-
       let verifyRes: Response;
       try {
         verifyRes = await fetch("/api/auth/verify-otp", {
@@ -621,7 +610,6 @@ export default function Signup() {
           </CardContent>
         </Card>
       </div>
-      <div id="signup-recaptcha-container" />
     </div>
   );
 }

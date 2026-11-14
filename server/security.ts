@@ -183,7 +183,7 @@ export function stripDangerousKeysMiddleware(req: Request, _res: Response, next:
 }
 
 // ============================================================================
-// 4. PHONE NORMALIZATION & FIREBASE ID TOKEN VERIFICATION
+// 4. PHONE NORMALIZATION (E.164)
 // ============================================================================
 
 export function normalizePhoneE164(raw: string): string {
@@ -199,139 +199,6 @@ export function normalizePhoneE164(raw: string): string {
     return `+${cleaned}`;
   }
   return `+${cleaned}`;
-}
-
-let cachedFirebaseCerts: { certs: Record<string, string>; expiresAt: number } | null = null;
-
-async function fetchFirebasePublicCerts(): Promise<Record<string, string>> {
-  const testPubKey = (process.env.FIREBASE_TEST_PUBLIC_KEY || "").trim();
-  const testKid = (process.env.FIREBASE_TEST_KID || "test-kid").trim();
-  if (testPubKey && process.env.NODE_ENV !== "production") {
-    return { [testKid]: testPubKey };
-  }
-
-  const now = Date.now();
-  if (cachedFirebaseCerts && cachedFirebaseCerts.expiresAt > now) {
-    return cachedFirebaseCerts.certs;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6000);
-  try {
-    const resp = await fetch(
-      "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com",
-      { signal: controller.signal }
-    );
-    if (!resp.ok) {
-      throw new Error(`Failed to fetch Google Firebase certificates (${resp.status})`);
-    }
-    const cacheControl = resp.headers.get("cache-control") || "";
-    const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
-    const maxAgeMs = maxAgeMatch ? Math.max(60, Number(maxAgeMatch[1])) * 1000 : 3600 * 1000;
-    const certs = (await resp.json()) as Record<string, string>;
-    if (!certs || typeof certs !== "object") {
-      throw new Error("Invalid certificate payload from Google");
-    }
-    // Merge test key if non-production test harness injects one alongside certs
-    if (testPubKey && process.env.NODE_ENV !== "production") {
-      certs[testKid] = testPubKey;
-    }
-    cachedFirebaseCerts = { certs, expiresAt: now + maxAgeMs };
-    return certs;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-export interface VerifiedFirebaseToken {
-  uid: string;
-  phoneNumber: string;
-  iss: string;
-  aud: string;
-  exp: number;
-  iat: number;
-}
-
-export async function verifyFirebasePhoneIdToken(
-  idToken: string,
-  expectedProjectId: string
-): Promise<VerifiedFirebaseToken> {
-  if (!idToken || typeof idToken !== "string" || idToken.length > 8192) {
-    throw new Error("Missing or malformed Firebase ID token");
-  }
-  const parts = idToken.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Malformed Firebase ID token structure");
-  }
-  const [headerB64, payloadB64, signatureB64] = parts;
-
-  let header: any;
-  let payload: any;
-  try {
-    header = JSON.parse(Buffer.from(headerB64, "base64url").toString("utf8"));
-    payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
-  } catch {
-    throw new Error("Invalid Firebase ID token encoding");
-  }
-
-  if (!header || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
-    throw new Error("Invalid Firebase ID token algorithm or key ID");
-  }
-
-  const certs = await fetchFirebasePublicCerts();
-  let certPem = certs[header.kid];
-  if (!certPem) {
-    // Cache miss or key rotation — force refresh once
-    cachedFirebaseCerts = null;
-    const refreshed = await fetchFirebasePublicCerts();
-    certPem = refreshed[header.kid];
-  }
-  if (!certPem) {
-    throw new Error("Firebase ID token signed by unknown key");
-  }
-
-  const verifier = crypto.createVerify("RSA-SHA256");
-  verifier.update(`${headerB64}.${payloadB64}`);
-  verifier.end();
-  const signatureBuf = Buffer.from(signatureB64, "base64url");
-  const isSignatureValid = verifier.verify(certPem, signatureBuf);
-  if (!isSignatureValid) {
-    throw new Error("Firebase ID token signature verification failed");
-  }
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (typeof payload.exp !== "number" || payload.exp <= nowSec) {
-    throw new Error("Firebase ID token has expired");
-  }
-  if (typeof payload.iat !== "number" || payload.iat > nowSec + 30) {
-    throw new Error("Firebase ID token issued-at timestamp is invalid");
-  }
-  if (typeof payload.auth_time === "number" && payload.auth_time > nowSec + 30) {
-    throw new Error("Firebase ID token auth_time is in the future");
-  }
-  if (payload.aud !== expectedProjectId) {
-    throw new Error("Firebase ID token audience mismatch");
-  }
-  const expectedIssuer = `https://securetoken.google.com/${expectedProjectId}`;
-  if (payload.iss !== expectedIssuer) {
-    throw new Error("Firebase ID token issuer mismatch");
-  }
-  if (typeof payload.sub !== "string" || !payload.sub || payload.sub.length > 128) {
-    throw new Error("Firebase ID token subject is missing or invalid");
-  }
-  const phone = normalizePhoneE164(String(payload.phone_number || ""));
-  if (!phone || phone.length < 8) {
-    throw new Error("Firebase ID token does not contain a verified phone number");
-  }
-
-  return {
-    uid: payload.sub,
-    phoneNumber: phone,
-    iss: payload.iss,
-    aud: payload.aud,
-    exp: payload.exp,
-    iat: payload.iat,
-  };
 }
 
 // ============================================================================

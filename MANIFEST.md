@@ -1,10 +1,6 @@
-# Mingree Complete Security Patch Manifest
+# Mingree Complete Security & Architecture Manifest
 
-Because the workspace does not contain a `.git` repository, this archive provides a clean, secret-free export of the latest complete security patch (including all modified/added backend, frontend, schema, rule, test, Docker, dependency, and database migration files) ready to import onto your `security/authentication-hardening` branch.
-
-## Verification Checksums of Current Workspace Target Files
-- `.env.production.template` (`2,629` bytes): `sha256:05866093f1c501e897bd99650ca8e897d446a231df1d4d1bc2adebfc43c4de03`
-- `bun.lock` (`239,961` bytes): `sha256:33438aafe3d1098f0a72b2187d725efacf51bc863df75cb080c4b19fcf90c30d`
+Mingree's production infrastructure runs on **Cloudflare Workers + Cloudflare R2 + Cloudflare Hyperdrive + Supabase PostgreSQL + Upstash Redis**. All legacy/experimental Firebase and Firestore files, dependencies, and dead code paths have been completely removed.
 
 ---
 
@@ -14,10 +10,10 @@ Because the workspace does not contain a `.git` repository, this archive provide
 | Path | Purpose |
 | :--- | :--- |
 | `Dockerfile` | Multi-stage Docker build/runtime pinned to `node:24-alpine` (`>= 24.12.0`) and `bun install --frozen-lockfile` |
-| `package.json` | Runtime engine (`node >= 24.12.0`), dependency vulnerability overrides, security/DB/rules test scripts (`test:security`, `test:verify`, `test:smoke`, `lint:rules`, `test:rules`) |
-| `bun.lock` | Locked dependency tree matching `package.json` (exported directly from current `/app/applet/bun.lock`) |
-| `.env.production.template` | Secret-free production deployment environment variable template (exported directly from current `/app/applet/.env.production.template`) |
-| `.env.example` | Secret-free general environment variable template documenting Upstash Redis, R2, Cashfree webhook, JWT, and encryption keys |
+| `package.json` | Runtime engine (`node >= 24.12.0`), dependency vulnerability overrides, security/DB test scripts (`test:security`, `test:verify`, `test:smoke`) |
+| `bun.lock` | Locked dependency tree matching `package.json` (clean of Firebase packages) |
+| `.env.production.template` | Secret-free production deployment environment variable template |
+| `.env.example` | Secret-free general environment variable template documenting Supabase PostgreSQL, Upstash Redis, Cloudflare R2, Cashfree webhook, JWT, and encryption keys |
 | `drizzle.config.ts` | Drizzle Kit migration configuration |
 | `tsconfig.json`, `vite.config.ts`, `index.html`, `.gitignore` | Application TypeScript, Vite build, HTML entry, and ignore rules |
 | `vercel.json`, `wrangler.jsonc` | Hosting/worker configuration templates (**note**: `wrangler.jsonc` targets production `mingree-official`; do not deploy bare config to staging) |
@@ -33,8 +29,8 @@ Because the workspace does not contain a `.git` repository, this archive provide
 ### 3. Security, Backend, Schema & API Source Files
 | Path(s) | Purpose |
 | :--- | :--- |
-| `server.ts` | Express application entrypoint: Helmet/CSP headers, CORS origin validation, `authRateLimiter` ordering, Upstash distributed rate limiters, Firebase phone ID token enforcement, Cashfree canonical webhook `/api/cashfree/webhook`, R2 upload magic-byte checks, signed campaign billing |
-| `server/security.ts` | `DistributedRateLimitStore` (Upstash Redis REST), fail-closed `SecurityStoreUnavailableError` (HTTP `503`), distributed OTP lockout, JWT/JTI revocation, `tokenVersion` checks, signed bill tokens, Firebase phone ID token verification, magic-byte upload validation, `escapeHtml` |
+| `server.ts` | Express application entrypoint: Helmet/CSP headers, CORS origin validation, `authRateLimiter` ordering, Upstash distributed rate limiters, HMAC-signed single-use OTP verification tokens, Cashfree canonical webhook `/api/cashfree/webhook`, R2 upload magic-byte checks, signed campaign billing |
+| `server/security.ts` | `DistributedRateLimitStore` (Upstash Redis REST), fail-closed `SecurityStoreUnavailableError` (HTTP `503`), distributed OTP lockout, JWT/JTI revocation, `tokenVersion` checks, signed bill tokens, magic-byte upload validation, `escapeHtml` |
 | `server/envValidation.ts` | Production preflight checks enforcing `DATABASE_URL`/Hyperdrive, `UPSTASH_REDIS_REST_URL`/`TOKEN`, `JWT_SECRET`, `TOKEN_ENC_KEY`, and warning on storage/Cashfree/OAuth |
 | `server/db.ts` | PostgreSQL pool/Hyperdrive setup, `pg` OID 20 BIGINT overflow guard, `ensureDatabaseSchema()`, tracked runner for `0001` & `0002` |
 | `server/walletAndPayments.ts` | Transactional `SELECT FOR UPDATE` wallet locking, Cashfree order creation & idempotent webhook processing, encrypted PAN storage |
@@ -49,24 +45,20 @@ Because the workspace does not contain a `.git` repository, this archive provide
 ### 4. Client Source Files (`src/`)
 | Path(s) | Purpose |
 | :--- | :--- |
-| `src/**/*` | Full frontend React/TypeScript source including hardened auth (`src/components/auth/PhoneOtpLogin.tsx`, `src/lib/auth-context.tsx`), admin security panel (`src/components/admin/SecurityAuditPanel.tsx`), and legal/MSME identity pages (`src/pages/legal/*`) |
+| `src/**/*` | Full frontend React/TypeScript source including hardened auth (`src/lib/auth-context.tsx`, `src/pages/Login.tsx`, `src/pages/Signup.tsx`, `src/pages/ForgotPassword.tsx`), admin security panel (`src/components/admin/SecurityAuditPanel.tsx`), and legal/MSME identity pages (`src/pages/legal/*`) |
 
-### 5. Firebase Security Rules & Verification Suites
+### 5. Verification Suites (`scripts/`)
 | Path | Purpose |
 | :--- | :--- |
-| `firestore.rules` | Hardened owner-only Firestore security rules blocking unauthenticated reads/writes and privileged field tampering |
-| `firebase.json` | Isolated Firestore emulator configuration (port `8085` / websocket `9155`) |
-| `eslint.rules.config.mjs` | ESLint config using `@firebase/eslint-plugin-security-rules` |
 | `scripts/migrate.ts` | Canonical database migration runner (`npm run db:migrate`) |
 | `scripts/security-regression.test.ts` | 21-check security regression suite (`npm run test:security`) |
 | `scripts/verify-implementation.ts` | 16-check PGlite v16 WASM schema, migration checksum, and encryption suite (`npm run test:verify`) |
 | `scripts/smoke-test.ts` | 10-check PostgreSQL-backed integration & concurrency smoke suite (`npm run test:smoke`) |
-| `scripts/firestore.rules.test.ts` | 5-check `@firebase/rules-unit-testing` Firestore rules suite (`npm run test:rules`) |
 
 ---
 
 ## Explicitly Excluded
 - Real environment files containing secrets (`.env`, `.env.local`, `.env.production`, `.env.staging`)
 - `node_modules/`
-- `dist/`, `.wrangler/`, `server.js`, `server.js.map`, `firestore-debug.log`
-- Private credentials, keys (`*.pem`, `*.key`), and Firebase project config (`firebase-applet-config.json`)
+- `dist/`, `.wrangler/`, `server.js`, `server.js.map`
+- Private credentials and keys (`*.pem`, `*.key`)

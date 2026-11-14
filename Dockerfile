@@ -13,7 +13,7 @@ WORKDIR /app
 
 COPY --from=bun-bin /usr/local/bin/bun /usr/local/bin/bun
 
-# Enforce minimum Node.js 24.12.0 runtime compatibility required by Firebase SDK
+# Enforce minimum Node.js 24.12.0 runtime compatibility
 RUN node -e "const [maj,min]=process.versions.node.split('.').map(Number); if(maj<24||(maj===24&&min<12)){console.error('Requires Node >= 24.12.0, got',process.version);process.exit(1);}"
 
 # Install exact locked dependencies from bun.lock
