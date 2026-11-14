@@ -884,28 +884,23 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
                     {/* Protected Booking CTA & Custom Rate Negotiation */}
                     <div className="pt-1 space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => toggleCreator(c)}
-                        className={cn(
-                          "w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl font-bold text-sm shadow-lg transition cursor-pointer",
-                          isChosen
-                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/25"
-                            : "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/25"
-                        )}
-                      >
-                        <Lock className="w-4 h-4 text-white shrink-0" />
-                        <span className="truncate">
-                          {isChosen
-                            ? `✓ Creator Selected (${customRates[c.id] ? inr(customRates[c.id]) : inr(activeRate)})`
-                            : "Book Creator with Payment Protection"}
-                        </span>
-                      </button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleCreator(c)}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-1.5 py-3 px-3 rounded-xl font-bold text-xs shadow-md transition cursor-pointer",
+                            isChosen
+                              ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                              : "bg-rose-600 hover:bg-rose-700 text-white"
+                          )}
+                        >
+                          <Lock className="w-3.5 h-3.5 text-white shrink-0" />
+                          <span className="truncate">
+                            {isChosen ? "✓ Selected" : "Book Creator"}
+                          </span>
+                        </button>
 
-                      <div className="flex items-center justify-between gap-2 pt-0.5">
-                        <p className="text-[11px] text-slate-400 font-medium leading-tight">
-                          Funds released strictly after you review and approve the post.
-                        </p>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -917,15 +912,19 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             }
                           }}
                           className={cn(
-                            "shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-lg border transition cursor-pointer",
+                            "w-full flex items-center justify-center gap-1.5 py-3 px-3 rounded-xl font-bold text-xs border transition cursor-pointer",
                             customRates[c.id]
-                              ? "border-emerald-500/60 bg-emerald-50 text-emerald-700"
-                              : "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
+                              ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                              : "border-slate-300 bg-white hover:bg-slate-50 text-slate-700"
                           )}
                         >
-                          {customRates[c.id] ? `Offer: ${inr(customRates[c.id])}` : "Custom Rate"}
+                          {customRates[c.id] ? `Offer: ${inr(customRates[c.id])}` : "💬 Custom Rate"}
                         </button>
                       </div>
+
+                      <p className="text-[11px] text-slate-400 text-center font-medium leading-tight pt-1">
+                        Funds released strictly after you review and approve the post.
+                      </p>
 
                       {/* Inline Custom Rate Offer Input Box */}
                       {editingRateCreatorId === c.id && (
