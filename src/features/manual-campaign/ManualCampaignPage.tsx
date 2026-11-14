@@ -680,61 +680,39 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
 
           {/* Creators Drawer / Live Results for Direct Search */}
           <div className="space-y-3 rounded-2xl border bg-muted/10 p-4 sm:p-5">
-            <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  <h3 className="font-bold text-sm text-foreground">
-                    {globalSearchQ.trim()
-                      ? `Matching Creators for “${globalSearchQ.trim()}”`
-                      : "Available Creators"}
-                  </h3>
-                  <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-full bg-muted border border-border/60 shrink-0">
-                    {searchResults.length} {searchResults.length === 1 ? "creator" : "creators"}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                <h3 className="font-bold text-sm text-foreground">
+                  {globalSearchQ.trim()
+                    ? `Matching Creators for “${globalSearchQ.trim()}”`
+                    : "Available Creators"}
+                </h3>
+                <span className="text-xs text-muted-foreground font-medium px-2 py-0.5 rounded-full bg-muted border border-border/60 shrink-0">
+                  {searchResults.length} {searchResults.length === 1 ? "creator" : "creators"}
+                </span>
+                {!globalSearchQ.trim() && (
+                  <span className="text-[11px] font-medium text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md shrink-0">
+                    Ranked by Reach &amp; Views
                   </span>
-                  {!globalSearchQ.trim() && (
-                    <span className="text-[11px] font-medium text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md shrink-0">
-                      Ranked by Reach &amp; Views
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs text-muted-foreground font-medium hidden sm:inline">Sort:</span>
-                  <select
-                    value={activeSort}
-                    onChange={(e) => setActiveSort(e.target.value as any)}
-                    className="h-8 rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none max-w-full cursor-pointer"
-                    aria-label="Sort creators"
-                  >
-                    <option value="relevance">Top Reach &amp; Views (Default)</option>
-                    <option value="reach_desc">Highest Reach</option>
-                    <option value="views_desc">Most Reel Views</option>
-                    <option value="engagement_desc">High Engagement</option>
-                    <option value="followers_desc">Followers (High to Low)</option>
-                    <option value="price_asc">Price: Low to High</option>
-                    <option value="price_desc">Price: High to Low</option>
-                  </select>
-                  {searchLoading && <span className="text-xs text-muted-foreground animate-pulse">Updating...</span>}
-                </div>
+                )}
               </div>
-
-              {/* Deliverable Rate Filter Bar */}
-              <div className="flex items-center gap-1.5 flex-wrap pt-1">
-                <span className="text-xs font-semibold text-muted-foreground mr-1">Default Ad Format:</span>
-                {DELIVERABLES.map((x) => (
-                  <button
-                    key={x.id}
-                    type="button"
-                    onClick={() => setDeliverable(x.id)}
-                    className={cn(
-                      "px-2.5 py-1 rounded-lg border text-xs font-semibold transition cursor-pointer",
-                      d.deliverable === x.id
-                        ? "border-primary bg-primary text-primary-foreground shadow-2xs"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground hover:border-primary/50"
-                    )}
-                  >
-                    {x.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs text-muted-foreground font-medium hidden sm:inline">Sort:</span>
+                <select
+                  value={activeSort}
+                  onChange={(e) => setActiveSort(e.target.value as any)}
+                  className="h-8 rounded-lg border bg-background px-2.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none max-w-full cursor-pointer"
+                  aria-label="Sort creators"
+                >
+                  <option value="relevance">Top Reach &amp; Views (Default)</option>
+                  <option value="reach_desc">Highest Reach</option>
+                  <option value="views_desc">Most Reel Views</option>
+                  <option value="engagement_desc">High Engagement</option>
+                  <option value="followers_desc">Followers (High to Low)</option>
+                  <option value="price_asc">Price: Low to High</option>
+                  <option value="price_desc">Price: High to Low</option>
+                </select>
+                {searchLoading && <span className="text-xs text-muted-foreground animate-pulse">Updating...</span>}
               </div>
             </div>
 

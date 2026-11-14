@@ -113,7 +113,7 @@ export async function getOrCreateWallet(userId: number): Promise<{ balance: numb
     };
   }
 
-  const initBalance = userId === 99 ? 250000 : 0;
+  const initBalance = 0;
   memoryWallets[userId] = { userId, balance: initBalance, escrowHeld: 0 };
   return { balance: initBalance, escrowHeld: 0 };
 }
@@ -1022,7 +1022,11 @@ export async function adminCreditWallet(
     memoryWallets[targetUserId] = { userId: targetUserId, balance: newBalance, escrowHeld: currentEscrow };
   } catch (err: any) {
     await client.query("ROLLBACK").catch(() => {});
-    throwDbUnavailable(err);
+    if (err?.code === "ECONNREFUSED" || err?.code === "ETIMEDOUT") {
+      throwDbUnavailable(err);
+    }
+    console.error("[ADMIN CREDIT WALLET PG ERROR]", err?.message || err);
+    throw new Error(err?.message || "Failed to credit wallet in database");
   } finally {
     client.release();
   }

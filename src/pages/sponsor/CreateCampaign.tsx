@@ -16,7 +16,6 @@ import { TIERS, FIXED_TIERS, getPaymentByStyle, calculateSponsorPayment, TAX_RAT
 import { PROMOTION_CATEGORIES } from "@shared/schema";
 import { COUNTRIES, getCountryByCode } from "@shared/countries";
 import { getCitiesByCountry, CITIES_BY_COUNTRY } from "@shared/cities";
-import { INDIAN_LANGUAGES } from "@shared/languages";
 import { CreatorListPopup } from "@/components/CreatorListPopup";
 import {
   Dialog,
@@ -96,7 +95,6 @@ export default function CreateCampaign() {
     brandLogo: "",
     brandLogoFileName: "",
     category: "music_reels",
-    language: "Hindi (हिंदी)",
     contentType: "reel",
     promotionStyle: "",
     description: "",
@@ -271,12 +269,6 @@ export default function CreateCampaign() {
     ));
   };
 
-  const updateTierPayment = (tierName: string, payment: number) => {
-    setTierSelections(prev => prev.map(t => 
-      t.tierName === tierName ? { ...t, paymentPerCreator: Math.max(0, payment) } : t
-    ));
-  };
-
   const removeTierSelection = (tierName: string) => {
     setTierSelections(prev => prev.filter(t => t.tierName !== tierName));
   };
@@ -360,7 +352,6 @@ export default function CreateCampaign() {
           brand: formData.brand,
           brandLogo: formData.brandLogo,
           category: formData.category,
-          language: formData.language,
           payAmount: String(avgPay),
           budget: totalPayable,
           totalBudget: totalPayable,
@@ -591,44 +582,44 @@ export default function CreateCampaign() {
                           .map((selection, index) => (
                           <div 
                             key={`${selection.tierName}-${index}`}
-                            className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30"
+                            className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg border bg-muted/30"
                             data-testid={`tier-selection-${selection.tierId}`}
                           >
-                            <div className="flex-1">
+                            <div className="flex-1 min-w-[160px]">
                               <div className="font-medium">{selection.tierName}</div>
                               <div className="text-xs text-muted-foreground">
-                                {formatTierRange(selection.minFollowers, selection.maxFollowers)} followers | {formatINR(selection.paymentPerCreator)}/creator
+                                {formatTierRange(selection.minFollowers, selection.maxFollowers)} followers · Fixed {formatINR(selection.paymentPerCreator)}/creator
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-center gap-1">
-                                <span className="text-xs text-muted-foreground">₹</span>
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-medium text-muted-foreground">Creators:</span>
                                 <Input
                                   type="number"
-                                  min="0"
-                                  className="w-24"
-                                  value={selection.paymentPerCreator}
-                                  onChange={(e) => updateTierPayment(selection.tierName, parseInt(e.target.value) || 0)}
-                                  placeholder="Pay/creator"
-                                  data-testid={`input-payment-${selection.tierId}`}
+                                  min="1"
+                                  className="w-20 h-9 text-center font-semibold"
+                                  value={selection.creatorsNeeded}
+                                  onChange={(e) => updateTierCreators(selection.tierName, parseInt(e.target.value) || 1)}
+                                  data-testid={`input-creators-${selection.tierId}`}
                                 />
                               </div>
-                              <Input
-                                type="number"
-                                min="1"
-                                className="w-20"
-                                value={selection.creatorsNeeded}
-                                onChange={(e) => updateTierCreators(selection.tierName, parseInt(e.target.value) || 1)}
-                                data-testid={`input-creators-${selection.tierId}`}
-                              />
+                              <div className="text-right min-w-[80px]">
+                                <div className="text-sm font-bold tabular-nums text-foreground">
+                                  {formatINR(selection.paymentPerCreator * selection.creatorsNeeded)}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground tabular-nums">
+                                  {selection.creatorsNeeded} × {formatINR(selection.paymentPerCreator)}
+                                </div>
+                              </div>
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => removeTierSelection(selection.tierName)}
-                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                title={`Remove ${selection.tierName}`}
                               >
-                                
+                                ✕
                               </Button>
                             </div>
                           </div>
@@ -708,44 +699,23 @@ export default function CreateCampaign() {
                 </div>
 
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="category">Promotion Category *</Label>
-                    <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
-                      <SelectTrigger data-testid="select-category">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PROMOTION_CATEGORIES.map((cat) => (
-                          <SelectItem key={cat.id} value={cat.id}>
-                            {cat.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {PROMOTION_CATEGORIES.find(c => c.id === formData.category)?.description}
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="language">Campaign Language *</Label>
-                    <Select value={formData.language} onValueChange={(v) => setFormData({ ...formData, language: v })}>
-                      <SelectTrigger data-testid="select-language">
-                        <SelectValue placeholder="Select language..." />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-[300px]">
-                        {INDIAN_LANGUAGES.map((lang) => (
-                          <SelectItem key={lang} value={lang}>
-                            {lang}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Target creators by preferred regional language.
-                    </p>
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="category">Promotion Category *</Label>
+                  <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
+                    <SelectTrigger data-testid="select-category">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROMOTION_CATEGORIES.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {PROMOTION_CATEGORIES.find(c => c.id === formData.category)?.description}
+                  </p>
                 </div>
 
                 <div className="space-y-3">

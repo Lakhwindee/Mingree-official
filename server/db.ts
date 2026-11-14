@@ -373,6 +373,72 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
             NULL;
           END;
 
+          -- 5c. Ensure wallets, ledger_entries, wallet_transactions, payment_orders, and upi_payments tables exist
+          CREATE TABLE IF NOT EXISTS wallets (
+            user_id bigint PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            balance numeric(12,2) NOT NULL DEFAULT 0.00,
+            escrow_held numeric(12,2) NOT NULL DEFAULT 0.00,
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+          ALTER TABLE wallets ADD COLUMN IF NOT EXISTS balance numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE wallets ADD COLUMN IF NOT EXISTS escrow_held numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE wallets ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS ledger_entries (
+            id bigserial PRIMARY KEY,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            type text NOT NULL,
+            amount numeric(12,2) NOT NULL,
+            balance_after numeric(12,2) NOT NULL,
+            ref_type text,
+            ref_id text,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS ref_type text;
+          ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS ref_id text;
+          ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS wallet_transactions (
+            id bigserial PRIMARY KEY,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            type text NOT NULL,
+            amount numeric(12,2) NOT NULL,
+            balance_after numeric(12,2) NOT NULL,
+            escrow_after numeric(12,2) NOT NULL DEFAULT 0.00,
+            reference_type text,
+            reference_id text,
+            description text,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS escrow_after numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS reference_type text;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS reference_id text;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS description text;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS payment_orders (
+            id bigserial PRIMARY KEY,
+            order_id text NOT NULL UNIQUE,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount numeric(12,2) NOT NULL,
+            purpose text NOT NULL,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+            cashfree_payment_id text,
+            status text NOT NULL DEFAULT 'pending',
+            created_at timestamptz NOT NULL DEFAULT now(),
+            paid_at timestamptz
+          );
+
+          CREATE TABLE IF NOT EXISTS upi_payments (
+            id bigserial PRIMARY KEY,
+            utr text NOT NULL UNIQUE,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount numeric(12,2) NOT NULL,
+            status text NOT NULL DEFAULT 'pending',
+            created_at timestamptz NOT NULL DEFAULT now(),
+            reviewed_at timestamptz
+          );
+
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_ig_uid ON creator_profiles (instagram_user_id);
@@ -380,6 +446,8 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states (expires_at);
           CREATE INDEX IF NOT EXISTS idx_instagram_identities_user ON instagram_identities (current_user_id);
           CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_cards_user_deliverable ON rate_cards (user_id, deliverable_type);
+          CREATE INDEX IF NOT EXISTS idx_ledger_entries_user_created ON ledger_entries (user_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_created ON wallet_transactions (user_id, created_at DESC);
         END $$;
       `);
       schemaEnsured = true;

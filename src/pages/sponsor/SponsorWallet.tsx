@@ -272,6 +272,7 @@ export default function SponsorWallet() {
       fetch("/api/cashfree/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ orderId: returnOrderId, sponsorId: sponsor.id }),
       })
         .then((r) => r.json())
@@ -433,6 +434,7 @@ export default function SponsorWallet() {
       const orderRes = await fetch("/api/cashfree/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           amount: isTaxExempt ? baseAmount : calculateDepositWithGST(baseAmount).totalPayable,
           sponsorId: sponsor.id,
@@ -570,7 +572,7 @@ export default function SponsorWallet() {
       return;
     }
 
-    const balance = Math.max(parseFloat(wallet?.balance || sponsor?.balance || "0"), 100000);
+    const balance = parseFloat(wallet?.balance ?? sponsor?.balance ?? "0");
     if (amount > balance) {
       toast.error("Insufficient balance");
       return;
@@ -646,7 +648,7 @@ export default function SponsorWallet() {
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-bold text-green-600 dark:text-green-400" data-testid="text-balance">
-                  {formatINR(Math.max(parseFloat(wallet?.balance || sponsor?.balance || "100000"), 100000))}
+                  {formatINR(parseFloat(wallet?.balance ?? sponsor?.balance ?? "0"))}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
                   Use for campaigns or withdraw

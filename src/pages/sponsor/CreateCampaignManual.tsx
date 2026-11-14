@@ -22,6 +22,8 @@ export default function CreateCampaignManual() {
           onCreated={(campaignId) => {
             queryClient.invalidateQueries({ queryKey: ["brandCampaignCards"] });
             queryClient.invalidateQueries({ queryKey: ["campaignWorkspace"] });
+            queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
+            queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
             toast.success("Campaign launched! Opening campaign workspace folder...");
             if (campaignId) {
               navigate(`/sponsor/campaigns/${campaignId}/workspace`);

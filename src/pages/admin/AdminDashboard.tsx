@@ -944,6 +944,7 @@ function UsersPage() {
       const res = await fetch("/api/admin/wallets/credit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ userId, amount, reason }),
       });
       if (!res.ok) {
@@ -958,6 +959,8 @@ function UsersPage() {
       setWalletCreditAmount("");
       setWalletCreditReason("");
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["sponsorWallet"] });
+      queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
     },
     onError: (err: any) => toast.error(err.message),
   });
@@ -972,7 +975,7 @@ function UsersPage() {
         role: roleFilter,
         status: statusFilter,
       });
-      const res = await fetch(`/api/admin/users?${params.toString()}`);
+      const res = await fetch(`/api/admin/users?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch users list");
       return res.json();
     },
@@ -1532,15 +1535,15 @@ function UsersPage() {
                     className="pl-7 h-8 text-xs font-mono font-bold"
                   />
                 </div>
-                <div className="flex gap-1.5 pt-1">
-                  {[500, 1000, 2500, 5000, 10000].map((amt) => (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[500, 1000, 5000, 10000, 50000, 100000].map((amt) => (
                     <button
                       key={amt}
                       type="button"
                       onClick={() => setWalletCreditAmount(String(amt))}
                       className="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-mono"
                     >
-                      +₹{amt}
+                      +₹{amt.toLocaleString("en-IN")}
                     </button>
                   ))}
                 </div>
