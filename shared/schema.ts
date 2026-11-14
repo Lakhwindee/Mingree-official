@@ -47,6 +47,7 @@ export const users = pgTable("users", {
   suspended: boolean("suspended").notNull().default(false),
   suspendReason: text("suspend_reason"),
   deletedAt: timestamp("deleted_at"),
+  tokenVersion: integer("token_version").notNull().default(1),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   index("idx_users_role").on(table.role),
@@ -639,6 +640,25 @@ export const appConfig = pgTable("app_config", {
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+// 35. Revoked Session Tokens (JWT Blocklist)
+export const revokedTokens = pgTable("revoked_tokens", {
+  jti: text("jti").primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_revoked_tokens_expires").on(table.expiresAt),
+]);
+
+// 36. Used Single-Use JTI Tokens (Replay Prevention)
+export const usedJtiTokens = pgTable("used_jti_tokens", {
+  jtiKey: text("jti_key").primaryKey(),
+  namespace: text("namespace").notNull().default("general"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_used_jti_expires").on(table.expiresAt),
+]);
 
 // Zod Schemas
 export const signupSchema = z.object({

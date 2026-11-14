@@ -6,7 +6,16 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { createPaymentOrder, getOrCreateWallet } from "../server/walletAndPayments";
-import { isDatabaseConfigured, pool, verifyDbConnection } from "../server/db";
+import {
+  isDatabaseConfigured,
+  pool,
+  reconfigureDatabase,
+  runDatabaseMigrations,
+  verifyDbConnection,
+} from "../server/db";
+import { PGlite } from "@electric-sql/pglite";
+import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import net from "net";
 
 interface TestResult {
   num: number;
@@ -600,50 +609,115 @@ async function runIntegrationTests() {
     }
 
     // TEST 10: PostgreSQL-backed wallet and payment integration test
-    const testDbUrl = (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "").trim();
-    if (!testDbUrl || !isDatabaseConfigured) {
-      recordTest(
-        10,
-        "PostgreSQL-backed wallet and payment integration test",
-        "BLOCKED",
-        "BLOCKED: Neither TEST_DATABASE_URL nor DATABASE_URL is configured in the current environment."
-      );
-    } else {
+    const externalTestDbUrl = (process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || "").trim();
+    let ephemeralDb: PGlite | null = null;
+    let ephemeralSocketServer: PGLiteSocketServer | null = null;
+    let isolatedTestMode = false;
+
+    try {
+      if (externalTestDbUrl) {
+        if (!isDatabaseConfigured) {
+          reconfigureDatabase(externalTestDbUrl, false);
+        }
+      } else {
+        // Spin up a completely isolated ephemeral PostgreSQL wire-protocol test DB (never touches production DB)
+        const freePort = await new Promise<number>((resolve, reject) => {
+          const probe = net.createServer();
+          probe.listen(0, "127.0.0.1", () => {
+            const addr = probe.address() as net.AddressInfo;
+            const p = addr.port;
+            probe.close((err) => (err ? reject(err) : resolve(p)));
+          });
+          probe.on("error", reject);
+        });
+
+        ephemeralDb = new PGlite();
+        // Initialize exact canonical schema before opening socket pool
+        const initAdapter = {
+          query: async (sqlText: string, params?: any[]) => {
+            if (params && params.length > 0) {
+              const res: any = await ephemeralDb!.query(sqlText, params);
+              return { rows: res.rows || [], rowCount: (res.rows || []).length };
+            }
+            const res: any = await ephemeralDb!.exec(sqlText);
+            const last = Array.isArray(res) && res.length > 0 ? res[res.length - 1] : res;
+            return { rows: last?.rows || [], rowCount: last?.rows?.length || 0 };
+          },
+          release: () => {},
+        };
+        await runDatabaseMigrations(initAdapter as any);
+
+        ephemeralSocketServer = new PGLiteSocketServer({
+          db: ephemeralDb,
+          host: "127.0.0.1",
+          port: freePort,
+          maxConnections: 10,
+        });
+        await ephemeralSocketServer.start();
+
+        const isolatedUrl = `postgres://postgres:postgres@127.0.0.1:${freePort}/postgres`;
+        reconfigureDatabase(isolatedUrl, false);
+        isolatedTestMode = true;
+      }
+
       const dbReachable = await verifyDbConnection();
       if (!dbReachable) {
         recordTest(
           10,
           "PostgreSQL-backed wallet and payment integration test",
-          "BLOCKED",
-          "BLOCKED: PostgreSQL connection could not be established from current environment."
+          "FAIL",
+          "Configured PostgreSQL test database could not be reached."
         );
       } else {
-        let client;
+        let client: any;
         try {
           client = await pool.connect();
           await client.query("BEGIN");
+          const uniqueOrderId = `ORD_PG_TEST_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
           const userRes = await client.query(
-            `INSERT INTO users (email, password_hash, name, role, is_verified, is_active)
-             VALUES ($1, $2, 'PG Integration Tester', 'sponsor', true, true)
+            `INSERT INTO users (email, password_hash, name, role, status)
+             VALUES ($1, $2, 'PG Integration Tester', 'sponsor', 'active')
              RETURNING id`,
             [`pg_test_${Date.now()}@mingree.com`, "test_hash"]
           );
           const testUserId = Number(userRes.rows[0].id);
           await client.query(
-            `INSERT INTO wallets (user_id, balance, locked_escrow) VALUES ($1, 1000.00, 0.00)`,
+            `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 1000.00, 0.00)`,
             [testUserId]
           );
           const lockRes = await client.query(
-            `SELECT balance, locked_escrow FROM wallets WHERE user_id = $1 FOR UPDATE`,
+            `SELECT balance, escrow_held FROM wallets WHERE user_id = $1 FOR UPDATE`,
             [testUserId]
           );
           const bal = parseFloat(lockRes.rows[0].balance);
+
+          // Verify canonical ledger idempotency constraint inside live PostgreSQL transaction
+          await client.query(
+            `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+             VALUES ($1, 'credit', 1000.00, 1000.00, 'payment_order', $2)`,
+            [testUserId, uniqueOrderId]
+          );
+          let dupBlocked = false;
+          await client.query("SAVEPOINT sp_dup_payment");
+          try {
+            await client.query(
+              `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+               VALUES ($1, 'credit', 1000.00, 2000.00, 'payment_order', $2)`,
+              [testUserId, uniqueOrderId]
+            );
+          } catch (dupErr: any) {
+            dupBlocked = String(dupErr?.code) === "23505" || String(dupErr?.message || "").includes("unique");
+          } finally {
+            await client.query("ROLLBACK TO SAVEPOINT sp_dup_payment");
+          }
+
           await client.query("ROLLBACK");
+          const passed = bal === 1000 && dupBlocked;
           recordTest(
             10,
             "PostgreSQL-backed wallet and payment integration test",
-            bal === 1000 ? "PASS" : "FAIL",
-            `Transactional PostgreSQL wallet creation & SELECT FOR UPDATE row lock verified (rolled back cleanly).`
+            passed ? "PASS" : "FAIL",
+            `Transactional PostgreSQL (${isolatedTestMode ? "isolated ephemeral PG wire server" : "configured test PG"}) wallet SELECT FOR UPDATE (₹${bal}) & duplicate ledger index enforcement (${dupBlocked}) verified and rolled back cleanly.`
           );
         } catch (dbErr: any) {
           if (client) {
@@ -655,6 +729,18 @@ async function runIntegrationTests() {
         } finally {
           if (client) client.release();
         }
+      }
+    } catch (setupErr: any) {
+      recordTest(10, "PostgreSQL-backed wallet and payment integration test", "FAIL", setupErr?.message || String(setupErr));
+    } finally {
+      if (ephemeralSocketServer) {
+        try {
+          await pool.end().catch(() => {});
+        } catch {}
+        await ephemeralSocketServer.stop().catch(() => {});
+      }
+      if (ephemeralDb) {
+        await ephemeralDb.close().catch(() => {});
       }
     }
   } finally {

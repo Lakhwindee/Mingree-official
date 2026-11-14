@@ -484,6 +484,17 @@ export function reconfigureDatabase(newConnectionString: string, workerMode = tr
   currentDbUrl = clean;
   isDatabaseConfigured = true;
   isWorkerRuntime = workerMode;
+  schemaEnsured = false;
+  schemaPromise = null;
+  if (!workerMode) {
+    try {
+      activePool?.end().catch(() => {});
+    } catch {}
+    activePool = createPgPool(clean);
+    activePool.on("error", (err: any) => {
+      console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
+    });
+  }
 }
 
 export function runWithWorkerDbUrl<T>(newConnectionString: string, fn: () => T): T {
@@ -592,8 +603,11 @@ export async function runDatabaseMigrations(client?: pg.PoolClient | any): Promi
       )
     `);
 
-    // Ordered migration files for canonical clean launch
-    const migrationFiles = ["0001_clean_launch_schema.sql"];
+    // Ordered migration files for canonical launch + security token revocation
+    const migrationFiles = [
+      "0001_clean_launch_schema.sql",
+      "0002_security_token_revocation.sql",
+    ];
     for (const fileName of migrationFiles) {
       const migrationPath = path.join(process.cwd(), "migrations", fileName);
       if (fs.existsSync(migrationPath)) {

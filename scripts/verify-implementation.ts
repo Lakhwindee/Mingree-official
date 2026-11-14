@@ -77,12 +77,15 @@ async function runVerification() {
     // Run migration first time
     await runDatabaseMigrations(clientAdapter as any);
 
-    // Verify schema_migrations table
-    const migRows = await q("SELECT name, checksum, applied_at FROM schema_migrations");
-    const migrationRecorded = migRows.rows.length > 0 && migRows.rows[0].name === "0001_clean_launch_schema.sql";
+    // Verify schema_migrations table records both 0001 and 0002 migrations
+    const migRows = await q("SELECT name, checksum, applied_at FROM schema_migrations ORDER BY name ASC");
+    const appliedNames = migRows.rows.map((r: any) => String(r.name));
+    const migrationRecorded =
+      appliedNames.includes("0001_clean_launch_schema.sql") &&
+      appliedNames.includes("0002_security_token_revocation.sql");
     record(
       "Migration",
-      "Migration Checksum Tracking",
+      "Migration Checksum Tracking (0001 + 0002)",
       migrationRecorded,
       `Recorded migrations: ${migRows.rows.map((r: any) => `${r.name} (${String(r.checksum).slice(0, 8)})`).join(", ")}`
     );
@@ -95,11 +98,11 @@ async function runVerification() {
       ORDER BY table_name;
     `);
     const tables: string[] = tableRes.rows.map((r: any) => String(r.table_name)).filter((t: string) => t !== "schema_migrations");
-    const expectedCanonicalCount = 34;
+    const expectedCanonicalCount = 36;
     const tableCountMatches = tables.length === expectedCanonicalCount;
     record(
       "Migration",
-      "34 Canonical Tables Present",
+      "36 Canonical + Security Tables Present",
       tableCountMatches,
       `Found ${tables.length} tables (expected ${expectedCanonicalCount}). Tables: ${tables.join(", ")}`
     );
@@ -116,12 +119,24 @@ async function runVerification() {
     const hasReleaseIdempotentIndex = indexNames.includes("idx_ledger_entries_release_idempotent");
     const hasWalletTxnIndex = indexNames.includes("idx_wallet_txns_payment_idempotent");
     const hasOauthExpiresIndex = indexNames.includes("idx_oauth_states_expires_at");
+    const hasRevokedExpiresIndex = indexNames.includes("idx_revoked_tokens_expires");
+    const hasUsedJtiExpiresIndex = indexNames.includes("idx_used_jti_expires");
+    const userColsMig: string[] = (await q(`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'users';
+    `)).rows.map((r: any) => String(r.column_name));
+    const hasTokenVersionCol = userColsMig.includes("token_version");
 
     record(
       "Migration",
-      "Financial Idempotency Indexes Present",
-      hasUpiIdempotentIndex && hasReleaseIdempotentIndex && hasWalletTxnIndex && hasOauthExpiresIndex,
-      `Idempotent indexes: ledger_payment=${hasUpiIdempotentIndex}, ledger_release=${hasReleaseIdempotentIndex}, wallet_txn=${hasWalletTxnIndex}, oauth_expires=${hasOauthExpiresIndex}`
+      "Financial Idempotency & Security Revocation Indexes Present",
+      hasUpiIdempotentIndex &&
+        hasReleaseIdempotentIndex &&
+        hasWalletTxnIndex &&
+        hasOauthExpiresIndex &&
+        hasRevokedExpiresIndex &&
+        hasUsedJtiExpiresIndex &&
+        hasTokenVersionCol,
+      `Idempotent+Security: ledger_payment=${hasUpiIdempotentIndex}, ledger_release=${hasReleaseIdempotentIndex}, wallet_txn=${hasWalletTxnIndex}, oauth_expires=${hasOauthExpiresIndex}, revoked_expires=${hasRevokedExpiresIndex}, used_jti_expires=${hasUsedJtiExpiresIndex}, users.token_version=${hasTokenVersionCol}`
     );
 
     // Run migration SECOND time to verify idempotency
@@ -533,11 +548,14 @@ async function runVerification() {
   }
 
   // ============================================================================
-  // ITEM 7: DRIZZLE TABLE DEFINITIONS VS SQL MIGRATION AUDIT
+  // ITEM 7: 36 DRIZZLE TABLES VS SQL MIGRATIONS AUDIT
   // ============================================================================
-  console.log("\n--- SECTION 7: 34 DRIZZLE TABLES VS SQL MIGRATION PARITY ---");
+  console.log("\n--- SECTION 7: 36 DRIZZLE TABLES VS SQL MIGRATIONS PARITY ---");
   try {
-    const migrationSql = fs.readFileSync(path.join(process.cwd(), "migrations", "0001_clean_launch_schema.sql"), "utf-8");
+    const migrationSql = [
+      fs.readFileSync(path.join(process.cwd(), "migrations", "0001_clean_launch_schema.sql"), "utf-8"),
+      fs.readFileSync(path.join(process.cwd(), "migrations", "0002_security_token_revocation.sql"), "utf-8"),
+    ].join("\n");
     
     // Extract table names from CREATE TABLE IF NOT EXISTS <name>
     const sqlTableMatches = Array.from(migrationSql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z0-9_]+)\s*\(/gi))
@@ -551,7 +569,7 @@ async function runVerification() {
     const missingInDrizzle = sqlTableMatches.filter((t) => !exportedTables.includes(t));
     const extraInDrizzle = exportedTables.filter((t) => !sqlTableMatches.includes(t));
 
-    const tableNamesMatch = missingInDrizzle.length === 0 && extraInDrizzle.length === 0 && exportedTables.length === 34;
+    const tableNamesMatch = missingInDrizzle.length === 0 && extraInDrizzle.length === 0 && exportedTables.length === 36;
 
     record(
       "Schema Parity",

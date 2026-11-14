@@ -30,6 +30,8 @@ import {
   isSessionJtiRevoked,
   getUserTokenVersion,
   bumpUserTokenVersion,
+  SecurityStoreUnavailableError,
+  DistributedRateLimitStore,
   checkOtpAttemptLock,
   recordOtpFailedAttempt,
   clearOtpAttempts,
@@ -250,6 +252,8 @@ const globalRateLimiter = rateLimit({
   max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: false,
+  store: new DistributedRateLimitStore("mingree:rl:global:"),
   message: { error: "Too many requests, please try again later." },
 });
 app.use("/api/", globalRateLimiter);
@@ -355,6 +359,8 @@ const uploadRateLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: false,
+  store: new DistributedRateLimitStore("mingree:rl:upload:"),
   message: { error: "Too many file uploads. Please try again in 15 minutes." },
 });
 
@@ -647,6 +653,17 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
 
 // ================= API ROUTES =================
 
+// Auth Rate Limiting Middleware (mounted BEFORE all /api/auth/* routes including OTP & password reset)
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  passOnStoreError: false,
+  store: new DistributedRateLimitStore("mingree:rl:auth:"),
+  message: { error: "Too many authentication requests. Please try again in 15 minutes." },
+});
+app.use("/api/auth", authRateLimiter);
 
 // Check Email Service Status (never leak configured email address publicly)
 app.get("/api/auth/email-status", (req, res) => {
@@ -953,96 +970,103 @@ app.post("/api/auth/send-otp", async (req, res) => {
   });
 });
 
-// Verify OTP (single-use + brute-force lockout protection)
+// Verify OTP (single-use + distributed brute-force lockout protection)
 app.post("/api/auth/verify-otp", async (req, res) => {
-  const { email, phone, otp, otpToken } = req.body || {};
-  if (!email || !otp) {
-    return res.status(400).json({ error: "Email and OTP are required" });
-  }
+  try {
+    const { email, phone, otp, otpToken } = req.body || {};
+    if (!email || !otp) {
+      return res.status(400).json({ error: "Email and OTP are required" });
+    }
 
-  const cleanEmail = String(email).toLowerCase().trim();
-  const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
-  const cleanOtp = String(otp).trim();
+    const cleanEmail = String(email).toLowerCase().trim();
+    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+    const cleanOtp = String(otp).trim();
 
-  const tokenLockKey = otpToken ? `verify:token:${crypto.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;
-  const lockCheck = checkOtpAttemptLock(tokenLockKey);
-  if (!lockCheck.allowed) {
-    return res.status(429).json({
-      error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request a new OTP.`,
-    });
-  }
+    const tokenLockKey = otpToken ? `verify:token:${crypto.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;
+    const lockCheck = await checkOtpAttemptLock(tokenLockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request a new OTP.`,
+      });
+    }
 
-  const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
-  if (tokenCheck.expired) {
-    return res.status(400).json({ error: "OTP has expired. Please request a new one." });
-  }
-
-  let record = getOtpRecord(cleanEmail);
-  if (!record && cleanPhone) {
-    record = getOtpRecord(cleanPhone);
-  }
-
-  if (record) {
-    if (Date.now() > record.expiresAt) {
-      deleteOtpRecord(cleanEmail);
-      if (cleanPhone) deleteOtpRecord(cleanPhone);
+    const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
+    if (tokenCheck.expired) {
       return res.status(400).json({ error: "OTP has expired. Please request a new one." });
     }
 
-    if (record.attempts >= 5) {
-      deleteOtpRecord(cleanEmail);
-      if (cleanPhone) deleteOtpRecord(cleanPhone);
-      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+    let record = getOtpRecord(cleanEmail);
+    if (!record && cleanPhone) {
+      record = getOtpRecord(cleanPhone);
     }
-  }
 
-  let isOtpValid = tokenCheck.valid;
-  if (isOtpValid && tokenCheck.jti) {
-    const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_token", 15 * 60 * 1000);
-    if (!firstUse) {
-      return res.status(400).json({ error: "OTP has already been used. Please request a new one." });
-    }
-  }
+    if (record) {
+      if (Date.now() > record.expiresAt) {
+        deleteOtpRecord(cleanEmail);
+        if (cleanPhone) deleteOtpRecord(cleanPhone);
+        return res.status(400).json({ error: "OTP has expired. Please request a new one." });
+      }
 
-  if (!isOtpValid && record) {
-    const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash === record.otpHash) {
-      isOtpValid = true;
-    } else {
-      record.attempts += 1;
-      setOtpRecord(cleanEmail, record);
-      if (cleanPhone) setOtpRecord(cleanPhone, record);
-      const failState = recordOtpFailedAttempt(tokenLockKey, 5);
-      if (failState.locked || record.attempts >= 5) {
+      if (record.attempts >= 5) {
         deleteOtpRecord(cleanEmail);
         if (cleanPhone) deleteOtpRecord(cleanPhone);
         return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
       }
+    }
+
+    let isOtpValid = tokenCheck.valid;
+    if (isOtpValid && tokenCheck.jti) {
+      const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_token", 15 * 60 * 1000);
+      if (!firstUse) {
+        return res.status(400).json({ error: "OTP has already been used. Please request a new one." });
+      }
+    }
+
+    if (!isOtpValid && record) {
+      const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+      if (submittedHash === record.otpHash) {
+        isOtpValid = true;
+      } else {
+        record.attempts += 1;
+        setOtpRecord(cleanEmail, record);
+        if (cleanPhone) setOtpRecord(cleanPhone, record);
+        const failState = await recordOtpFailedAttempt(tokenLockKey, 5);
+        if (failState.locked || record.attempts >= 5) {
+          deleteOtpRecord(cleanEmail);
+          if (cleanPhone) deleteOtpRecord(cleanPhone);
+          return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+        }
+        return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
+      }
+    }
+
+    if (!isOtpValid) {
+      const failState = await recordOtpFailedAttempt(tokenLockKey, 5);
+      if (failState.locked) {
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+      }
       return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
-  }
 
-  if (!isOtpValid) {
-    const failState = recordOtpFailedAttempt(tokenLockKey, 5);
-    if (failState.locked) {
-      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+    await clearOtpAttempts(tokenLockKey);
+    deleteOtpRecord(cleanEmail);
+    if (cleanPhone) deleteOtpRecord(cleanPhone);
+    verifiedSignupEmails.add(cleanEmail);
+    const verifiedToken = createVerifiedEmailToken(cleanEmail);
+
+    const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail || (cleanPhone && u.phone && u.phone.includes(cleanPhone)));
+    if (user) {
+      user.isEmailVerified = true;
+      await saveRegisteredUsers(user);
     }
-    return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
+
+    return res.json({ success: true, verifiedToken, message: "Verification successful" });
+  } catch (err: any) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
+    return res.status(500).json({ error: "Verification failed" });
   }
-
-  clearOtpAttempts(tokenLockKey);
-  deleteOtpRecord(cleanEmail);
-  if (cleanPhone) deleteOtpRecord(cleanPhone);
-  verifiedSignupEmails.add(cleanEmail);
-  const verifiedToken = createVerifiedEmailToken(cleanEmail);
-
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail || (cleanPhone && u.phone && u.phone.includes(cleanPhone)));
-  if (user) {
-    user.isEmailVerified = true;
-    await saveRegisteredUsers(user);
-  }
-
-  return res.json({ success: true, verifiedToken, message: "Verification successful" });
 });
 
 // Forgot Password - Send OTP
@@ -1098,108 +1122,149 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 });
 
 // Verify Reset OTP
-app.post("/api/auth/verify-reset-otp", (req, res) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) {
-    return res.status(400).json({ error: "Email and reset code are required" });
+app.post("/api/auth/verify-reset-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ error: "Email and reset code are required" });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
+    const resetLockKey = `reset:email:${cleanEmail}`;
+    const lockCheck = await checkOtpAttemptLock(resetLockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many failed reset attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`,
+      });
+    }
+
+    const record = getOtpRecord(cleanEmail);
+    if (!record) {
+      await recordOtpFailedAttempt(resetLockKey, 5);
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      deleteOtpRecord(cleanEmail);
+      return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+    }
+
+    if (record.attempts >= 5) {
+      deleteOtpRecord(cleanEmail);
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+    }
+
+    const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+    if (submittedHash !== record.otpHash) {
+      record.attempts += 1;
+      setOtpRecord(cleanEmail, record);
+      const failState = await recordOtpFailedAttempt(resetLockKey, 5);
+      if (failState.locked) {
+        deleteOtpRecord(cleanEmail);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+      }
+      return res.status(400).json({ error: "Invalid reset code. Please try again." });
+    }
+
+    return res.json({ success: true, message: "Code verified successfully" });
+  } catch (err: any) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
+    return res.status(500).json({ error: "Failed to verify reset code" });
   }
-
-  const cleanEmail = email.toLowerCase().trim();
-  const cleanOtp = String(otp).trim();
-
-  const record = getOtpRecord(cleanEmail);
-  if (!record) {
-    return res.status(400).json({ error: "Invalid or expired reset code" });
-  }
-
-  if (Date.now() > record.expiresAt) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
-  }
-
-  if (record.attempts >= 5) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
-  }
-
-  const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-  if (submittedHash !== record.otpHash) {
-    record.attempts += 1;
-    setOtpRecord(cleanEmail, record);
-    return res.status(400).json({ error: "Invalid reset code. Please try again." });
-  }
-
-  return res.json({ success: true, message: "Code verified successfully" });
 });
 
 // Verify Reset OTP & Reset Password
 app.post("/api/auth/reset-password", async (req, res) => {
-  const { email, otp, newPassword, password } = req.body;
-  const targetPassword = newPassword || password;
-  if (!email || !otp || !targetPassword) {
-    return res.status(400).json({ error: "Email, reset code, and new password are required" });
-  }
-  if (String(targetPassword).length < 6) {
-    return res.status(400).json({ error: "New password must be at least 6 characters long" });
-  }
-
-  const cleanEmail = email.toLowerCase().trim();
-  const cleanOtp = String(otp).trim();
-
-  const record = getOtpRecord(cleanEmail);
-  if (!record) {
-    return res.status(400).json({ error: "Invalid or expired reset code" });
-  }
-
-  if (Date.now() > record.expiresAt) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
-  }
-
-  if (record.attempts >= 5) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
-  }
-
-  const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-  if (submittedHash !== record.otpHash) {
-    record.attempts += 1;
-    setOtpRecord(cleanEmail, record);
-    return res.status(400).json({ error: "Invalid reset code. Please try again." });
-  }
-
-  deleteOtpRecord(cleanEmail);
-
-  const newHash = bcrypt.hashSync(String(targetPassword), 10);
-  let targetUserId: number | null = null;
-
-  // Update in DB & bump token_version to revoke existing sessions
   try {
-    const dbRes = await pool.query(
-      "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
-      [newHash, cleanEmail]
-    );
-    if (dbRes.rows.length > 0) {
-      targetUserId = Number(dbRes.rows[0].id);
+    const { email, otp, newPassword, password } = req.body;
+    const targetPassword = newPassword || password;
+    if (!email || !otp || !targetPassword) {
+      return res.status(400).json({ error: "Email, reset code, and new password are required" });
     }
+    if (String(targetPassword).length < 6) {
+      return res.status(400).json({ error: "New password must be at least 6 characters long" });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
+    const resetLockKey = `reset:email:${cleanEmail}`;
+    const lockCheck = await checkOtpAttemptLock(resetLockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many failed reset attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`,
+      });
+    }
+
+    const record = getOtpRecord(cleanEmail);
+    if (!record) {
+      await recordOtpFailedAttempt(resetLockKey, 5);
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      deleteOtpRecord(cleanEmail);
+      return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+    }
+
+    if (record.attempts >= 5) {
+      deleteOtpRecord(cleanEmail);
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+    }
+
+    const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+    if (submittedHash !== record.otpHash) {
+      record.attempts += 1;
+      setOtpRecord(cleanEmail, record);
+      const failState = await recordOtpFailedAttempt(resetLockKey, 5);
+      if (failState.locked) {
+        deleteOtpRecord(cleanEmail);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+      }
+      return res.status(400).json({ error: "Invalid reset code. Please try again." });
+    }
+
+    await clearOtpAttempts(resetLockKey);
+    deleteOtpRecord(cleanEmail);
+
+    const newHash = bcrypt.hashSync(String(targetPassword), 10);
+    let targetUserId: number | null = null;
+
+    // Update in DB & bump token_version to revoke existing sessions
+    try {
+      const dbRes = await pool.query(
+        "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
+        [newHash, cleanEmail]
+      );
+      if (dbRes.rows.length > 0) {
+        targetUserId = Number(dbRes.rows[0].id);
+      }
+    } catch (err: any) {
+      if (err.code !== 'ECONNREFUSED') {
+        console.error("[RESET DB UPDATE ERROR]", err.message);
+      }
+    }
+
+    // Update in memory & bump tokenVersion
+    const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (user) {
+      user.passwordHash = newHash;
+      if (!targetUserId) targetUserId = Number(user.id);
+      user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
+      await saveRegisteredUsers(user);
+    } else if (targetUserId) {
+      await bumpUserTokenVersion(targetUserId);
+    }
+
+    return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
   } catch (err: any) {
-    if (err.code !== 'ECONNREFUSED') {
-      console.error("[RESET DB UPDATE ERROR]", err.message);
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
     }
+    return res.status(500).json({ error: "Failed to reset password" });
   }
-
-  // Update in memory & bump tokenVersion
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (user) {
-    user.passwordHash = newHash;
-    if (!targetUserId) targetUserId = Number(user.id);
-    user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
-    await saveRegisteredUsers(user);
-  } else if (targetUserId) {
-    await bumpUserTokenVersion(targetUserId);
-  }
-
-  return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
 });
 
 // Query accounts linked to verified mobile number (Creator-only, Brand-only, or Shared)
@@ -1219,7 +1284,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
 
     const cleanOtp = String(otp).trim();
     const lockKey = `phone_acc:${cleanPhone}`;
-    const lockCheck = checkOtpAttemptLock(lockKey);
+    const lockCheck = await checkOtpAttemptLock(lockKey);
     if (!lockCheck.allowed) {
       return res.status(429).json({ error: "Too many failed OTP attempts. Please try again later." });
     }
@@ -1255,16 +1320,16 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       } else {
         record.attempts += 1;
         setOtpRecord(cleanPhone, record);
-        recordOtpFailedAttempt(lockKey, 5);
+        await recordOtpFailedAttempt(lockKey, 5);
       }
     }
 
     if (!isOtpValid) {
-      recordOtpFailedAttempt(lockKey, 5);
+      await recordOtpFailedAttempt(lockKey, 5);
       return res.status(400).json({ error: "Invalid or expired verification code. Please check and try again." });
     }
 
-    clearOtpAttempts(lockKey);
+    await clearOtpAttempts(lockKey);
     deleteOtpRecord(cleanPhone);
     deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
 
@@ -1354,6 +1419,9 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       resetVerificationToken,
     });
   } catch (err: any) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
     console.error("[PHONE ACCOUNTS ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to retrieve accounts for phone number" });
   }
@@ -1391,7 +1459,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
 
     if (!isAuthorized && otp) {
       const resetLockKey = `phone_reset:${cleanPhone}`;
-      const lockCheck = checkOtpAttemptLock(resetLockKey);
+      const lockCheck = await checkOtpAttemptLock(resetLockKey);
       if (!lockCheck.allowed) {
         return res.status(429).json({
           error: `Too many failed attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`,
@@ -1403,13 +1471,13 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
         const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
         if (submittedHash === record.otpHash) {
           isAuthorized = true;
-          clearOtpAttempts(resetLockKey);
+          await clearOtpAttempts(resetLockKey);
           deleteOtpRecord(cleanPhone);
           deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
         } else {
           record.attempts += 1;
           setOtpRecord(cleanPhone, record);
-          recordOtpFailedAttempt(resetLockKey, 5);
+          await recordOtpFailedAttempt(resetLockKey, 5);
         }
       }
     }
@@ -1511,6 +1579,9 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       },
     });
   } catch (err: any) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
     console.error("[PHONE RESET PASSWORD ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to reset password for the selected account." });
   }
@@ -1606,16 +1677,6 @@ app.get("/api/instagram/requirements", (req, res) => {
     redirectUri: getInstagramRedirectUri(true),
   });
 });
-
-// Auth Rate Limiting Middleware
-const authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many authentication requests. Please try again in 15 minutes." },
-});
-app.use("/api/auth", authRateLimiter);
 
 // JWT Secrets & Cookie Options
 export function getJwtSecret(): string {
@@ -7887,7 +7948,7 @@ app.post("/api/cashfree/verify", requireAuth, async (req: AuthRequest, res) => {
   }
 });
 
-// 3. POST /api/cashfree/webhook - Cashfree webhook with HMAC-SHA256 signature verification
+// 3. POST /api/cashfree/webhook - CANONICAL Cashfree webhook with HMAC-SHA256 signature verification
 app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Response) => {
   const { secretKey } = getCashfreeCredentials();
 
@@ -9091,6 +9152,11 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
   }
   if (err?.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err)) {
     return res.status(400).json({ error: "Malformed JSON request body" });
+  }
+  if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+    return res.status(503).json({
+      error: "Rate limit protection service is temporarily unavailable. Please try again shortly.",
+    });
   }
   const statusCode = err.statusCode || err.status || 500;
   const isProd = process.env.NODE_ENV === "production";

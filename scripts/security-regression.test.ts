@@ -7,6 +7,14 @@ import assert from "assert";
 import app, { getJwtSecret, createSignedOtpToken } from "../server";
 import { createPaymentOrder, getOrCreateWallet } from "../server/walletAndPayments";
 import { saveSingleWorkspace } from "../server/campaignWorkspaces";
+import {
+  DistributedRateLimitStore,
+  SecurityStoreUnavailableError,
+  checkOtpAttemptLock,
+  recordOtpFailedAttempt,
+  clearOtpAttempts,
+  setSecurityRedisRequesterForTest,
+} from "../server/security";
 
 interface TestResult {
   id: number;
@@ -900,6 +908,217 @@ async function runSecurityRegressionSuite() {
         passed,
         `sqliUsers=${sqliRes.status}, sqliDisputes=${sqliDisputes.status}, polluted=${isObjectPolluted}, rawXss=${rawScriptInjected}`
       );
+    }
+
+    // 19. Distributed Redis store shares rate-limit counters & OTP lockout across independent instances
+    {
+      const savedNodeEnv = process.env.NODE_ENV;
+      const savedRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
+      const savedRedisTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+      const sharedKv = new Map<string, { val: number | string; expiresAt: number }>();
+
+      const mockRedisRequester = {
+        request: async <TResult>(req: { body?: unknown }): Promise<{ result?: TResult }> => {
+          const cmd = Array.isArray(req.body) ? req.body : [];
+          const op = String(cmd[0] || "").toUpperCase();
+          const now = Date.now();
+          const pruneKey = (k: string) => {
+            const e = sharedKv.get(k);
+            if (e && e.expiresAt > 0 && e.expiresAt <= now) sharedKv.delete(k);
+          };
+
+          if (op === "EVAL") {
+            const script = String(cmd[1] || "");
+            const numKeys = Number(cmd[2] || 0);
+            const k1 = String(cmd[3] || "");
+            if (script.includes("SET") && numKeys === 2) {
+              // OTP_FAIL_RECORD_LUA
+              const k2 = String(cmd[4] || "");
+              const maxAttempts = Number(cmd[5] || 5);
+              const lockMs = Number(cmd[6] || 900_000);
+              pruneKey(k1);
+              const cur = Number(sharedKv.get(k1)?.val || 0) + 1;
+              const exp = cur === 1 ? now + lockMs : (sharedKv.get(k1)?.expiresAt || now + lockMs);
+              sharedKv.set(k1, { val: cur, expiresAt: exp });
+              if (cur >= maxAttempts) {
+                sharedKv.set(k2, { val: "1", expiresAt: now + lockMs });
+                return { result: [1, 0, cur] as unknown as TResult };
+              }
+              return { result: [0, maxAttempts - cur, cur] as unknown as TResult };
+            }
+            // RATE_LIMIT_INCR_LUA
+            const windowMs = Number(cmd[4] || 60_000);
+            pruneKey(k1);
+            const existing = sharedKv.get(k1);
+            const cur = Number(existing?.val || 0) + 1;
+            const exp = cur === 1 || !existing ? now + windowMs : existing.expiresAt;
+            sharedKv.set(k1, { val: cur, expiresAt: exp });
+            return { result: [cur, Math.max(1, exp - now)] as unknown as TResult };
+          }
+          if (op === "PTTL") {
+            const k1 = String(cmd[1] || "");
+            pruneKey(k1);
+            const e = sharedKv.get(k1);
+            if (!e) return { result: -2 as unknown as TResult };
+            return { result: (e.expiresAt > 0 ? Math.max(1, e.expiresAt - now) : -1) as unknown as TResult };
+          }
+          if (op === "GET") {
+            const k1 = String(cmd[1] || "");
+            pruneKey(k1);
+            return { result: (sharedKv.get(k1)?.val ?? null) as unknown as TResult };
+          }
+          if (op === "DEL") {
+            let deleted = 0;
+            for (let i = 1; i < cmd.length; i++) {
+              if (sharedKv.delete(String(cmd[i]))) deleted++;
+            }
+            return { result: deleted as unknown as TResult };
+          }
+          if (op === "DECR") {
+            const k1 = String(cmd[1] || "");
+            const cur = Number(sharedKv.get(k1)?.val || 0) - 1;
+            sharedKv.set(k1, { val: cur, expiresAt: sharedKv.get(k1)?.expiresAt || 0 });
+            return { result: cur as unknown as TResult };
+          }
+          throw new Error(`Unsupported mock command: ${op}`);
+        },
+      };
+
+      try {
+        process.env.NODE_ENV = "production";
+        process.env.UPSTASH_REDIS_REST_URL = "https://mock-upstash.mingree.invalid";
+        process.env.UPSTASH_REDIS_REST_TOKEN = "mock_upstash_token";
+        setSecurityRedisRequesterForTest(mockRedisRequester as any);
+
+        // Two distinct instance stores share Redis state via key prefix
+        const instanceAStore = new DistributedRateLimitStore("mingree:rl:test:");
+        const instanceBStore = new DistributedRateLimitStore("mingree:rl:test:");
+        instanceAStore.init({ windowMs: 60_000 } as any);
+        instanceBStore.init({ windowMs: 60_000 } as any);
+
+        const hit1 = await instanceAStore.increment("198.51.100.10");
+        const hit2 = await instanceBStore.increment("198.51.100.10");
+        const hit3 = await instanceAStore.increment("198.51.100.10");
+
+        // OTP failures recorded on instance A (3) + instance B (2) lock out across both!
+        const otpKey = "verify:email:dist_test@mingree.internal";
+        for (let i = 0; i < 3; i++) await recordOtpFailedAttempt(otpKey, 5, 60_000);
+        for (let i = 0; i < 2; i++) await recordOtpFailedAttempt(otpKey, 5, 60_000);
+        const distLock = await checkOtpAttemptLock(otpKey);
+        await clearOtpAttempts(otpKey);
+        const afterClear = await checkOtpAttemptLock(otpKey);
+
+        const passed =
+          hit1.totalHits === 1 &&
+          hit2.totalHits === 2 &&
+          hit3.totalHits === 3 &&
+          !distLock.allowed &&
+          distLock.retryAfterSec > 0 &&
+          afterClear.allowed;
+        record(
+          19,
+          "Distributed Redis store shares rate-limit hits & OTP lockout across instances",
+          passed,
+          `hits=[${hit1.totalHits},${hit2.totalHits},${hit3.totalHits}], lockedAfter5=${!distLock.allowed}, unlockedAfterClear=${afterClear.allowed}`
+        );
+      } finally {
+        setSecurityRedisRequesterForTest(null);
+        if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = savedNodeEnv;
+        if (savedRedisUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
+        else process.env.UPSTASH_REDIS_REST_URL = savedRedisUrl;
+        if (savedRedisTok === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
+        else process.env.UPSTASH_REDIS_REST_TOKEN = savedRedisTok;
+      }
+    }
+
+    // 20. Fail-closed HTTP 503 enforcement when production lacks Redis or Redis fails
+    {
+      const savedNodeEnv = process.env.NODE_ENV;
+      const savedRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
+      const savedRedisTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+      try {
+        // 20a: Production mode with NO Redis credentials must fail closed (HTTP 503), never fall back to memory
+        process.env.NODE_ENV = "production";
+        delete process.env.UPSTASH_REDIS_REST_URL;
+        delete process.env.UPSTASH_REDIS_REST_TOKEN;
+        setSecurityRedisRequesterForTest(null);
+
+        const rMissingRedisRate = await fetch(`${baseUrl}/api/health`);
+        const rMissingRedisOtp = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "failclosed@test.mingree.internal", otp: "123456" }),
+        });
+
+        // 20b: Production mode with failing/unreachable Redis store must fail closed (HTTP 503)
+        process.env.UPSTASH_REDIS_REST_URL = "https://down-upstash.mingree.invalid";
+        process.env.UPSTASH_REDIS_REST_TOKEN = "down_token";
+        setSecurityRedisRequesterForTest({
+          request: async () => {
+            throw new Error("Simulated Redis network outage");
+          },
+        });
+
+        const rDownRedisRate = await fetch(`${baseUrl}/api/health`);
+        const rDownRedisOtp = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "failclosed@test.mingree.internal", otp: "123456" }),
+        });
+
+        let unitThrew = false;
+        try {
+          await checkOtpAttemptLock("unit:down");
+        } catch (err) {
+          unitThrew = err instanceof SecurityStoreUnavailableError;
+        }
+
+        const passed =
+          rMissingRedisRate.status === 503 &&
+          rMissingRedisOtp.status === 503 &&
+          rDownRedisRate.status === 503 &&
+          rDownRedisOtp.status === 503 &&
+          unitThrew;
+        record(
+          20,
+          "Production fails safely (HTTP 503) when Redis is missing or unreachable",
+          passed,
+          `missingRate=${rMissingRedisRate.status}, missingOtp=${rMissingRedisOtp.status}, downRate=${rDownRedisRate.status}, downOtp=${rDownRedisOtp.status}, throws503Error=${unitThrew}`
+        );
+      } finally {
+        setSecurityRedisRequesterForTest(null);
+        if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = savedNodeEnv;
+        if (savedRedisUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
+        else process.env.UPSTASH_REDIS_REST_URL = savedRedisUrl;
+        if (savedRedisTok === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
+        else process.env.UPSTASH_REDIS_REST_TOKEN = savedRedisTok;
+      }
+    }
+
+    // 21. Local development mode preserves full functionality without Redis
+    {
+      const savedNodeEnv = process.env.NODE_ENV;
+      const savedRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
+      const savedRedisTok = process.env.UPSTASH_REDIS_REST_TOKEN;
+      try {
+        process.env.NODE_ENV = "development";
+        delete process.env.UPSTASH_REDIS_REST_URL;
+        delete process.env.UPSTASH_REDIS_REST_TOKEN;
+        setSecurityRedisRequesterForTest(null);
+
+        const rDevHealth = await fetch(`${baseUrl}/api/health`);
+        const passed = rDevHealth.status === 200;
+        record(21, "Local development mode operates normally without Redis", passed, `devHealth=${rDevHealth.status}`);
+      } finally {
+        if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = savedNodeEnv;
+        if (savedRedisUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
+        else process.env.UPSTASH_REDIS_REST_URL = savedRedisUrl;
+        if (savedRedisTok === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
+        else process.env.UPSTASH_REDIS_REST_TOKEN = savedRedisTok;
+      }
     }
   } finally {
     server.close();

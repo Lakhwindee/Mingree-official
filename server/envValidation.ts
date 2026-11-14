@@ -1,6 +1,7 @@
 export interface EnvValidationReport {
   isProduction: boolean;
   databaseConfigured: boolean;
+  redisConfigured: boolean;
   jwtConfigured: boolean;
   encryptionConfigured: boolean;
   storageConfigured: boolean;
@@ -27,6 +28,20 @@ export function validateProductionEnvironment(): EnvValidationReport {
   );
   if (isProduction && !databaseConfigured) {
     errors.push("DATABASE_URL or Cloudflare Hyperdrive binding is required in production (Supabase PostgreSQL).");
+  }
+
+  // 1b. UPSTASH REDIS (Distributed Rate Limiting & OTP Lockout)
+  const redisUrl = (process.env.UPSTASH_REDIS_REST_URL || "").trim();
+  const redisToken = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
+  const redisConfigured = Boolean(
+    redisUrl &&
+      redisToken &&
+      (redisUrl.startsWith("https://") || (!isProduction && redisUrl.startsWith("http://")))
+  );
+  if (isProduction && !redisConfigured) {
+    errors.push(
+      "UPSTASH_REDIS_REST_URL (https://...) and UPSTASH_REDIS_REST_TOKEN are required in production for distributed rate limiting and OTP lockout."
+    );
   }
 
   // 2. JWT_SECRET
@@ -98,6 +113,7 @@ export function validateProductionEnvironment(): EnvValidationReport {
   return {
     isProduction,
     databaseConfigured,
+    redisConfigured,
     jwtConfigured,
     encryptionConfigured,
     storageConfigured,
@@ -119,6 +135,7 @@ export function enforceProductionEnvironment(): void {
     console.log("          MINGREE PRODUCTION PRE-FLIGHT VALIDATION (CLOUDFLARE + SUPABASE)       ");
     console.log("================================================================================");
     console.log(`Database (Supabase / Hyperdrive): ${report.databaseConfigured ? "✓ CONFIGURED" : "✗ MISSING"}`);
+    console.log(`Distributed Redis (Upstash):      ${report.redisConfigured ? "✓ CONFIGURED" : "✗ MISSING"}`);
     console.log(`JWT Auth Secret:       ${report.jwtConfigured ? "✓ CONFIGURED" : "✗ MISSING"}`);
     console.log(`Financial Encryption:  ${report.encryptionConfigured ? "✓ CONFIGURED" : "✗ MISSING"}`);
     console.log(`Persistent Storage:    ${report.storageConfigured ? `✓ CONFIGURED (${report.storageProvider.toUpperCase()})` : "⚠ UNCONFIGURED"}`);

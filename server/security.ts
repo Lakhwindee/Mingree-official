@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import path from "path";
 import type { NextFunction, Request, Response } from "express";
+import type { Store, IncrementResponse, Options, ClientRateLimitInfo } from "express-rate-limit";
+import { Redis, type Requester } from "@upstash/redis";
 import { pool, isDatabaseConfigured } from "./db";
 
 // ============================================================================
@@ -457,39 +459,304 @@ export async function bumpUserTokenVersion(userId: number): Promise<number> {
 }
 
 // ============================================================================
-// 6. OTP BRUTE-FORCE & LOCKOUT TRACKING
+// 6. DISTRIBUTED RATE LIMITING & OTP BRUTE-FORCE LOCKOUT (UPSTASH REDIS)
 // ============================================================================
 
-export function checkOtpAttemptLock(key: string): { allowed: boolean; retryAfterSec: number } {
-  const now = Date.now();
-  const entry = otpFailedAttemptMap.get(key);
-  if (!entry) return { allowed: true, retryAfterSec: 0 };
-  if (entry.lockedUntil > now) {
-    return { allowed: false, retryAfterSec: Math.ceil((entry.lockedUntil - now) / 1000) };
+export class SecurityStoreUnavailableError extends Error {
+  statusCode = 503;
+  constructor(message = "Distributed security rate-limit store is unavailable. Request blocked for safety.") {
+    super(message);
+    this.name = "SecurityStoreUnavailableError";
   }
-  if (now - entry.firstAttemptAt > 15 * 60 * 1000) {
+}
+
+let cachedRedisConfigKey = "";
+let cachedRedisClient: Redis | null = null;
+let testRedisRequester: Requester | null = null;
+
+export function setSecurityRedisRequesterForTest(requester: Requester | null): void {
+  testRedisRequester = requester;
+  cachedRedisClient = null;
+  cachedRedisConfigKey = "";
+}
+
+function isDistributedStoreRequired(): boolean {
+  return process.env.NODE_ENV === "production" || process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT === "true";
+}
+
+function getUpstashRedisCredentials(): { url: string; token: string } | null {
+  const url = (process.env.UPSTASH_REDIS_REST_URL || "").trim().replace(/\/+$/, "");
+  const token = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
+  if (!url || !token) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && (process.env.NODE_ENV === "production" || parsed.protocol !== "http:")) {
+      return null;
+    }
+    return { url, token };
+  } catch {
+    return null;
+  }
+}
+
+export function resolveSecurityRedisClient(): Redis | null {
+  const creds = getUpstashRedisCredentials();
+  if (!creds) {
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be configured in production for shared rate limiting and OTP lockout."
+      );
+    }
+    return null;
+  }
+  if (testRedisRequester) {
+    return new Redis(testRedisRequester);
+  }
+  const cacheKey = `${creds.url}::${creds.token}`;
+  if (!cachedRedisClient || cachedRedisConfigKey !== cacheKey) {
+    cachedRedisConfigKey = cacheKey;
+    cachedRedisClient = new Redis({
+      url: creds.url,
+      token: creds.token,
+      retry: { retries: 0 },
+    });
+  }
+  return cachedRedisClient;
+}
+
+const RATE_LIMIT_INCR_LUA = `
+local current = redis.call("INCR", KEYS[1])
+local ttl = redis.call("PTTL", KEYS[1])
+if tonumber(current) == 1 or tonumber(ttl) < 0 then
+  redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[1]))
+  ttl = tonumber(ARGV[1])
+end
+return {current, ttl}
+`;
+
+export class DistributedRateLimitStore implements Store {
+  windowMs = 60_000;
+  localKeys = false;
+  prefix: string;
+  private localFallback = new Map<string, { totalHits: number; resetTimeMs: number }>();
+
+  constructor(prefix = "mingree:rl:") {
+    this.prefix = prefix;
+  }
+
+  init(options: Options): void {
+    this.windowMs = options.windowMs;
+  }
+
+  private getScopedKey(key: string): string {
+    return `${this.prefix}${key}`;
+  }
+
+  private pruneLocalFallback(): void {
+    const now = Date.now();
+    for (const [k, v] of this.localFallback.entries()) {
+      if (v.resetTimeMs <= now) this.localFallback.delete(k);
+    }
+    while (this.localFallback.size > 10_000) {
+      const oldest = this.localFallback.keys().next().value;
+      if (!oldest) break;
+      this.localFallback.delete(oldest);
+    }
+  }
+
+  async get(key: string): Promise<ClientRateLimitInfo | undefined> {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      const entry = this.localFallback.get(fullKey);
+      if (!entry || entry.resetTimeMs <= Date.now()) return undefined;
+      return { totalHits: entry.totalHits, resetTime: new Date(entry.resetTimeMs) };
+    }
+    try {
+      const [hitsRaw, ttlRaw] = await Promise.all([
+        redis.get<number>(fullKey),
+        redis.pttl(fullKey),
+      ]);
+      if (hitsRaw === null || hitsRaw === undefined) return undefined;
+      const ttlMs = typeof ttlRaw === "number" && ttlRaw > 0 ? ttlRaw : this.windowMs;
+      return {
+        totalHits: Number(hitsRaw) || 0,
+        resetTime: new Date(Date.now() + ttlMs),
+      };
+    } catch (err: any) {
+      throw new SecurityStoreUnavailableError(
+        `Shared rate-limit store error: ${err?.message || "Redis unreachable"}`
+      );
+    }
+  }
+
+  async increment(key: string): Promise<IncrementResponse> {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      this.pruneLocalFallback();
+      const now = Date.now();
+      const existing = this.localFallback.get(fullKey);
+      if (!existing || existing.resetTimeMs <= now) {
+        const next = { totalHits: 1, resetTimeMs: now + this.windowMs };
+        this.localFallback.set(fullKey, next);
+        return { totalHits: next.totalHits, resetTime: new Date(next.resetTimeMs) };
+      }
+      existing.totalHits += 1;
+      return { totalHits: existing.totalHits, resetTime: new Date(existing.resetTimeMs) };
+    }
+
+    try {
+      const res = (await redis.eval(RATE_LIMIT_INCR_LUA, [fullKey], [this.windowMs])) as [number, number] | number[];
+      const totalHits = Array.isArray(res) ? Number(res[0]) || 1 : 1;
+      const ttlMs = Array.isArray(res) && Number(res[1]) > 0 ? Number(res[1]) : this.windowMs;
+      return {
+        totalHits,
+        resetTime: new Date(Date.now() + ttlMs),
+      };
+    } catch (err: any) {
+      throw new SecurityStoreUnavailableError(
+        `Shared rate-limit store unavailable: ${err?.message || "Redis request failed"}`
+      );
+    }
+  }
+
+  async decrement(key: string): Promise<void> {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      const existing = this.localFallback.get(fullKey);
+      if (existing && existing.totalHits > 0) existing.totalHits -= 1;
+      return;
+    }
+    try {
+      const next = await redis.decr(fullKey);
+      if (next <= 0) {
+        await redis.del(fullKey);
+      }
+    } catch (err: any) {
+      throw new SecurityStoreUnavailableError(
+        `Shared rate-limit store error during decrement: ${err?.message || "Redis error"}`
+      );
+    }
+  }
+
+  async resetKey(key: string): Promise<void> {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      this.localFallback.delete(fullKey);
+      return;
+    }
+    try {
+      await redis.del(fullKey);
+    } catch (err: any) {
+      throw new SecurityStoreUnavailableError(
+        `Shared rate-limit store error during resetKey: ${err?.message || "Redis error"}`
+      );
+    }
+  }
+}
+
+const OTP_FAIL_RECORD_LUA = `
+local count = tonumber(redis.call("INCR", KEYS[1]))
+local ttl = tonumber(redis.call("PTTL", KEYS[1]))
+if count == 1 or ttl < 0 then
+  redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+if count >= tonumber(ARGV[1]) then
+  redis.call("SET", KEYS[2], "1", "PX", tonumber(ARGV[2]))
+  return {1, 0, count}
+end
+return {0, tonumber(ARGV[1]) - count, count}
+`;
+
+export async function checkOtpAttemptLock(key: string): Promise<{ allowed: boolean; retryAfterSec: number }> {
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    const now = Date.now();
+    const entry = otpFailedAttemptMap.get(key);
+    if (!entry) return { allowed: true, retryAfterSec: 0 };
+    if (entry.lockedUntil > now) {
+      return { allowed: false, retryAfterSec: Math.ceil((entry.lockedUntil - now) / 1000) };
+    }
+    if (now - entry.firstAttemptAt > 15 * 60 * 1000) {
+      otpFailedAttemptMap.delete(key);
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  }
+
+  try {
+    const lockKey = `mingree:otp:lock:${key}`;
+    const ttlMs = await redis.pttl(lockKey);
+    if (typeof ttlMs === "number" && ttlMs > 0) {
+      return { allowed: false, retryAfterSec: Math.ceil(ttlMs / 1000) };
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  } catch (err: any) {
+    throw new SecurityStoreUnavailableError(
+      `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
+    );
+  }
+}
+
+export async function recordOtpFailedAttempt(
+  key: string,
+  maxAttempts = 5,
+  lockDurationMs = 15 * 60 * 1000
+): Promise<{ locked: boolean; attemptsRemaining: number }> {
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    const now = Date.now();
+    const existing = otpFailedAttemptMap.get(key);
+    if (!existing || now - existing.firstAttemptAt > 15 * 60 * 1000) {
+      const lockedImmediately = maxAttempts <= 1;
+      otpFailedAttemptMap.set(key, {
+        count: 1,
+        lockedUntil: lockedImmediately ? now + lockDurationMs : 0,
+        firstAttemptAt: now,
+      });
+      return { locked: lockedImmediately, attemptsRemaining: Math.max(0, maxAttempts - 1) };
+    }
+    existing.count += 1;
+    if (existing.count >= maxAttempts) {
+      existing.lockedUntil = now + lockDurationMs;
+      return { locked: true, attemptsRemaining: 0 };
+    }
+    return { locked: false, attemptsRemaining: maxAttempts - existing.count };
+  }
+
+  try {
+    const failKey = `mingree:otp:fail:${key}`;
+    const lockKey = `mingree:otp:lock:${key}`;
+    const res = (await redis.eval(
+      OTP_FAIL_RECORD_LUA,
+      [failKey, lockKey],
+      [maxAttempts, lockDurationMs]
+    )) as [number, number, number] | number[];
+    const locked = Number(res?.[0]) === 1;
+    const remaining = Math.max(0, Number(res?.[1] ?? 0));
+    return { locked, attemptsRemaining: remaining };
+  } catch (err: any) {
+    throw new SecurityStoreUnavailableError(
+      `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
+    );
+  }
+}
+
+export async function clearOtpAttempts(key: string): Promise<void> {
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
     otpFailedAttemptMap.delete(key);
+    return;
   }
-  return { allowed: true, retryAfterSec: 0 };
-}
-
-export function recordOtpFailedAttempt(key: string, maxAttempts = 5, lockDurationMs = 15 * 60 * 1000): { locked: boolean; attemptsRemaining: number } {
-  const now = Date.now();
-  const existing = otpFailedAttemptMap.get(key);
-  if (!existing || now - existing.firstAttemptAt > 15 * 60 * 1000) {
-    otpFailedAttemptMap.set(key, { count: 1, lockedUntil: 0, firstAttemptAt: now });
-    return { locked: false, attemptsRemaining: maxAttempts - 1 };
+  try {
+    await redis.del(`mingree:otp:fail:${key}`, `mingree:otp:lock:${key}`);
+  } catch (err: any) {
+    throw new SecurityStoreUnavailableError(
+      `Shared OTP lockout store error during clear: ${err?.message || "Redis unreachable"}`
+    );
   }
-  existing.count += 1;
-  if (existing.count >= maxAttempts) {
-    existing.lockedUntil = now + lockDurationMs;
-    return { locked: true, attemptsRemaining: 0 };
-  }
-  return { locked: false, attemptsRemaining: maxAttempts - existing.count };
-}
-
-export function clearOtpAttempts(key: string): void {
-  otpFailedAttemptMap.delete(key);
 }
 
 // ============================================================================
