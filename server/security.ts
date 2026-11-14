@@ -595,16 +595,21 @@ export class DistributedRateLimitStore implements Store {
         resetTime: new Date(Date.now() + ttlMs),
       };
     } catch (err: any) {
-      throw new SecurityStoreUnavailableError(
-        `Shared rate-limit store error: ${err?.message || "Redis unreachable"}`
-      );
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store error: ${err?.message || "Redis unreachable"}`
+        );
+      }
+      const entry = this.localFallback.get(fullKey);
+      if (!entry || entry.resetTimeMs <= Date.now()) return undefined;
+      return { totalHits: entry.totalHits, resetTime: new Date(entry.resetTimeMs) };
     }
   }
 
   async increment(key: string): Promise<IncrementResponse> {
     const redis = resolveSecurityRedisClient();
     const fullKey = this.getScopedKey(key);
-    if (!redis) {
+    const incrementLocal = (): IncrementResponse => {
       this.pruneLocalFallback();
       const now = Date.now();
       const existing = this.localFallback.get(fullKey);
@@ -615,6 +620,10 @@ export class DistributedRateLimitStore implements Store {
       }
       existing.totalHits += 1;
       return { totalHits: existing.totalHits, resetTime: new Date(existing.resetTimeMs) };
+    };
+
+    if (!redis) {
+      return incrementLocal();
     }
 
     try {
@@ -626,9 +635,12 @@ export class DistributedRateLimitStore implements Store {
         resetTime: new Date(Date.now() + ttlMs),
       };
     } catch (err: any) {
-      throw new SecurityStoreUnavailableError(
-        `Shared rate-limit store unavailable: ${err?.message || "Redis request failed"}`
-      );
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store unavailable: ${err?.message || "Redis request failed"}`
+        );
+      }
+      return incrementLocal();
     }
   }
 
@@ -646,9 +658,13 @@ export class DistributedRateLimitStore implements Store {
         await redis.del(fullKey);
       }
     } catch (err: any) {
-      throw new SecurityStoreUnavailableError(
-        `Shared rate-limit store error during decrement: ${err?.message || "Redis error"}`
-      );
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store error during decrement: ${err?.message || "Redis error"}`
+        );
+      }
+      const existing = this.localFallback.get(fullKey);
+      if (existing && existing.totalHits > 0) existing.totalHits -= 1;
     }
   }
 
@@ -662,9 +678,12 @@ export class DistributedRateLimitStore implements Store {
     try {
       await redis.del(fullKey);
     } catch (err: any) {
-      throw new SecurityStoreUnavailableError(
-        `Shared rate-limit store error during resetKey: ${err?.message || "Redis error"}`
-      );
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store error during resetKey: ${err?.message || "Redis error"}`
+        );
+      }
+      this.localFallback.delete(fullKey);
     }
   }
 }
@@ -683,8 +702,7 @@ return {0, tonumber(ARGV[1]) - count, count}
 `;
 
 export async function checkOtpAttemptLock(key: string): Promise<{ allowed: boolean; retryAfterSec: number }> {
-  const redis = resolveSecurityRedisClient();
-  if (!redis) {
+  const checkLocal = (): { allowed: boolean; retryAfterSec: number } => {
     const now = Date.now();
     const entry = otpFailedAttemptMap.get(key);
     if (!entry) return { allowed: true, retryAfterSec: 0 };
@@ -695,6 +713,11 @@ export async function checkOtpAttemptLock(key: string): Promise<{ allowed: boole
       otpFailedAttemptMap.delete(key);
     }
     return { allowed: true, retryAfterSec: 0 };
+  };
+
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    return checkLocal();
   }
 
   try {
@@ -705,9 +728,12 @@ export async function checkOtpAttemptLock(key: string): Promise<{ allowed: boole
     }
     return { allowed: true, retryAfterSec: 0 };
   } catch (err: any) {
-    throw new SecurityStoreUnavailableError(
-      `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
-    );
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
+      );
+    }
+    return checkLocal();
   }
 }
 
@@ -716,8 +742,7 @@ export async function recordOtpFailedAttempt(
   maxAttempts = 5,
   lockDurationMs = 15 * 60 * 1000
 ): Promise<{ locked: boolean; attemptsRemaining: number }> {
-  const redis = resolveSecurityRedisClient();
-  if (!redis) {
+  const recordLocal = (): { locked: boolean; attemptsRemaining: number } => {
     const now = Date.now();
     const existing = otpFailedAttemptMap.get(key);
     if (!existing || now - existing.firstAttemptAt > 15 * 60 * 1000) {
@@ -735,6 +760,11 @@ export async function recordOtpFailedAttempt(
       return { locked: true, attemptsRemaining: 0 };
     }
     return { locked: false, attemptsRemaining: maxAttempts - existing.count };
+  };
+
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    return recordLocal();
   }
 
   try {
@@ -749,9 +779,12 @@ export async function recordOtpFailedAttempt(
     const remaining = Math.max(0, Number(res?.[1] ?? 0));
     return { locked, attemptsRemaining: remaining };
   } catch (err: any) {
-    throw new SecurityStoreUnavailableError(
-      `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
-    );
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
+      );
+    }
+    return recordLocal();
   }
 }
 
@@ -764,9 +797,12 @@ export async function clearOtpAttempts(key: string): Promise<void> {
   try {
     await redis.del(`mingree:otp:fail:${key}`, `mingree:otp:lock:${key}`);
   } catch (err: any) {
-    throw new SecurityStoreUnavailableError(
-      `Shared OTP lockout store error during clear: ${err?.message || "Redis unreachable"}`
-    );
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        `Shared OTP lockout store error during clear: ${err?.message || "Redis unreachable"}`
+      );
+    }
+    otpFailedAttemptMap.delete(key);
   }
 }
 

@@ -23,5 +23,6 @@ category_subscriptions.json
 *.json.bak
 mingree-security-patch.zip
 # Lockfiles causing Cloudflare CI/CD cross-platform/version issues
+bun.lock
 bun.lockb
 package-lock.json

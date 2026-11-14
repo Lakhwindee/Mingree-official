@@ -73,11 +73,13 @@ __export(schema_exports, {
   promoCodes: () => promoCodes,
   promoRedemptions: () => promoRedemptions,
   rateCards: () => rateCards,
+  revokedTokens: () => revokedTokens,
   securityAuditLogs: () => securityAuditLogs,
   signupSchema: () => signupSchema,
   submissions: () => submissions,
   subscriptions: () => subscriptions,
   upiPayments: () => upiPayments,
+  usedJtiTokens: () => usedJtiTokens,
   users: () => users,
   walletTransactions: () => walletTransactions,
   wallets: () => wallets,
@@ -133,6 +135,7 @@ var users = pgTable("users", {
   suspended: boolean("suspended").notNull().default(false),
   suspendReason: text("suspend_reason"),
   deletedAt: timestamp("deleted_at"),
+  tokenVersion: integer("token_version").notNull().default(1),
   createdAt: timestamp("created_at").notNull().defaultNow()
 }, (table) => [
   index("idx_users_role").on(table.role),
@@ -661,6 +664,21 @@ var appConfig = pgTable("app_config", {
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at").notNull().defaultNow()
 });
+var revokedTokens = pgTable("revoked_tokens", {
+  jti: text("jti").primaryKey(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+  index("idx_revoked_tokens_expires").on(table.expiresAt)
+]);
+var usedJtiTokens = pgTable("used_jti_tokens", {
+  jtiKey: text("jti_key").primaryKey(),
+  namespace: text("namespace").notNull().default("general"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+  index("idx_used_jti_expires").on(table.expiresAt)
+]);
 var signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
@@ -724,6 +742,9 @@ pg.types.setTypeParser(20, (val) => {
   return n;
 });
 var isLocalFallbackAllowed = process.env.NODE_ENV !== "production";
+function isInMemoryFallbackAllowed() {
+  return process.env.NODE_ENV !== "production" && !isDatabaseConfigured;
+}
 function getValidDatabaseUrl() {
   const raw = (process.env.DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || process.env.POSTGRES_URL || process.env.STORAGE_URL || process.env.STORAGE_POSTGRES_URL || process.env.SUPABASE_DATABASE_URL || process.env.SUPABASE_POSTGRES_URL || process.env.NEON_DATABASE_URL || process.env.POSTGRES_URL_NON_POOLING || "").trim();
   if (!raw) return void 0;
@@ -765,13 +786,25 @@ activePool.on("error", (err) => {
   console.warn("[PG POOL NON-FATAL EVENT]", err?.message || err);
 });
 var schemaEnsured = false;
+var schemaEnsuredForUrl = null;
 var schemaPromise = null;
+var lastSchemaError = null;
+function isSchemaEnsured() {
+  return Boolean(schemaEnsured && currentDbUrl && schemaEnsuredForUrl === currentDbUrl);
+}
 async function ensureDatabaseSchema(force = false) {
-  if (schemaEnsured && !force) return;
-  if (schemaPromise && !force) return schemaPromise;
-  schemaPromise = (async () => {
-    if (!currentDbUrl) return;
-    const client = new Client(getPgClientConfig(currentDbUrl));
+  if (!currentDbUrl) {
+    throw new Error("Database is not configured");
+  }
+  if (schemaEnsured && schemaEnsuredForUrl === currentDbUrl && !force) {
+    return;
+  }
+  if (schemaPromise && !force) {
+    return schemaPromise;
+  }
+  const targetUrl = currentDbUrl;
+  const runPromise = (async () => {
+    const client = new Client(getPgClientConfig(targetUrl));
     client.on("error", () => {
     });
     try {
@@ -805,6 +838,18 @@ async function ensureDatabaseSchema(force = false) {
           ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
           ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version int NOT NULL DEFAULT 1;
+
+          -- 1b. Ensure email_otps table exists for cross-isolate OTP persistence
+          CREATE TABLE IF NOT EXISTS email_otps (
+            id bigserial PRIMARY KEY,
+            email text NOT NULL,
+            purpose text NOT NULL DEFAULT 'signup',
+            otp_hash text NOT NULL,
+            expires_at timestamptz NOT NULL,
+            attempts int NOT NULL DEFAULT 0,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (email, purpose)
+          );
 
           -- 2. Ensure creator_profiles exists with all required columns
           CREATE TABLE IF NOT EXISTS creator_profiles (
@@ -1139,24 +1184,28 @@ async function ensureDatabaseSchema(force = false) {
         END $$;
       `);
       schemaEnsured = true;
+      schemaEnsuredForUrl = targetUrl;
+      lastSchemaError = null;
       console.log("[DB SCHEMA] Successfully ensured creator_profiles schema & required columns");
     } catch (err) {
-      console.warn("[DB SCHEMA ENSURE WARNING]", err?.message || err);
+      schemaEnsured = false;
+      lastSchemaError = err?.message || String(err);
+      console.warn("[DB SCHEMA ENSURE WARNING]", lastSchemaError);
+      throw err;
     } finally {
       await client.end().catch(() => {
       });
-      schemaPromise = null;
+      if (schemaPromise === runPromise) {
+        schemaPromise = null;
+      }
     }
   })();
-  return schemaPromise;
+  schemaPromise = runPromise;
+  return runPromise;
 }
 async function runWorkerQuery(...args) {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
-  }
-  if (!schemaEnsured) {
-    await ensureDatabaseSchema().catch(() => {
-    });
   }
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {
@@ -1172,10 +1221,6 @@ async function runWorkerQuery(...args) {
 async function connectWorkerClient() {
   if (!currentDbUrl) {
     throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
-  }
-  if (!schemaEnsured) {
-    await ensureDatabaseSchema().catch(() => {
-    });
   }
   const client = new Client(getPgClientConfig(currentDbUrl));
   client.on("error", () => {
@@ -1194,10 +1239,6 @@ var pool = new Proxy({}, {
         if (!isDatabaseConfigured) {
           throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
         }
-        if (!schemaEnsured) {
-          await ensureDatabaseSchema().catch(() => {
-          });
-        }
         if (isWorkerRuntime) {
           return runWorkerQuery(...args);
         }
@@ -1208,10 +1249,6 @@ var pool = new Proxy({}, {
       return async () => {
         if (!isDatabaseConfigured) {
           throw Object.assign(new Error("Database not configured"), { code: "ECONNREFUSED" });
-        }
-        if (!schemaEnsured) {
-          await ensureDatabaseSchema().catch(() => {
-          });
         }
         if (isWorkerRuntime) {
           return connectWorkerClient();
@@ -1230,6 +1267,35 @@ var db = new Proxy({}, {
     return typeof val === "function" ? val.bind(activeDb) : val;
   }
 });
+async function checkDatabaseHealth(forceSchemaSync = false) {
+  if (!isDatabaseConfigured) {
+    const isProd = process.env.NODE_ENV === "production";
+    return {
+      healthy: !isProd,
+      connected: false,
+      schemaEnsured: false,
+      error: isProd ? "Database is not configured in production" : void 0
+    };
+  }
+  try {
+    if (!isSchemaEnsured() || forceSchemaSync) {
+      await ensureDatabaseSchema(forceSchemaSync);
+    }
+    await pool.query("SELECT 1 FROM users LIMIT 1");
+    return {
+      healthy: true,
+      connected: true,
+      schemaEnsured: true
+    };
+  } catch (err) {
+    return {
+      healthy: false,
+      connected: false,
+      schemaEnsured: isSchemaEnsured(),
+      error: err?.message || lastSchemaError || "Database connection or schema check failed"
+    };
+  }
+}
 async function verifyDbConnection() {
   if (!isDatabaseConfigured) {
     return false;
@@ -1407,77 +1473,111 @@ async function uploadToStorage(options) {
 }
 
 // server/envValidation.ts
-function validateProductionEnvironment() {
-  const isProduction = process.env.NODE_ENV === "production";
+function validateProductionEnvironment(workerEnv) {
+  const nodeEnv = String(workerEnv?.NODE_ENV || process.env.NODE_ENV || "").trim();
+  const isProduction = nodeEnv === "production";
   const errors = [];
   const warnings = [];
-  const dbUrl = (process.env.DATABASE_URL || "").trim();
-  const hyperdriveBound = Boolean(process.env.HYPERDRIVE);
+  const dbUrl = String(workerEnv?.DATABASE_URL || process.env.DATABASE_URL || "").trim();
+  const hyperdriveBound = Boolean(workerEnv?.HYPERDRIVE?.connectionString || process.env.HYPERDRIVE);
   const databaseConfigured = Boolean(
     hyperdriveBound || dbUrl && (dbUrl.startsWith("postgres://") || dbUrl.startsWith("postgresql://"))
   );
   if (isProduction && !databaseConfigured) {
     errors.push("DATABASE_URL or Cloudflare Hyperdrive binding is required in production (Supabase PostgreSQL).");
   }
-  const jwtSecret = (process.env.JWT_SECRET || "").trim();
+  const redisUrl = String(workerEnv?.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_REST_URL || "").trim();
+  const redisToken = String(workerEnv?.UPSTASH_REDIS_REST_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
+  const redisConfigured = Boolean(
+    redisUrl && redisToken && (redisUrl.startsWith("https://") || !isProduction && redisUrl.startsWith("http://"))
+  );
+  if (isProduction && !redisConfigured) {
+    if (process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT === "true") {
+      errors.push(
+        "UPSTASH_REDIS_REST_URL (https://...) and UPSTASH_REDIS_REST_TOKEN are required when REQUIRE_DISTRIBUTED_RATE_LIMIT=true."
+      );
+    } else {
+      warnings.push(
+        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN are not set. Using per-isolate rate limiting and OTP lockout."
+      );
+    }
+  }
+  const jwtSecret = String(workerEnv?.JWT_SECRET || process.env.JWT_SECRET || "").trim();
   const jwtConfigured = jwtSecret.length >= 32;
   if (isProduction && !jwtConfigured) {
-    errors.push("JWT_SECRET is required in production and must be at least 32 characters long (generate via 'openssl rand -hex 32').");
+    warnings.push("JWT_SECRET is not set or shorter than 32 characters (recommended: 'openssl rand -hex 32').");
   }
-  const encKey = (process.env.TOKEN_ENC_KEY || "").trim();
+  const encKey = String(workerEnv?.TOKEN_ENC_KEY || process.env.TOKEN_ENC_KEY || "").trim();
   const encryptionConfigured = encKey.length >= 32;
   if (isProduction && !encryptionConfigured) {
-    errors.push("TOKEN_ENC_KEY is required in production for financial/PAN AES-256-GCM encryption and must be at least 32 characters long.");
+    warnings.push("TOKEN_ENC_KEY is not set or shorter than 32 characters for financial/PAN AES-256-GCM encryption.");
   }
-  const r2NativeBinding = Boolean(globalThis.__CF_R2_BUCKET__);
+  const r2NativeBinding = Boolean(workerEnv?.R2_BUCKET || globalThis.__CF_R2_BUCKET__);
   const r2Configured = r2NativeBinding || Boolean(
-    process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET_NAME
+    (workerEnv?.R2_ACCOUNT_ID || process.env.R2_ACCOUNT_ID) && (workerEnv?.R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID) && (workerEnv?.R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY) && (workerEnv?.R2_BUCKET_NAME || process.env.R2_BUCKET_NAME)
   );
-  const blobConfigured = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  const blobConfigured = Boolean(workerEnv?.BLOB_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN);
   const storageConfigured = r2Configured || blobConfigured;
   const storageProvider = r2Configured ? "r2" : blobConfigured ? "vercel_blob" : "unconfigured";
   if (isProduction && !storageConfigured) {
-    warnings.push("Cloudflare R2 storage credentials or Workers R2 binding are not configured. Uploads will fail until R2 is supplied.");
+    warnings.push("Cloudflare R2 storage credentials or Workers R2_BUCKET binding are not configured. Uploads will fail until R2 is supplied.");
   }
-  const cashfreeModeRaw = (process.env.CASHFREE_MODE || "").toLowerCase().trim();
-  const cashfreeAppId = (process.env.CASHFREE_APP_ID || "").trim();
-  const cashfreeSecret = (process.env.CASHFREE_SECRET_KEY || "").trim();
+  const cashfreeModeRaw = String(workerEnv?.CASHFREE_MODE || process.env.CASHFREE_MODE || workerEnv?.CASHFREE_ENV || process.env.CASHFREE_ENV || "").toLowerCase().trim();
+  const cashfreeAppId = String(workerEnv?.CASHFREE_APP_ID || process.env.CASHFREE_APP_ID || "").trim();
+  const cashfreeSecret = String(workerEnv?.CASHFREE_SECRET_KEY || process.env.CASHFREE_SECRET_KEY || "").trim();
   const cashfreeConfigured = Boolean(cashfreeAppId && cashfreeSecret);
-  const cashfreeMode = cashfreeConfigured ? cashfreeModeRaw === "production" ? "production" : "sandbox" : "unconfigured";
+  const isProdKey = cashfreeSecret.startsWith("cfsk_ma_prod_");
+  const isTestKey = cashfreeSecret.startsWith("cfsk_ma_test_");
+  const cashfreeModeMismatch = cashfreeModeRaw === "production" && isTestKey || cashfreeModeRaw === "sandbox" && isProdKey;
+  const cashfreeMode = !cashfreeConfigured ? "unconfigured" : cashfreeModeRaw === "sandbox" ? "sandbox" : cashfreeModeRaw === "production" || isProdKey ? "production" : "sandbox";
+  if (cashfreeModeMismatch) {
+    errors.push("CASHFREE_MODE conflicts with CASHFREE_SECRET_KEY prefix (production vs sandbox mismatch).");
+  }
   if (isProduction) {
     if (!cashfreeConfigured) {
-      warnings.push("Cashfree credentials (CASHFREE_APP_ID, CASHFREE_SECRET_KEY) are not set. Payments will operate in mock verification mode.");
+      warnings.push("Cashfree credentials (CASHFREE_APP_ID, CASHFREE_SECRET_KEY) are not set. Payment order creation and verification are disabled (mock verification is strictly disabled).");
     } else if (cashfreeMode === "sandbox") {
       warnings.push("CASHFREE_MODE is set to 'sandbox' in production environment. Real user payments will not be processed until set to 'production'.");
     }
   }
-  const igAppId = (process.env.INSTAGRAM_APP_ID || "").trim();
-  const igSecret = (process.env.INSTAGRAM_APP_SECRET || "").trim();
+  const igAppId = String(workerEnv?.INSTAGRAM_APP_ID || process.env.INSTAGRAM_APP_ID || "").trim();
+  const igSecret = String(workerEnv?.INSTAGRAM_APP_SECRET || process.env.INSTAGRAM_APP_SECRET || "").trim();
   const instagramConfigured = Boolean(igAppId && igSecret);
   if (isProduction && !instagramConfigured) {
     warnings.push("INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET are not set. Official Instagram OAuth linking will be unavailable.");
   }
-  const gmailUser = (process.env.GMAIL_USER || "").trim();
-  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "").trim();
+  const gmailUser = String(workerEnv?.GMAIL_USER || process.env.GMAIL_USER || "").trim();
+  const gmailPass = String(workerEnv?.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
   const emailConfigured = Boolean(gmailUser && gmailPass);
   if (isProduction && !emailConfigured) {
-    warnings.push("GMAIL_USER / GMAIL_APP_PASSWORD not set. Transactional verification OTP emails will be logged to console instead of sent.");
+    warnings.push("GMAIL_USER / GMAIL_APP_PASSWORD not set. Email OTP delivery is unavailable.");
   }
-  const appUrl = (process.env.APP_URL || "https://mingree.com").trim().replace(/\/+$/, "");
+  const fast2smsKey = String(workerEnv?.FAST2SMS_API_KEY || process.env.FAST2SMS_API_KEY || "").trim();
+  const twilioConfigured = Boolean(
+    (workerEnv?.TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID) && (workerEnv?.TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN) && (workerEnv?.TWILIO_PHONE_NUMBER || process.env.TWILIO_PHONE_NUMBER)
+  );
+  const smsConfigured = Boolean(fast2smsKey || twilioConfigured);
+  if (isProduction && !smsConfigured) {
+    warnings.push("FAST2SMS_API_KEY (or Twilio SMS credentials) not set. SMS OTP delivery will fail.");
+  }
+  const appUrl = String(workerEnv?.APP_URL || process.env.APP_URL || "https://mingree.com").trim().replace(/\/+$/, "");
   if (isProduction && !appUrl.startsWith("https://")) {
-    warnings.push(`APP_URL '${appUrl}' does not use HTTPS. Production requires HTTPS for secure cookies and OAuth callbacks.`);
+    warnings.push("APP_URL does not use HTTPS. Production requires HTTPS for secure cookies and OAuth callbacks.");
   }
   return {
     isProduction,
     databaseConfigured,
+    redisConfigured,
     jwtConfigured,
     encryptionConfigured,
     storageConfigured,
     storageProvider,
     cashfreeMode,
     cashfreeConfigured,
+    cashfreeModeMismatch,
     instagramConfigured,
     emailConfigured,
+    smsConfigured,
     appUrl,
     errors,
     warnings
@@ -1490,13 +1590,15 @@ function enforceProductionEnvironment() {
     console.log("          MINGREE PRODUCTION PRE-FLIGHT VALIDATION (CLOUDFLARE + SUPABASE)       ");
     console.log("================================================================================");
     console.log(`Database (Supabase / Hyperdrive): ${report.databaseConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
-    console.log(`JWT Auth Secret:       ${report.jwtConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
-    console.log(`Financial Encryption:  ${report.encryptionConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
-    console.log(`Persistent Storage:    ${report.storageConfigured ? `\u2713 CONFIGURED (${report.storageProvider.toUpperCase()})` : "\u26A0 UNCONFIGURED"}`);
-    console.log(`Cashfree Gateway:      ${report.cashfreeConfigured ? `\u2713 CONFIGURED [${report.cashfreeMode.toUpperCase()}]` : "\u26A0 UNCONFIGURED"}`);
-    console.log(`Instagram OAuth:       ${report.instagramConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
-    console.log(`Email Service:         ${report.emailConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
-    console.log(`Public Application URL:${report.appUrl}`);
+    console.log(`Distributed Redis (Upstash):      ${report.redisConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
+    console.log(`JWT Auth Secret:                  ${report.jwtConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
+    console.log(`Financial Encryption:             ${report.encryptionConfigured ? "\u2713 CONFIGURED" : "\u2717 MISSING"}`);
+    console.log(`Persistent Storage:               ${report.storageConfigured ? `\u2713 CONFIGURED (${report.storageProvider.toUpperCase()})` : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Cashfree Gateway:                 ${report.cashfreeConfigured ? `\u2713 CONFIGURED [${report.cashfreeMode.toUpperCase()}]` : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Instagram OAuth:                  ${report.instagramConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Email Service:                    ${report.emailConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
+    console.log(`SMS OTP Gateway:                  ${report.smsConfigured ? "\u2713 CONFIGURED" : "\u26A0 UNCONFIGURED"}`);
+    console.log(`Public Application URL:           ${report.appUrl}`);
     if (report.warnings.length > 0) {
       console.log("\nWarnings:");
       report.warnings.forEach((w) => console.log(`  \u26A0 ${w}`));
@@ -1514,6 +1616,7 @@ function enforceProductionEnvironment() {
 // server/security.ts
 import crypto2 from "crypto";
 import path2 from "path";
+import { Redis } from "@upstash/redis";
 function escapeHtml(input) {
   const str = String(input ?? "");
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/`/g, "&#96;");
@@ -1667,114 +1770,6 @@ function normalizePhoneE164(raw) {
   }
   return `+${cleaned}`;
 }
-var cachedFirebaseCerts = null;
-async function fetchFirebasePublicCerts() {
-  const testPubKey = (process.env.FIREBASE_TEST_PUBLIC_KEY || "").trim();
-  const testKid = (process.env.FIREBASE_TEST_KID || "test-kid").trim();
-  if (testPubKey && process.env.NODE_ENV !== "production") {
-    return { [testKid]: testPubKey };
-  }
-  const now = Date.now();
-  if (cachedFirebaseCerts && cachedFirebaseCerts.expiresAt > now) {
-    return cachedFirebaseCerts.certs;
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 6e3);
-  try {
-    const resp = await fetch(
-      "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com",
-      { signal: controller.signal }
-    );
-    if (!resp.ok) {
-      throw new Error(`Failed to fetch Google Firebase certificates (${resp.status})`);
-    }
-    const cacheControl = resp.headers.get("cache-control") || "";
-    const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
-    const maxAgeMs = maxAgeMatch ? Math.max(60, Number(maxAgeMatch[1])) * 1e3 : 3600 * 1e3;
-    const certs = await resp.json();
-    if (!certs || typeof certs !== "object") {
-      throw new Error("Invalid certificate payload from Google");
-    }
-    if (testPubKey && process.env.NODE_ENV !== "production") {
-      certs[testKid] = testPubKey;
-    }
-    cachedFirebaseCerts = { certs, expiresAt: now + maxAgeMs };
-    return certs;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-async function verifyFirebasePhoneIdToken(idToken, expectedProjectId) {
-  if (!idToken || typeof idToken !== "string" || idToken.length > 8192) {
-    throw new Error("Missing or malformed Firebase ID token");
-  }
-  const parts = idToken.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Malformed Firebase ID token structure");
-  }
-  const [headerB64, payloadB64, signatureB64] = parts;
-  let header;
-  let payload;
-  try {
-    header = JSON.parse(Buffer.from(headerB64, "base64url").toString("utf8"));
-    payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
-  } catch {
-    throw new Error("Invalid Firebase ID token encoding");
-  }
-  if (!header || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
-    throw new Error("Invalid Firebase ID token algorithm or key ID");
-  }
-  const certs = await fetchFirebasePublicCerts();
-  let certPem = certs[header.kid];
-  if (!certPem) {
-    cachedFirebaseCerts = null;
-    const refreshed = await fetchFirebasePublicCerts();
-    certPem = refreshed[header.kid];
-  }
-  if (!certPem) {
-    throw new Error("Firebase ID token signed by unknown key");
-  }
-  const verifier = crypto2.createVerify("RSA-SHA256");
-  verifier.update(`${headerB64}.${payloadB64}`);
-  verifier.end();
-  const signatureBuf = Buffer.from(signatureB64, "base64url");
-  const isSignatureValid = verifier.verify(certPem, signatureBuf);
-  if (!isSignatureValid) {
-    throw new Error("Firebase ID token signature verification failed");
-  }
-  const nowSec = Math.floor(Date.now() / 1e3);
-  if (typeof payload.exp !== "number" || payload.exp <= nowSec) {
-    throw new Error("Firebase ID token has expired");
-  }
-  if (typeof payload.iat !== "number" || payload.iat > nowSec + 30) {
-    throw new Error("Firebase ID token issued-at timestamp is invalid");
-  }
-  if (typeof payload.auth_time === "number" && payload.auth_time > nowSec + 30) {
-    throw new Error("Firebase ID token auth_time is in the future");
-  }
-  if (payload.aud !== expectedProjectId) {
-    throw new Error("Firebase ID token audience mismatch");
-  }
-  const expectedIssuer = `https://securetoken.google.com/${expectedProjectId}`;
-  if (payload.iss !== expectedIssuer) {
-    throw new Error("Firebase ID token issuer mismatch");
-  }
-  if (typeof payload.sub !== "string" || !payload.sub || payload.sub.length > 128) {
-    throw new Error("Firebase ID token subject is missing or invalid");
-  }
-  const phone = normalizePhoneE164(String(payload.phone_number || ""));
-  if (!phone || phone.length < 8) {
-    throw new Error("Firebase ID token does not contain a verified phone number");
-  }
-  return {
-    uid: payload.sub,
-    phoneNumber: phone,
-    iss: payload.iss,
-    aud: payload.aud,
-    exp: payload.exp,
-    iat: payload.iat
-  };
-}
 var consumedJtiMap = /* @__PURE__ */ new Map();
 var revokedSessionMap = /* @__PURE__ */ new Map();
 var userTokenVersionMap = /* @__PURE__ */ new Map();
@@ -1790,49 +1785,111 @@ function pruneBoundedMap(map, maxSize = 5e3) {
     map.delete(firstKey);
   }
 }
+function isStrictDbSecurityStoreRequired() {
+  return process.env.REQUIRE_STRICT_DB_SECURITY_STORE === "true";
+}
 async function consumeSingleUseJti(jti, namespace, ttlMs = 30 * 60 * 1e3) {
   if (!jti || typeof jti !== "string") return false;
   const scopedKey = `${namespace}:${jti}`;
-  pruneBoundedMap(consumedJtiMap);
-  if (consumedJtiMap.has(scopedKey)) {
-    return false;
-  }
-  if (isDatabaseConfigured) {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError(
+        "PostgreSQL database is required in production for single-use JTI enforcement."
+      );
+    }
     try {
       const expiresAt = new Date(Date.now() + ttlMs);
-      const res = await pool.query(
-        `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (jti_key) DO NOTHING
-         RETURNING jti_key`,
-        [scopedKey, namespace, expiresAt]
-      );
+      let res;
+      try {
+        res = await pool.query(
+          `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (jti_key) DO NOTHING
+           RETURNING jti_key`,
+          [scopedKey, namespace, expiresAt]
+        );
+      } catch (firstErr) {
+        if (firstErr?.code === "42P01" || firstErr?.code === "42703") {
+          await ensureDatabaseSchema(true).catch(() => {
+          });
+          res = await pool.query(
+            `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (jti_key) DO NOTHING
+             RETURNING jti_key`,
+            [scopedKey, namespace, expiresAt]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
       if (res.rows.length === 0) {
         consumedJtiMap.set(scopedKey, Date.now() + ttlMs);
         return false;
       }
-    } catch {
+      consumedJtiMap.set(scopedKey, Date.now() + ttlMs);
+      return true;
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError) throw err;
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL JTI store unavailable: ${err?.message || "Database query failed"}`
+        );
+      }
     }
+  }
+  pruneBoundedMap(consumedJtiMap);
+  if (consumedJtiMap.has(scopedKey)) {
+    return false;
   }
   consumedJtiMap.set(scopedKey, Date.now() + ttlMs);
   return true;
 }
 async function revokeSessionJti(jti, expEpochSec) {
   if (!jti || typeof jti !== "string") return;
-  pruneBoundedMap(revokedSessionMap);
   const expMs = expEpochSec && expEpochSec * 1e3 > Date.now() ? expEpochSec * 1e3 : Date.now() + 7 * 24 * 60 * 60 * 1e3;
-  revokedSessionMap.set(jti, expMs);
-  if (isDatabaseConfigured) {
-    try {
-      await pool.query(
-        `INSERT INTO revoked_tokens (jti, expires_at)
-         VALUES ($1, $2)
-         ON CONFLICT (jti) DO NOTHING`,
-        [jti, new Date(expMs)]
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError(
+        "PostgreSQL database is required in production for session revocation."
       );
-    } catch {
+    }
+    try {
+      try {
+        await pool.query(
+          `INSERT INTO revoked_tokens (jti, expires_at)
+           VALUES ($1, $2)
+           ON CONFLICT (jti) DO NOTHING`,
+          [jti, new Date(expMs)]
+        );
+      } catch (firstErr) {
+        if (firstErr?.code === "42P01" || firstErr?.code === "42703") {
+          await ensureDatabaseSchema(true).catch(() => {
+          });
+          await pool.query(
+            `INSERT INTO revoked_tokens (jti, expires_at)
+             VALUES ($1, $2)
+             ON CONFLICT (jti) DO NOTHING`,
+            [jti, new Date(expMs)]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
+      pruneBoundedMap(revokedSessionMap);
+      revokedSessionMap.set(jti, expMs);
+      return;
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError) throw err;
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL session revocation store unavailable: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
+  pruneBoundedMap(revokedSessionMap);
+  revokedSessionMap.set(jti, expMs);
 }
 async function isSessionJtiRevoked(jti) {
   if (!jti) return false;
@@ -1840,80 +1897,426 @@ async function isSessionJtiRevoked(jti) {
   if (cachedExp && cachedExp > Date.now()) {
     return true;
   }
-  if (isDatabaseConfigured) {
-    try {
-      const res = await pool.query(
-        `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
-        [jti]
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError(
+        "PostgreSQL database is required in production for session revocation checks."
       );
+    }
+    try {
+      let res;
+      try {
+        res = await pool.query(
+          `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
+          [jti]
+        );
+      } catch (firstErr) {
+        if (firstErr?.code === "42P01" || firstErr?.code === "42703") {
+          await ensureDatabaseSchema(true).catch(() => {
+          });
+          res = await pool.query(
+            `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
+            [jti]
+          );
+        } else {
+          throw firstErr;
+        }
+      }
       if (res.rows.length > 0) {
         revokedSessionMap.set(jti, new Date(res.rows[0].expires_at).getTime());
         return true;
       }
-    } catch {
+      return false;
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError) throw err;
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL session revocation check failed: ${err?.message || "Database query failed"}`
+        );
+      }
+      return false;
     }
   }
   return false;
 }
 async function getUserTokenVersion(userId, memoryHint) {
-  let version = Math.max(1, Number(userTokenVersionMap.get(userId) || memoryHint || 1));
-  if (isDatabaseConfigured) {
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError(
+        "PostgreSQL database is required in production for token version verification."
+      );
+    }
     try {
-      const res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
-      if (res.rows.length > 0 && res.rows[0].token_version) {
-        version = Math.max(version, Number(res.rows[0].token_version));
-        userTokenVersionMap.set(userId, version);
+      let res;
+      try {
+        res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+      } catch (firstErr) {
+        if (firstErr?.code === "42703" || firstErr?.code === "42P01") {
+          await ensureDatabaseSchema(true).catch(() => {
+          });
+          res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+        } else {
+          throw firstErr;
+        }
       }
-    } catch {
+      if (res.rows.length === 0) {
+        return Number.MAX_SAFE_INTEGER;
+      }
+      const dbVersion = Math.max(1, Number(res.rows[0].token_version || 1));
+      userTokenVersionMap.set(userId, dbVersion);
+      return dbVersion;
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError) throw err;
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL token version check failed: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
-  return version;
+  return Math.max(1, Number(userTokenVersionMap.get(userId) || memoryHint || 1));
 }
 async function bumpUserTokenVersion(userId) {
-  let nextVersion = (userTokenVersionMap.get(userId) || 1) + 1;
-  if (isDatabaseConfigured) {
-    try {
-      const res = await pool.query(
-        `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
-        [userId]
+  if (isDatabaseConfigured || isStrictDbSecurityStoreRequired()) {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError(
+        "PostgreSQL database is required in production for token version rotation."
       );
-      if (res.rows.length > 0 && res.rows[0].token_version) {
-        nextVersion = Math.max(nextVersion, Number(res.rows[0].token_version));
+    }
+    try {
+      let res;
+      try {
+        res = await pool.query(
+          `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
+          [userId]
+        );
+      } catch (firstErr) {
+        if (firstErr?.code === "42703" || firstErr?.code === "42P01") {
+          await ensureDatabaseSchema(true).catch(() => {
+          });
+          res = await pool.query(
+            `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
+            [userId]
+          );
+        } else {
+          throw firstErr;
+        }
       }
-    } catch {
+      if (res.rows.length === 0) {
+        throw new Error(`User #${userId} not found in database during token version bump`);
+      }
+      const nextVersion2 = Math.max(2, Number(res.rows[0].token_version));
+      userTokenVersionMap.set(userId, nextVersion2);
+      return nextVersion2;
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError) throw err;
+      if (isStrictDbSecurityStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `PostgreSQL token version rotation failed: ${err?.message || "Database query failed"}`
+        );
+      }
     }
   }
+  const nextVersion = (userTokenVersionMap.get(userId) || 1) + 1;
   userTokenVersionMap.set(userId, nextVersion);
   return nextVersion;
 }
-function checkOtpAttemptLock(key) {
-  const now = Date.now();
-  const entry = otpFailedAttemptMap.get(key);
-  if (!entry) return { allowed: true, retryAfterSec: 0 };
-  if (entry.lockedUntil > now) {
-    return { allowed: false, retryAfterSec: Math.ceil((entry.lockedUntil - now) / 1e3) };
+var SecurityStoreUnavailableError = class extends Error {
+  constructor(message = "Distributed security rate-limit store is unavailable. Request blocked for safety.") {
+    super(message);
+    this.statusCode = 503;
+    this.name = "SecurityStoreUnavailableError";
   }
-  if (now - entry.firstAttemptAt > 15 * 60 * 1e3) {
+};
+var cachedRedisConfigKey = "";
+var cachedRedisClient = null;
+var testRedisRequester = null;
+function isDistributedStoreRequired() {
+  return process.env.REQUIRE_DISTRIBUTED_RATE_LIMIT === "true";
+}
+function getUpstashRedisCredentials() {
+  const url = (process.env.UPSTASH_REDIS_REST_URL || "").trim().replace(/\/+$/, "");
+  const token = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
+  if (!url || !token) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && (process.env.NODE_ENV === "production" || parsed.protocol !== "http:")) {
+      return null;
+    }
+    return { url, token };
+  } catch {
+    return null;
+  }
+}
+function resolveSecurityRedisClient() {
+  const creds = getUpstashRedisCredentials();
+  if (!creds) {
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be configured in production for shared rate limiting and OTP lockout."
+      );
+    }
+    return null;
+  }
+  if (testRedisRequester) {
+    return new Redis(testRedisRequester);
+  }
+  const cacheKey = `${creds.url}::${creds.token}`;
+  if (!cachedRedisClient || cachedRedisConfigKey !== cacheKey) {
+    cachedRedisConfigKey = cacheKey;
+    cachedRedisClient = new Redis({
+      url: creds.url,
+      token: creds.token,
+      retry: { retries: 0 }
+    });
+  }
+  return cachedRedisClient;
+}
+var RATE_LIMIT_INCR_LUA = `
+local current = redis.call("INCR", KEYS[1])
+local ttl = redis.call("PTTL", KEYS[1])
+if tonumber(current) == 1 or tonumber(ttl) < 0 then
+  redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[1]))
+  ttl = tonumber(ARGV[1])
+end
+return {current, ttl}
+`;
+var DistributedRateLimitStore = class {
+  constructor(prefix = "mingree:rl:") {
+    this.windowMs = 6e4;
+    this.localKeys = false;
+    this.localFallback = /* @__PURE__ */ new Map();
+    this.prefix = prefix;
+  }
+  init(options) {
+    this.windowMs = options.windowMs;
+  }
+  getScopedKey(key) {
+    return `${this.prefix}${key}`;
+  }
+  pruneLocalFallback() {
+    const now = Date.now();
+    for (const [k, v] of this.localFallback.entries()) {
+      if (v.resetTimeMs <= now) this.localFallback.delete(k);
+    }
+    while (this.localFallback.size > 1e4) {
+      const oldest = this.localFallback.keys().next().value;
+      if (!oldest) break;
+      this.localFallback.delete(oldest);
+    }
+  }
+  async get(key) {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      const entry = this.localFallback.get(fullKey);
+      if (!entry || entry.resetTimeMs <= Date.now()) return void 0;
+      return { totalHits: entry.totalHits, resetTime: new Date(entry.resetTimeMs) };
+    }
+    try {
+      const [hitsRaw, ttlRaw] = await Promise.all([
+        redis.get(fullKey),
+        redis.pttl(fullKey)
+      ]);
+      if (hitsRaw === null || hitsRaw === void 0) return void 0;
+      const ttlMs = typeof ttlRaw === "number" && ttlRaw > 0 ? ttlRaw : this.windowMs;
+      return {
+        totalHits: Number(hitsRaw) || 0,
+        resetTime: new Date(Date.now() + ttlMs)
+      };
+    } catch (err) {
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store error: ${err?.message || "Redis unreachable"}`
+        );
+      }
+      const entry = this.localFallback.get(fullKey);
+      if (!entry || entry.resetTimeMs <= Date.now()) return void 0;
+      return { totalHits: entry.totalHits, resetTime: new Date(entry.resetTimeMs) };
+    }
+  }
+  async increment(key) {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    const incrementLocal = () => {
+      this.pruneLocalFallback();
+      const now = Date.now();
+      const existing = this.localFallback.get(fullKey);
+      if (!existing || existing.resetTimeMs <= now) {
+        const next = { totalHits: 1, resetTimeMs: now + this.windowMs };
+        this.localFallback.set(fullKey, next);
+        return { totalHits: next.totalHits, resetTime: new Date(next.resetTimeMs) };
+      }
+      existing.totalHits += 1;
+      return { totalHits: existing.totalHits, resetTime: new Date(existing.resetTimeMs) };
+    };
+    if (!redis) {
+      return incrementLocal();
+    }
+    try {
+      const res = await redis.eval(RATE_LIMIT_INCR_LUA, [fullKey], [this.windowMs]);
+      const totalHits = Array.isArray(res) ? Number(res[0]) || 1 : 1;
+      const ttlMs = Array.isArray(res) && Number(res[1]) > 0 ? Number(res[1]) : this.windowMs;
+      return {
+        totalHits,
+        resetTime: new Date(Date.now() + ttlMs)
+      };
+    } catch (err) {
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store unavailable: ${err?.message || "Redis request failed"}`
+        );
+      }
+      return incrementLocal();
+    }
+  }
+  async decrement(key) {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      const existing = this.localFallback.get(fullKey);
+      if (existing && existing.totalHits > 0) existing.totalHits -= 1;
+      return;
+    }
+    try {
+      const next = await redis.decr(fullKey);
+      if (next <= 0) {
+        await redis.del(fullKey);
+      }
+    } catch (err) {
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store error during decrement: ${err?.message || "Redis error"}`
+        );
+      }
+      const existing = this.localFallback.get(fullKey);
+      if (existing && existing.totalHits > 0) existing.totalHits -= 1;
+    }
+  }
+  async resetKey(key) {
+    const redis = resolveSecurityRedisClient();
+    const fullKey = this.getScopedKey(key);
+    if (!redis) {
+      this.localFallback.delete(fullKey);
+      return;
+    }
+    try {
+      await redis.del(fullKey);
+    } catch (err) {
+      if (isDistributedStoreRequired()) {
+        throw new SecurityStoreUnavailableError(
+          `Shared rate-limit store error during resetKey: ${err?.message || "Redis error"}`
+        );
+      }
+      this.localFallback.delete(fullKey);
+    }
+  }
+};
+var OTP_FAIL_RECORD_LUA = `
+local count = tonumber(redis.call("INCR", KEYS[1]))
+local ttl = tonumber(redis.call("PTTL", KEYS[1]))
+if count == 1 or ttl < 0 then
+  redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+if count >= tonumber(ARGV[1]) then
+  redis.call("SET", KEYS[2], "1", "PX", tonumber(ARGV[2]))
+  return {1, 0, count}
+end
+return {0, tonumber(ARGV[1]) - count, count}
+`;
+async function checkOtpAttemptLock(key) {
+  const checkLocal = () => {
+    const now = Date.now();
+    const entry = otpFailedAttemptMap.get(key);
+    if (!entry) return { allowed: true, retryAfterSec: 0 };
+    if (entry.lockedUntil > now) {
+      return { allowed: false, retryAfterSec: Math.ceil((entry.lockedUntil - now) / 1e3) };
+    }
+    if (now - entry.firstAttemptAt > 15 * 60 * 1e3) {
+      otpFailedAttemptMap.delete(key);
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  };
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    return checkLocal();
+  }
+  try {
+    const lockKey = `mingree:otp:lock:${key}`;
+    const ttlMs = await redis.pttl(lockKey);
+    if (typeof ttlMs === "number" && ttlMs > 0) {
+      return { allowed: false, retryAfterSec: Math.ceil(ttlMs / 1e3) };
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  } catch (err) {
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
+      );
+    }
+    return checkLocal();
+  }
+}
+async function recordOtpFailedAttempt(key, maxAttempts = 5, lockDurationMs = 15 * 60 * 1e3) {
+  const recordLocal = () => {
+    const now = Date.now();
+    const existing = otpFailedAttemptMap.get(key);
+    if (!existing || now - existing.firstAttemptAt > 15 * 60 * 1e3) {
+      const lockedImmediately = maxAttempts <= 1;
+      otpFailedAttemptMap.set(key, {
+        count: 1,
+        lockedUntil: lockedImmediately ? now + lockDurationMs : 0,
+        firstAttemptAt: now
+      });
+      return { locked: lockedImmediately, attemptsRemaining: Math.max(0, maxAttempts - 1) };
+    }
+    existing.count += 1;
+    if (existing.count >= maxAttempts) {
+      existing.lockedUntil = now + lockDurationMs;
+      return { locked: true, attemptsRemaining: 0 };
+    }
+    return { locked: false, attemptsRemaining: maxAttempts - existing.count };
+  };
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    return recordLocal();
+  }
+  try {
+    const failKey = `mingree:otp:fail:${key}`;
+    const lockKey = `mingree:otp:lock:${key}`;
+    const res = await redis.eval(
+      OTP_FAIL_RECORD_LUA,
+      [failKey, lockKey],
+      [maxAttempts, lockDurationMs]
+    );
+    const locked = Number(res?.[0]) === 1;
+    const remaining = Math.max(0, Number(res?.[1] ?? 0));
+    return { locked, attemptsRemaining: remaining };
+  } catch (err) {
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        `Shared OTP lockout store error: ${err?.message || "Redis unreachable"}`
+      );
+    }
+    return recordLocal();
+  }
+}
+async function clearOtpAttempts(key) {
+  const redis = resolveSecurityRedisClient();
+  if (!redis) {
+    otpFailedAttemptMap.delete(key);
+    return;
+  }
+  try {
+    await redis.del(`mingree:otp:fail:${key}`, `mingree:otp:lock:${key}`);
+  } catch (err) {
+    if (isDistributedStoreRequired()) {
+      throw new SecurityStoreUnavailableError(
+        `Shared OTP lockout store error during clear: ${err?.message || "Redis unreachable"}`
+      );
+    }
     otpFailedAttemptMap.delete(key);
   }
-  return { allowed: true, retryAfterSec: 0 };
-}
-function recordOtpFailedAttempt(key, maxAttempts = 5, lockDurationMs = 15 * 60 * 1e3) {
-  const now = Date.now();
-  const existing = otpFailedAttemptMap.get(key);
-  if (!existing || now - existing.firstAttemptAt > 15 * 60 * 1e3) {
-    otpFailedAttemptMap.set(key, { count: 1, lockedUntil: 0, firstAttemptAt: now });
-    return { locked: false, attemptsRemaining: maxAttempts - 1 };
-  }
-  existing.count += 1;
-  if (existing.count >= maxAttempts) {
-    existing.lockedUntil = now + lockDurationMs;
-    return { locked: true, attemptsRemaining: 0 };
-  }
-  return { locked: false, attemptsRemaining: maxAttempts - existing.count };
-}
-function clearOtpAttempts(key) {
-  otpFailedAttemptMap.delete(key);
 }
 function createSignedBillToken(payload, hmacSecret) {
   const fullPayload = {
@@ -5632,7 +6035,47 @@ async function buildPublicCreatorsResponse(registeredUsers2) {
   for (const c of config.customCreators || DEFAULT_SHOWCASE_CREATORS) {
     creatorMap.set(c.id, { ...c });
   }
-  for (const u of registeredUsers2) {
+  const combinedCreators = [...registeredUsers2];
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query(`
+        SELECT u.id, u.name, u.email, u.role, u.handle, u.avatar, u.avatar_url AS user_avatar_url, u.tier, u.city,
+               cp.username AS instagram_username, cp.followers AS cp_followers, cp.tier_label, cp.median_views,
+               cp.engagement_rate, cp.india_audience_pct, cp.avatar_url AS cp_avatar_url, cp.status AS cp_status,
+               cp.completed_deals
+        FROM users u
+        INNER JOIN creator_profiles cp ON cp.user_id = u.id
+        WHERE cp.username IS NOT NULL
+          AND cp.username != ''
+          AND (cp.status != 'blocked' OR cp.status IS NULL)
+      `);
+      for (const row of dbRes.rows) {
+        const resolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar || `/api/creators/${row.id}/avatar`;
+        combinedCreators.push({
+          id: Number(row.id),
+          name: row.name,
+          displayName: row.name,
+          email: row.email,
+          role: "creator",
+          handle: row.instagram_username ? `@${row.instagram_username}` : row.handle,
+          instagramUsername: row.instagram_username,
+          avatar: resolvedAvatar,
+          avatarUrl: resolvedAvatar,
+          city: row.city || "Mumbai",
+          tier: row.tier_label || row.tier,
+          followers: Number(row.cp_followers || 0),
+          instagramFollowers: Number(row.cp_followers || 0),
+          medianViews: Number(row.median_views || 0),
+          engagementRate: Number(row.engagement_rate || 4.8),
+          indiaAudiencePct: Number(row.india_audience_pct || 95),
+          completedDeals: Number(row.completed_deals || 0)
+        });
+      }
+    } catch (dbErr) {
+      console.warn("[PUBLIC CREATORS DB FETCH WARNING]", dbErr?.message || dbErr);
+    }
+  }
+  for (const u of combinedCreators) {
     if (u.role === "creator") {
       const id = Number(u.id);
       const followers = Number(u.instagramFollowers || u.followers) || 0;
@@ -5646,7 +6089,7 @@ async function buildPublicCreatorsResponse(registeredUsers2) {
         username: cleanHandle,
         displayName: u.displayName || u.name || cleanHandle,
         handle: `@${cleanHandle}`,
-        avatar: u.avatar || u.avatarUrl || existing?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300",
+        avatar: u.avatar || u.avatarUrl || existing?.avatar || `/api/creators/${id}/avatar`,
         city: u.city || existing?.city || "Mumbai",
         tier,
         followers: followers || existing?.followers || 5e4,
@@ -8189,6 +8632,8 @@ var globalRateLimiter = rateLimit({
   max: 1e3,
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: false,
+  store: new DistributedRateLimitStore("mingree:rl:global:"),
   message: { error: "Too many requests, please try again later." }
 });
 app.use("/api/", globalRateLimiter);
@@ -8257,30 +8702,48 @@ app.use("/api", (_req, _res, next) => {
   next();
 });
 app.get(["/api/health", "/api/system/db-sync"], async (req, res) => {
-  try {
-    if (isDatabaseConfigured) {
-      await ensureDatabaseSchema(req.path.includes("db-sync"));
+  const forceSync = req.path.includes("db-sync");
+  if (!isDatabaseConfigured) {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(503).json({
+        status: "error",
+        database: "unconfigured",
+        schema: "unconfigured",
+        error: "Production database is not configured",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
     }
-    res.status(200).json({
+    return res.status(200).json({
       status: "ok",
-      database: isDatabaseConfigured ? "connected" : "unconfigured",
-      schema: "ensured",
-      timestamp: (/* @__PURE__ */ new Date()).toISOString()
-    });
-  } catch (err) {
-    res.status(200).json({
-      status: "ok",
-      database: "warning",
-      ...process.env.NODE_ENV !== "production" ? { schemaError: err?.message } : {},
+      database: "unconfigured",
+      schema: "unconfigured",
       timestamp: (/* @__PURE__ */ new Date()).toISOString()
     });
   }
+  const health = await checkDatabaseHealth(forceSync);
+  if (!health.healthy) {
+    return res.status(503).json({
+      status: "error",
+      database: "disconnected",
+      schema: health.schemaEnsured ? "ensured" : "failed",
+      ...process.env.NODE_ENV !== "production" && health.error ? { schemaError: health.error } : {},
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  }
+  return res.status(200).json({
+    status: "ok",
+    database: "connected",
+    schema: "ensured",
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
 });
 var uploadRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  passOnStoreError: false,
+  store: new DistributedRateLimitStore("mingree:rl:upload:"),
   message: { error: "Too many file uploads. Please try again in 15 minutes." }
 });
 var upload = multer({
@@ -8324,12 +8787,79 @@ app.use(
     }
   })
 );
-app.get("/api/creators/:id/avatar", (req, res) => {
+app.get("/api/creators/:id/avatar", async (req, res) => {
   const userId = Number(req.params.id);
-  const user = registeredUsers.find((u) => u.id === userId);
-  const avatar = user?.avatar || user?.avatarUrl;
-  if (!avatar) {
+  if (isNaN(userId)) {
+    return res.status(400).json({ error: "Invalid creator ID" });
+  }
+  let avatar = null;
+  let igUsername = null;
+  let igAccessToken = null;
+  const memUser = registeredUsers.find((u) => Number(u.id) === userId);
+  if (memUser) {
+    avatar = memUser.avatar || memUser.avatarUrl || memUser.avatar_url || null;
+    igUsername = memUser.instagramUsername || null;
+    igAccessToken = memUser.instagramAccessToken || null;
+  }
+  if (isDatabaseConfigured) {
+    try {
+      const dbRes = await pool.query(
+        `SELECT u.avatar, u.avatar_url, cp.avatar_url AS cp_avatar_url, cp.username, cp.access_token_enc
+         FROM users u
+         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+         WHERE u.id = $1`,
+        [userId]
+      );
+      if (dbRes.rows.length > 0) {
+        const row = dbRes.rows[0];
+        const dbAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || null;
+        if (dbAvatar && !String(dbAvatar).includes("unsplash.com")) {
+          avatar = dbAvatar;
+        }
+        if (row.username) igUsername = row.username;
+        if (row.access_token_enc) igAccessToken = row.access_token_enc;
+      }
+    } catch {
+    }
+  }
+  const isStaleOrMissing = !avatar || avatar.includes("unsplash.com") || avatar.startsWith("/api/creators/") || avatar.includes("cdninstagram.com") || avatar.includes("fbcdn.net");
+  if (isStaleOrMissing && igAccessToken) {
+    try {
+      const profileRes = await fetch(
+        `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url&access_token=${encodeURIComponent(igAccessToken)}`,
+        { signal: AbortSignal.timeout(5e3) }
+      );
+      if (profileRes.ok) {
+        const pData = await profileRes.json();
+        if (pData?.profile_picture_url) {
+          const refreshed = await saveCreatorProfilePicture(
+            userId,
+            igUsername || pData.username || `creator_${userId}`,
+            String(pData.profile_picture_url)
+          );
+          if (refreshed) {
+            avatar = refreshed;
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  if (!avatar || avatar.startsWith("/api/creators/")) {
     return res.status(404).json({ error: "Avatar not found" });
+  }
+  if (avatar.startsWith("data:image/")) {
+    const commaIdx = avatar.indexOf(",");
+    if (commaIdx !== -1) {
+      const meta = avatar.slice(5, commaIdx);
+      const mimeType = meta.split(";")[0] || "image/jpeg";
+      const base64Data = avatar.slice(commaIdx + 1);
+      const imgBuffer = Buffer.from(base64Data, "base64");
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.send(imgBuffer);
+    }
   }
   if (avatar.startsWith("/uploads/")) {
     const uploadsRoot = path3.resolve(process.cwd(), "public", "uploads");
@@ -8420,33 +8950,83 @@ function cleanupExpiredOtps() {
     }
   }
 }
-function setOtpRecord(identifier, data) {
+async function setOtpRecord(identifier, data) {
+  const key = String(identifier || "").toLowerCase().trim();
+  if (!key) return;
   cleanupExpiredOtps();
-  otpStore.set(identifier, data);
-  if (isDatabaseConfigured) {
-    pool.query(
-      `INSERT INTO email_otps (email, purpose, otp_hash, expires_at, attempts)
+  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError("Database is required in production for OTP persistence.");
+    }
+    try {
+      await pool.query(
+        `INSERT INTO email_otps (email, purpose, otp_hash, expires_at, attempts)
          VALUES ($1, 'signup', $2, to_timestamp($3 / 1000.0), $4)
          ON CONFLICT (email, purpose) DO UPDATE
          SET otp_hash = EXCLUDED.otp_hash, expires_at = EXCLUDED.expires_at, attempts = EXCLUDED.attempts`,
-      [identifier, data.otpHash, data.expiresAt, data.attempts]
-    ).catch(() => {
-    });
+        [key, data.otpHash, data.expiresAt, data.attempts]
+      );
+      otpStore.set(key, data);
+      return;
+    } catch (err) {
+      throw new SecurityStoreUnavailableError(`OTP database persistence failed: ${err?.message || "DB error"}`);
+    }
   }
+  otpStore.set(key, data);
 }
-function getOtpRecord(identifier) {
-  const rec = otpStore.get(identifier);
+async function getOtpRecord(identifier) {
+  const key = String(identifier || "").toLowerCase().trim();
+  if (!key) return void 0;
+  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+    if (!isDatabaseConfigured) {
+      throw new SecurityStoreUnavailableError("Database is required in production for OTP verification.");
+    }
+    try {
+      const res = await pool.query(
+        `SELECT otp_hash, (EXTRACT(EPOCH FROM expires_at) * 1000)::bigint AS expires_at_ms, attempts
+         FROM email_otps
+         WHERE LOWER(email) = LOWER($1) AND purpose = 'signup'
+         LIMIT 1`,
+        [key]
+      );
+      if (res.rows.length === 0) {
+        return void 0;
+      }
+      const row = res.rows[0];
+      const expiresAt = Number(row.expires_at_ms);
+      if (Date.now() > expiresAt) {
+        await deleteOtpRecord(key);
+        return void 0;
+      }
+      return {
+        otpHash: String(row.otp_hash),
+        expiresAt,
+        attempts: Number(row.attempts || 0)
+      };
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError) throw err;
+      throw new SecurityStoreUnavailableError(`OTP database read failed: ${err?.message || "DB error"}`);
+    }
+  }
+  const rec = otpStore.get(key);
   if (rec && Date.now() > rec.expiresAt) {
-    otpStore.delete(identifier);
+    otpStore.delete(key);
     return void 0;
   }
   return rec;
 }
-function deleteOtpRecord(identifier) {
-  otpStore.delete(identifier);
+async function deleteOtpRecord(identifier) {
+  const key = String(identifier || "").toLowerCase().trim();
+  if (!key) return;
+  otpStore.delete(key);
   if (isDatabaseConfigured) {
-    pool.query(`DELETE FROM email_otps WHERE email = $1`, [identifier]).catch(() => {
-    });
+    try {
+      await pool.query(`DELETE FROM email_otps WHERE LOWER(email) = LOWER($1)`, [key]);
+    } catch (err) {
+      if (process.env.NODE_ENV === "production") {
+        throw new SecurityStoreUnavailableError(`OTP database cleanup failed: ${err?.message || "DB error"}`);
+      }
+    }
   }
 }
 var verifiedSignupEmails = /* @__PURE__ */ new Set();
@@ -8503,6 +9083,17 @@ async function sendEmailOtp(toEmail, otp, userName) {
     return { success: false, error: errorMsg };
   }
 }
+var authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1e3,
+  // 15 minutes
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  passOnStoreError: false,
+  store: new DistributedRateLimitStore("mingree:rl:auth:"),
+  message: { error: "Too many authentication requests. Please try again in 15 minutes." }
+});
+app.use("/api/auth", authRateLimiter);
 app.get("/api/auth/email-status", (req, res) => {
   const creds = getEmailCredentials();
   res.json({
@@ -8555,8 +9146,8 @@ function verifySignedOtpToken(token, email, otp) {
     return { valid: false };
   }
 }
-function createVerifiedEmailToken(email) {
-  const expiresAt = Date.now() + 30 * 60 * 1e3;
+function createVerifiedEmailToken(email, customExpiresAt) {
+  const expiresAt = customExpiresAt ?? Date.now() + 30 * 60 * 1e3;
   const jti = crypto6.randomBytes(12).toString("hex");
   const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt, jti })).toString("base64url");
   const sig = crypto6.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
@@ -8581,7 +9172,10 @@ async function consumeVerifiedEmailToken(token, expectedEmails) {
     }
     const tokenJti = typeof decoded.jti === "string" ? decoded.jti : crypto6.createHash("sha256").update(token).digest("hex");
     return await consumeSingleUseJti(tokenJti, "verified_email", 35 * 60 * 1e3);
-  } catch {
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      throw err;
+    }
     return false;
   }
 }
@@ -8664,309 +9258,382 @@ async function sendSmsOtp(phone, otp, userName) {
   return { success: false, error: "SMS gateway not configured" };
 }
 app.post("/api/auth/send-otp", async (req, res) => {
-  const { email, name, phone, purpose } = req.body || {};
-  if (!email || typeof email !== "string") {
-    return res.status(400).json({ error: "Valid email address is required" });
-  }
-  const cleanEmail = email.toLowerCase().trim();
-  const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
-  if (purpose === "forgot_password" || cleanEmail.endsWith("@phone.mingree.com")) {
-    if (!cleanPhone || cleanPhone.length !== 10) {
-      return res.status(400).json({ error: "Please enter a valid 10-digit mobile number." });
+  try {
+    const { email, name, phone, purpose } = req.body || {};
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({ error: "Valid email address is required" });
     }
-    const formattedPhone = `+91${cleanPhone}`;
-    let accountExists = false;
-    if (isDatabaseConfigured) {
-      try {
-        const dbCheck = await pool.query(
-          `SELECT id FROM users
-           WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
-             AND status != 'blocked'
-             AND LOWER(email) NOT IN ('platform@mingree.internal', 'admin@mingree.com')
-           LIMIT 1`,
-          [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+    if (purpose === "forgot_password" || cleanEmail.endsWith("@phone.mingree.com")) {
+      if (!cleanPhone || cleanPhone.length !== 10) {
+        return res.status(400).json({ error: "Please enter a valid 10-digit mobile number." });
+      }
+      const formattedPhone = `+91${cleanPhone}`;
+      let accountExists = false;
+      if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+        if (!isDatabaseConfigured) {
+          return res.status(503).json({ error: "Database service unavailable" });
+        }
+        try {
+          const dbCheck = await pool.query(
+            `SELECT id FROM users
+             WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
+               AND status != 'blocked'
+               AND LOWER(email) NOT IN ('platform@mingree.internal', 'admin@mingree.com')
+             LIMIT 1`,
+            [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
+          );
+          if (dbCheck.rows.length > 0) {
+            accountExists = true;
+          }
+        } catch (dbErr) {
+          console.error("[FORGOT PW ACCOUNT CHECK ERROR]", dbErr?.message || dbErr);
+          return res.status(503).json({ error: "Database temporarily unavailable. Please try again shortly." });
+        }
+      } else if (isInMemoryFallbackAllowed()) {
+        const memMatch = registeredUsers.find(
+          (u) => u.status !== "blocked" && u.role !== "admin" && (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`))
         );
-        if (dbCheck.rows.length > 0) {
+        if (memMatch) {
           accountExists = true;
         }
-      } catch (dbErr) {
-        console.warn("[FORGOT PW ACCOUNT CHECK WARN]", dbErr?.message || dbErr);
+      }
+      if (!accountExists) {
+        return res.status(404).json({
+          error: `No account is registered with +91 ${cleanPhone}. Please create a new account first.`,
+          noAccountFound: true
+        });
       }
     }
-    if (!accountExists) {
-      const memMatch = registeredUsers.find(
-        (u) => u.status !== "blocked" && u.role !== "admin" && (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`))
-      );
-      if (memMatch) {
-        accountExists = true;
+    const rawOtp = generateOtp();
+    const otpHash = crypto6.createHash("sha256").update(rawOtp).digest("hex");
+    const expiresAt = Date.now() + 10 * 60 * 1e3;
+    await setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
+    if (cleanPhone) {
+      await setOtpRecord(cleanPhone, { otpHash, expiresAt, attempts: 0, name });
+    }
+    const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
+    let smsSent = false;
+    let smsError = "";
+    let emailSent = false;
+    if (cleanPhone && cleanPhone.length === 10) {
+      try {
+        const smsResult = await Promise.race([
+          sendSmsOtp(cleanPhone, rawOtp, name),
+          new Promise(
+            (resolve) => setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 6e3)
+          )
+        ]);
+        if (smsResult.success) {
+          smsSent = true;
+        } else if (smsResult.error) {
+          smsError = smsResult.error;
+        }
+      } catch (smsErr) {
+        smsError = smsErr?.message || "SMS failure";
+        console.warn(`[SMS NON-FATAL]`, smsError);
       }
     }
-    if (!accountExists) {
-      return res.status(404).json({
-        error: `No account is registered with +91 ${cleanPhone}. Please create a new account first.`,
-        noAccountFound: true
-      });
-    }
-  }
-  const rawOtp = generateOtp();
-  const otpHash = crypto6.createHash("sha256").update(rawOtp).digest("hex");
-  const expiresAt = Date.now() + 10 * 60 * 1e3;
-  setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
-  if (cleanPhone) {
-    setOtpRecord(cleanPhone, { otpHash, expiresAt, attempts: 0, name });
-  }
-  const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
-  let smsSent = false;
-  let smsError = "";
-  let emailSent = false;
-  if (cleanPhone && cleanPhone.length === 10) {
     try {
-      const smsResult = await Promise.race([
-        sendSmsOtp(cleanPhone, rawOtp, name),
+      const emailResult = await Promise.race([
+        sendEmailOtp(cleanEmail, rawOtp, name),
         new Promise(
-          (resolve) => setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 6e3)
+          (resolve) => setTimeout(() => resolve({ success: false, error: "Email timeout" }), 2500)
         )
       ]);
-      if (smsResult.success) {
-        smsSent = true;
-      } else if (smsResult.error) {
-        smsError = smsResult.error;
+      if (emailResult.success) {
+        emailSent = true;
       }
-    } catch (smsErr) {
-      smsError = smsErr?.message || "SMS failure";
-      console.warn(`[SMS NON-FATAL]`, smsError);
+    } catch (emailErr) {
+      console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
     }
-  }
-  try {
-    const emailResult = await Promise.race([
-      sendEmailOtp(cleanEmail, rawOtp, name),
-      new Promise(
-        (resolve) => setTimeout(() => resolve({ success: false, error: "Email timeout" }), 2500)
-      )
-    ]);
-    if (emailResult.success) {
-      emailSent = true;
+    if (!smsSent && !emailSent) {
+      return res.status(500).json({
+        error: smsError || "Failed to send SMS verification code. Please check your mobile number and try again."
+      });
     }
-  } catch (emailErr) {
-    console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
-  }
-  if (!smsSent && !emailSent) {
-    return res.status(500).json({
-      error: smsError || "Failed to send SMS verification code. Please check your mobile number and try again."
+    return res.json({
+      message: smsSent ? `SMS verification code sent to +91 ${cleanPhone}` : `Verification code sent to ${cleanEmail}`,
+      smsSent,
+      emailSent,
+      otpToken,
+      expiresIn: 600
     });
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "OTP verification service is temporarily unavailable." });
+    }
+    return res.status(500).json({ error: "Failed to generate verification code." });
   }
-  return res.json({
-    message: smsSent ? `SMS verification code sent to +91 ${cleanPhone}` : `Verification code sent to ${cleanEmail}`,
-    smsSent,
-    emailSent,
-    otpToken,
-    expiresIn: 600
-  });
 });
 app.post("/api/auth/verify-otp", async (req, res) => {
-  const { email, phone, otp, otpToken } = req.body || {};
-  if (!email || !otp) {
-    return res.status(400).json({ error: "Email and OTP are required" });
-  }
-  const cleanEmail = String(email).toLowerCase().trim();
-  const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
-  const cleanOtp = String(otp).trim();
-  const tokenLockKey = otpToken ? `verify:token:${crypto6.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;
-  const lockCheck = checkOtpAttemptLock(tokenLockKey);
-  if (!lockCheck.allowed) {
-    return res.status(429).json({
-      error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request a new OTP.`
-    });
-  }
-  const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
-  if (tokenCheck.expired) {
-    return res.status(400).json({ error: "OTP has expired. Please request a new one." });
-  }
-  let record = getOtpRecord(cleanEmail);
-  if (!record && cleanPhone) {
-    record = getOtpRecord(cleanPhone);
-  }
-  if (record) {
-    if (Date.now() > record.expiresAt) {
-      deleteOtpRecord(cleanEmail);
-      if (cleanPhone) deleteOtpRecord(cleanPhone);
+  try {
+    const { email, phone, otp, otpToken } = req.body || {};
+    if (!email || !otp) {
+      return res.status(400).json({ error: "Email and OTP are required" });
+    }
+    const cleanEmail = String(email).toLowerCase().trim();
+    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+    const cleanOtp = String(otp).trim();
+    const tokenLockKey = otpToken ? `verify:token:${crypto6.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;
+    const lockCheck = await checkOtpAttemptLock(tokenLockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request a new OTP.`
+      });
+    }
+    const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
+    if (tokenCheck.expired) {
       return res.status(400).json({ error: "OTP has expired. Please request a new one." });
     }
-    if (record.attempts >= 5) {
-      deleteOtpRecord(cleanEmail);
-      if (cleanPhone) deleteOtpRecord(cleanPhone);
-      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+    let record = await getOtpRecord(cleanEmail);
+    if (!record && cleanPhone) {
+      record = await getOtpRecord(cleanPhone);
     }
-  }
-  let isOtpValid = tokenCheck.valid;
-  if (isOtpValid && tokenCheck.jti) {
-    const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_token", 15 * 60 * 1e3);
-    if (!firstUse) {
-      return res.status(400).json({ error: "OTP has already been used. Please request a new one." });
+    if (record) {
+      if (Date.now() > record.expiresAt) {
+        await deleteOtpRecord(cleanEmail);
+        if (cleanPhone) await deleteOtpRecord(cleanPhone);
+        return res.status(400).json({ error: "OTP has expired. Please request a new one." });
+      }
+      if (record.attempts >= 5) {
+        await deleteOtpRecord(cleanEmail);
+        if (cleanPhone) await deleteOtpRecord(cleanPhone);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+      }
     }
-  }
-  if (!isOtpValid && record) {
-    const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash === record.otpHash) {
-      isOtpValid = true;
-    } else {
-      record.attempts += 1;
-      setOtpRecord(cleanEmail, record);
-      if (cleanPhone) setOtpRecord(cleanPhone, record);
-      const failState = recordOtpFailedAttempt(tokenLockKey, 5);
-      if (failState.locked || record.attempts >= 5) {
-        deleteOtpRecord(cleanEmail);
-        if (cleanPhone) deleteOtpRecord(cleanPhone);
+    let isOtpValid = tokenCheck.valid;
+    if (isOtpValid && tokenCheck.jti) {
+      const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_token", 15 * 60 * 1e3);
+      if (!firstUse) {
+        return res.status(400).json({ error: "OTP has already been used. Please request a new one." });
+      }
+    }
+    if (!isOtpValid && record) {
+      const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
+      if (submittedHash === record.otpHash) {
+        isOtpValid = true;
+      } else {
+        record.attempts += 1;
+        await setOtpRecord(cleanEmail, record);
+        if (cleanPhone) await setOtpRecord(cleanPhone, record);
+        const failState = await recordOtpFailedAttempt(tokenLockKey, 5);
+        if (failState.locked || record.attempts >= 5) {
+          await deleteOtpRecord(cleanEmail);
+          if (cleanPhone) await deleteOtpRecord(cleanPhone);
+          return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+        }
+        return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
+      }
+    }
+    if (!isOtpValid) {
+      const failState = await recordOtpFailedAttempt(tokenLockKey, 5);
+      if (failState.locked) {
         return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
       }
       return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
-  }
-  if (!isOtpValid) {
-    const failState = recordOtpFailedAttempt(tokenLockKey, 5);
-    if (failState.locked) {
-      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+    await clearOtpAttempts(tokenLockKey);
+    await deleteOtpRecord(cleanEmail);
+    if (cleanPhone) await deleteOtpRecord(cleanPhone);
+    if (isInMemoryFallbackAllowed()) {
+      verifiedSignupEmails.add(cleanEmail);
     }
-    return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
+    const verifiedToken = createVerifiedEmailToken(cleanEmail);
+    if (isDatabaseConfigured) {
+      await pool.query(`UPDATE users SET email_verified = true WHERE LOWER(email) = LOWER($1)`, [cleanEmail]).catch(() => {
+      });
+    } else if (isInMemoryFallbackAllowed()) {
+      const user = registeredUsers.find(
+        (u) => u.email.toLowerCase() === cleanEmail || cleanPhone && u.phone && u.phone.includes(cleanPhone)
+      );
+      if (user) {
+        user.isEmailVerified = true;
+        await saveRegisteredUsers(user);
+      }
+    }
+    return res.json({ success: true, verifiedToken, message: "Verification successful" });
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit or security store is temporarily unavailable. Please try again shortly." });
+    }
+    return res.status(500).json({ error: "Verification failed" });
   }
-  clearOtpAttempts(tokenLockKey);
-  deleteOtpRecord(cleanEmail);
-  if (cleanPhone) deleteOtpRecord(cleanPhone);
-  verifiedSignupEmails.add(cleanEmail);
-  const verifiedToken = createVerifiedEmailToken(cleanEmail);
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail || cleanPhone && u.phone && u.phone.includes(cleanPhone));
-  if (user) {
-    user.isEmailVerified = true;
-    await saveRegisteredUsers(user);
-  }
-  return res.json({ success: true, verifiedToken, message: "Verification successful" });
 });
 app.post("/api/auth/forgot-password", async (req, res) => {
-  const { email } = req.body;
-  if (!email || typeof email !== "string") {
-    return res.status(400).json({ error: "Email address is required" });
-  }
-  const cleanEmail = email.toLowerCase().trim();
-  let userName = "User";
   try {
-    const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
-    if (dbRes.rows.length > 0) {
-      userName = dbRes.rows[0].name || userName;
-    } else {
+    const { email } = req.body;
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({ error: "Email address is required" });
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    let userName = "User";
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
+      }
+      try {
+        const dbRes = await pool.query("SELECT name FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+        if (dbRes.rows.length > 0) {
+          userName = dbRes.rows[0].name || userName;
+        }
+      } catch (err) {
+        console.error("[FORGOT PW DB ERROR]", err?.message || err);
+        return res.status(503).json({ error: "Database temporarily unavailable." });
+      }
+    } else if (isInMemoryFallbackAllowed()) {
       const memoryUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
       if (memoryUser) {
         userName = memoryUser.name || userName;
       }
     }
-  } catch (err) {
-    const memoryUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-    if (memoryUser) {
-      userName = memoryUser.name || userName;
-    }
-  }
-  const rawOtp = generateOtp();
-  const otpHash = crypto6.createHash("sha256").update(rawOtp).digest("hex");
-  const expiresAt = Date.now() + 10 * 60 * 1e3;
-  setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
-  const creds = getEmailCredentials();
-  let emailSent = false;
-  if (creds && creds.user && creds.pass) {
-    try {
-      const result = await sendEmailOtp(cleanEmail, rawOtp, userName);
-      if (result.success) {
-        emailSent = true;
+    const rawOtp = generateOtp();
+    const otpHash = crypto6.createHash("sha256").update(rawOtp).digest("hex");
+    const expiresAt = Date.now() + 10 * 60 * 1e3;
+    await setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
+    const creds = getEmailCredentials();
+    let emailSent = false;
+    if (creds && creds.user && creds.pass) {
+      try {
+        const result = await sendEmailOtp(cleanEmail, rawOtp, userName);
+        if (result.success) {
+          emailSent = true;
+        }
+      } catch {
       }
-    } catch {
     }
+    return res.json({
+      message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code generated`,
+      emailConfigured: emailSent,
+      expiresIn: 600
+    });
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Security store unavailable" });
+    }
+    return res.status(500).json({ error: "Failed to initiate password reset" });
   }
-  return res.json({
-    message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code generated`,
-    emailConfigured: emailSent,
-    expiresIn: 600
-  });
 });
-app.post("/api/auth/verify-reset-otp", (req, res) => {
-  const { email, otp } = req.body;
-  if (!email || !otp) {
-    return res.status(400).json({ error: "Email and reset code are required" });
+app.post("/api/auth/verify-reset-otp", async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ error: "Email and reset code are required" });
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
+    const resetLockKey = `reset:email:${cleanEmail}`;
+    const lockCheck = await checkOtpAttemptLock(resetLockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many failed reset attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`
+      });
+    }
+    const record = await getOtpRecord(cleanEmail);
+    if (!record) {
+      await recordOtpFailedAttempt(resetLockKey, 5);
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+    if (Date.now() > record.expiresAt) {
+      await deleteOtpRecord(cleanEmail);
+      return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+    }
+    if (record.attempts >= 5) {
+      await deleteOtpRecord(cleanEmail);
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+    }
+    const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
+    if (submittedHash !== record.otpHash) {
+      record.attempts += 1;
+      await setOtpRecord(cleanEmail, record);
+      const failState = await recordOtpFailedAttempt(resetLockKey, 5);
+      if (failState.locked) {
+        await deleteOtpRecord(cleanEmail);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+      }
+      return res.status(400).json({ error: "Invalid reset code. Please try again." });
+    }
+    return res.json({ success: true, message: "Code verified successfully" });
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
+    return res.status(500).json({ error: "Failed to verify reset code" });
   }
-  const cleanEmail = email.toLowerCase().trim();
-  const cleanOtp = String(otp).trim();
-  const record = getOtpRecord(cleanEmail);
-  if (!record) {
-    return res.status(400).json({ error: "Invalid or expired reset code" });
-  }
-  if (Date.now() > record.expiresAt) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
-  }
-  if (record.attempts >= 5) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
-  }
-  const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
-  if (submittedHash !== record.otpHash) {
-    record.attempts += 1;
-    setOtpRecord(cleanEmail, record);
-    return res.status(400).json({ error: "Invalid reset code. Please try again." });
-  }
-  return res.json({ success: true, message: "Code verified successfully" });
 });
 app.post("/api/auth/reset-password", async (req, res) => {
-  const { email, otp, newPassword, password } = req.body;
-  const targetPassword = newPassword || password;
-  if (!email || !otp || !targetPassword) {
-    return res.status(400).json({ error: "Email, reset code, and new password are required" });
-  }
-  if (String(targetPassword).length < 6) {
-    return res.status(400).json({ error: "New password must be at least 6 characters long" });
-  }
-  const cleanEmail = email.toLowerCase().trim();
-  const cleanOtp = String(otp).trim();
-  const record = getOtpRecord(cleanEmail);
-  if (!record) {
-    return res.status(400).json({ error: "Invalid or expired reset code" });
-  }
-  if (Date.now() > record.expiresAt) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
-  }
-  if (record.attempts >= 5) {
-    deleteOtpRecord(cleanEmail);
-    return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
-  }
-  const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
-  if (submittedHash !== record.otpHash) {
-    record.attempts += 1;
-    setOtpRecord(cleanEmail, record);
-    return res.status(400).json({ error: "Invalid reset code. Please try again." });
-  }
-  deleteOtpRecord(cleanEmail);
-  const newHash = bcrypt.hashSync(String(targetPassword), 10);
-  let targetUserId = null;
   try {
-    const dbRes = await pool.query(
-      "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
-      [newHash, cleanEmail]
-    );
-    if (dbRes.rows.length > 0) {
-      targetUserId = Number(dbRes.rows[0].id);
+    const { email, otp, newPassword, password } = req.body;
+    const targetPassword = newPassword || password;
+    if (!email || !otp || !targetPassword) {
+      return res.status(400).json({ error: "Email, reset code, and new password are required" });
     }
+    if (String(targetPassword).length < 6) {
+      return res.status(400).json({ error: "New password must be at least 6 characters long" });
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = String(otp).trim();
+    const resetLockKey = `reset:email:${cleanEmail}`;
+    const lockCheck = await checkOtpAttemptLock(resetLockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({
+        error: `Too many failed reset attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`
+      });
+    }
+    const record = await getOtpRecord(cleanEmail);
+    if (!record) {
+      await recordOtpFailedAttempt(resetLockKey, 5);
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+    if (Date.now() > record.expiresAt) {
+      await deleteOtpRecord(cleanEmail);
+      return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+    }
+    if (record.attempts >= 5) {
+      await deleteOtpRecord(cleanEmail);
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+    }
+    const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
+    if (submittedHash !== record.otpHash) {
+      record.attempts += 1;
+      await setOtpRecord(cleanEmail, record);
+      const failState = await recordOtpFailedAttempt(resetLockKey, 5);
+      if (failState.locked) {
+        await deleteOtpRecord(cleanEmail);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+      }
+      return res.status(400).json({ error: "Invalid reset code. Please try again." });
+    }
+    await clearOtpAttempts(resetLockKey);
+    await deleteOtpRecord(cleanEmail);
+    const newHash = bcrypt.hashSync(String(targetPassword), 10);
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
+      }
+      const dbRes = await pool.query(
+        "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
+        [newHash, cleanEmail]
+      );
+      if (dbRes.rows.length === 0) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+    } else if (isInMemoryFallbackAllowed()) {
+      const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+      if (user) {
+        user.passwordHash = newHash;
+        user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
+        await saveRegisteredUsers(user);
+      }
+    }
+    return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
   } catch (err) {
-    if (err.code !== "ECONNREFUSED") {
-      console.error("[RESET DB UPDATE ERROR]", err.message);
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
     }
+    return res.status(500).json({ error: "Failed to reset password" });
   }
-  const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (user) {
-    user.passwordHash = newHash;
-    if (!targetUserId) targetUserId = Number(user.id);
-    user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
-    await saveRegisteredUsers(user);
-  } else if (targetUserId) {
-    await bumpUserTokenVersion(targetUserId);
-  }
-  return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
 });
 app.post("/api/auth/phone-accounts", async (req, res) => {
   try {
@@ -8981,7 +9648,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
     }
     const cleanOtp = String(otp).trim();
     const lockKey = `phone_acc:${cleanPhone}`;
-    const lockCheck = checkOtpAttemptLock(lockKey);
+    const lockCheck = await checkOtpAttemptLock(lockKey);
     if (!lockCheck.allowed) {
       return res.status(429).json({ error: "Too many failed OTP attempts. Please try again later." });
     }
@@ -8989,7 +9656,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
     if (tokenCheck.expired) {
       return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
     }
-    const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
+    const record = await getOtpRecord(cleanPhone) || await getOtpRecord(`${cleanPhone}@phone.mingree.com`);
     let isOtpValid = tokenCheck.valid;
     if (isOtpValid && tokenCheck.jti) {
       const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_phone_acc", 15 * 60 * 1e3);
@@ -8999,13 +9666,13 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
     }
     if (!isOtpValid && record) {
       if (Date.now() > record.expiresAt) {
-        deleteOtpRecord(cleanPhone);
-        deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+        await deleteOtpRecord(cleanPhone);
+        await deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
         return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
       }
       if (record.attempts >= 5) {
-        deleteOtpRecord(cleanPhone);
-        deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+        await deleteOtpRecord(cleanPhone);
+        await deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
         return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
       }
       const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
@@ -9013,64 +9680,69 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
         isOtpValid = true;
       } else {
         record.attempts += 1;
-        setOtpRecord(cleanPhone, record);
-        recordOtpFailedAttempt(lockKey, 5);
+        await setOtpRecord(cleanPhone, record);
+        await recordOtpFailedAttempt(lockKey, 5);
       }
     }
     if (!isOtpValid) {
-      recordOtpFailedAttempt(lockKey, 5);
+      await recordOtpFailedAttempt(lockKey, 5);
       return res.status(400).json({ error: "Invalid or expired verification code. Please check and try again." });
     }
-    clearOtpAttempts(lockKey);
-    deleteOtpRecord(cleanPhone);
-    deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+    await clearOtpAttempts(lockKey);
+    await deleteOtpRecord(cleanPhone);
+    await deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
     const formattedPhone = `+91${cleanPhone}`;
     const matchedAccountsMap = /* @__PURE__ */ new Map();
-    try {
-      const dbRes = await pool.query(
-        `SELECT id, email, name, role, company_name, city, avatar, avatar_url, created_at, phone
-         FROM users
-         WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
-           AND status != 'blocked'
-           AND LOWER(email) NOT IN ('platform@mingree.internal', 'admin@mingree.com')
-         ORDER BY id ASC`,
-        [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
-      );
-      for (const row of dbRes.rows) {
-        const id = Number(row.id);
-        matchedAccountsMap.set(id, {
-          id,
-          email: row.email,
-          name: row.name || (row.role === "sponsor" ? row.company_name || "Brand Partner" : "Creator"),
-          role: row.role,
-          roleLabel: row.role === "sponsor" ? "Brand Partner" : "Creator",
-          companyName: row.company_name || null,
-          city: row.city || null,
-          avatar: row.avatar || row.avatar_url || null,
-          createdAt: row.created_at,
-          phone: row.phone || formattedPhone
-        });
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
       }
-    } catch (err) {
-      if (err.code !== "ECONNREFUSED") {
-        console.error("[PHONE ACCOUNTS DB ERROR]", err.message);
-      }
-    }
-    for (const u of registeredUsers) {
-      if (u.status !== "blocked" && u.role !== "admin" && u.email?.toLowerCase() !== "admin@mingree.com" && (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`))) {
-        if (!matchedAccountsMap.has(u.id)) {
-          matchedAccountsMap.set(u.id, {
-            id: u.id,
-            email: u.email,
-            name: u.name || (u.role === "sponsor" ? u.companyName || "Brand Partner" : "Creator"),
-            role: u.role,
-            roleLabel: u.role === "sponsor" ? "Brand Partner" : "Creator",
-            companyName: u.companyName || null,
-            city: u.city || null,
-            avatar: u.avatar || null,
-            createdAt: u.createdAt,
-            phone: u.phone || formattedPhone
+      try {
+        const dbRes = await pool.query(
+          `SELECT id, email, name, role, company_name, city, avatar, avatar_url, created_at, phone
+           FROM users
+           WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
+             AND status != 'blocked'
+             AND LOWER(email) NOT IN ('platform@mingree.internal', 'admin@mingree.com')
+           ORDER BY id ASC`,
+          [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
+        );
+        for (const row of dbRes.rows) {
+          const id = Number(row.id);
+          matchedAccountsMap.set(id, {
+            id,
+            email: row.email,
+            name: row.name || (row.role === "sponsor" ? row.company_name || "Brand Partner" : "Creator"),
+            role: row.role,
+            roleLabel: row.role === "sponsor" ? "Brand Partner" : "Creator",
+            companyName: row.company_name || null,
+            city: row.city || null,
+            avatar: row.avatar || row.avatar_url || null,
+            createdAt: row.created_at,
+            phone: row.phone || formattedPhone
           });
+        }
+      } catch (err) {
+        console.error("[PHONE ACCOUNTS DB ERROR]", err?.message || err);
+        return res.status(503).json({ error: "Database temporarily unavailable." });
+      }
+    } else if (isInMemoryFallbackAllowed()) {
+      for (const u of registeredUsers) {
+        if (u.status !== "blocked" && u.role !== "admin" && u.email?.toLowerCase() !== "admin@mingree.com" && (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`))) {
+          if (!matchedAccountsMap.has(u.id)) {
+            matchedAccountsMap.set(u.id, {
+              id: u.id,
+              email: u.email,
+              name: u.name || (u.role === "sponsor" ? u.companyName || "Brand Partner" : "Creator"),
+              role: u.role,
+              roleLabel: u.role === "sponsor" ? "Brand Partner" : "Creator",
+              companyName: u.companyName || null,
+              city: u.city || null,
+              avatar: u.avatar || null,
+              createdAt: u.createdAt,
+              phone: u.phone || formattedPhone
+            });
+          }
         }
       }
     }
@@ -9093,6 +9765,9 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       resetVerificationToken
     });
   } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
     console.error("[PHONE ACCOUNTS ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to retrieve accounts for phone number" });
   }
@@ -9117,30 +9792,33 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
           const jtiKey = typeof decoded.jti === "string" ? decoded.jti : crypto6.createHash("sha256").update(String(resetVerificationToken)).digest("hex");
           isAuthorized = await consumeSingleUseJti(jtiKey, "phone_pw_reset", 20 * 60 * 1e3);
         }
-      } catch {
+      } catch (verifyErr) {
+        if (verifyErr instanceof SecurityStoreUnavailableError || verifyErr?.name === "SecurityStoreUnavailableError") {
+          throw verifyErr;
+        }
       }
     }
     if (!isAuthorized && otp) {
       const resetLockKey = `phone_reset:${cleanPhone}`;
-      const lockCheck = checkOtpAttemptLock(resetLockKey);
+      const lockCheck = await checkOtpAttemptLock(resetLockKey);
       if (!lockCheck.allowed) {
         return res.status(429).json({
           error: `Too many failed attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`
         });
       }
       const cleanOtp = String(otp).trim();
-      const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
+      const record = await getOtpRecord(cleanPhone) || await getOtpRecord(`${cleanPhone}@phone.mingree.com`);
       if (record && Date.now() <= record.expiresAt && record.attempts < 5) {
         const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
         if (submittedHash === record.otpHash) {
           isAuthorized = true;
-          clearOtpAttempts(resetLockKey);
-          deleteOtpRecord(cleanPhone);
-          deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+          await clearOtpAttempts(resetLockKey);
+          await deleteOtpRecord(cleanPhone);
+          await deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
         } else {
           record.attempts += 1;
-          setOtpRecord(cleanPhone, record);
-          recordOtpFailedAttempt(resetLockKey, 5);
+          await setOtpRecord(cleanPhone, record);
+          await recordOtpFailedAttempt(resetLockKey, 5);
         }
       }
     }
@@ -9152,69 +9830,70 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
     const targetId = targetAccountId ? Number(targetAccountId) : null;
     const targetEmailClean = targetEmail ? String(targetEmail).toLowerCase().trim() : null;
     let updatedAccount = null;
-    try {
-      let query = "";
-      let params = [];
-      if (targetId) {
-        query = `
-          UPDATE users 
-          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
-          WHERE id = $2 
-            AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
-          RETURNING id, email, name, role, company_name
-        `;
-        params = [newHash, targetId, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
-      } else if (targetEmailClean) {
-        query = `
-          UPDATE users 
-          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
-          WHERE LOWER(email) = LOWER($2) 
-            AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
-          RETURNING id, email, name, role, company_name
-        `;
-        params = [newHash, targetEmailClean, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
-      } else {
-        query = `
-          UPDATE users 
-          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
-          WHERE (phone = $2 OR phone = $3 OR phone LIKE $4 OR email LIKE $5)
-            AND status != 'blocked'
-          RETURNING id, email, name, role, company_name
-        `;
-        params = [newHash, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
       }
-      const dbRes = await pool.query(query, params);
-      if (dbRes.rows.length > 0) {
-        updatedAccount = dbRes.rows[0];
+      try {
+        let query = "";
+        let params = [];
+        if (targetId) {
+          query = `
+            UPDATE users 
+            SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
+            WHERE id = $2 
+              AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
+            RETURNING id, email, name, role, company_name
+          `;
+          params = [newHash, targetId, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
+        } else if (targetEmailClean) {
+          query = `
+            UPDATE users 
+            SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
+            WHERE LOWER(email) = LOWER($2) 
+              AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
+            RETURNING id, email, name, role, company_name
+          `;
+          params = [newHash, targetEmailClean, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
+        } else {
+          query = `
+            UPDATE users 
+            SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
+            WHERE (phone = $2 OR phone = $3 OR phone LIKE $4 OR email LIKE $5)
+              AND status != 'blocked'
+            RETURNING id, email, name, role, company_name
+          `;
+          params = [newHash, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
+        }
+        const dbRes = await pool.query(query, params);
+        if (dbRes.rows.length > 0) {
+          updatedAccount = dbRes.rows[0];
+        }
+      } catch (err) {
+        console.error("[PHONE RESET DB UPDATE ERROR]", err?.message || err);
+        return res.status(503).json({ error: "Database temporarily unavailable." });
       }
-    } catch (err) {
-      if (err.code !== "ECONNREFUSED") {
-        console.error("[PHONE RESET DB UPDATE ERROR]", err.message);
-      }
-    }
-    const memoryUser = registeredUsers.find((u) => {
-      const matchIdentity = targetId && u.id === targetId || targetEmailClean && u.email?.toLowerCase() === targetEmailClean;
-      const matchPhone = u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`);
-      if (targetId || targetEmailClean) {
-        return matchIdentity && matchPhone;
-      }
-      return matchPhone;
-    });
-    if (memoryUser) {
-      memoryUser.passwordHash = newHash;
-      memoryUser.tokenVersion = await bumpUserTokenVersion(Number(memoryUser.id));
-      await saveRegisteredUsers(memoryUser);
-      if (!updatedAccount) {
+    } else if (isInMemoryFallbackAllowed()) {
+      const memoryUser = registeredUsers.find((u) => {
+        const matchIdentity = targetId && u.id === targetId || targetEmailClean && u.email?.toLowerCase() === targetEmailClean;
+        const matchPhone = u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`);
+        if (targetId || targetEmailClean) {
+          return matchIdentity && matchPhone;
+        }
+        return matchPhone;
+      });
+      if (memoryUser) {
+        memoryUser.passwordHash = newHash;
+        memoryUser.tokenVersion = await bumpUserTokenVersion(Number(memoryUser.id));
+        await saveRegisteredUsers(memoryUser);
         updatedAccount = memoryUser;
       }
-    } else if (updatedAccount?.id) {
-      await bumpUserTokenVersion(Number(updatedAccount.id));
     }
     if (!updatedAccount) {
       return res.status(404).json({ error: "The selected account was not found or is not associated with this phone number." });
     }
-    deleteOtpRecord(cleanPhone);
-    deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
+    await deleteOtpRecord(cleanPhone);
+    await deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
     const roleName = updatedAccount.role === "sponsor" ? "Brand Partner" : "Creator";
     return res.json({
       success: true,
@@ -9227,6 +9906,9 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       }
     });
   } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
+    }
     console.error("[PHONE RESET PASSWORD ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to reset password for the selected account." });
   }
@@ -9303,15 +9985,6 @@ app.get("/api/instagram/requirements", (req, res) => {
     redirectUri: getInstagramRedirectUri(true)
   });
 });
-var authRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1e3,
-  // 15 minutes
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many authentication requests. Please try again in 15 minutes." }
-});
-app.use("/api/auth", authRateLimiter);
 function getJwtSecret() {
   const secret = (process.env.JWT_SECRET || "").trim();
   if (!secret) {
@@ -9372,8 +10045,15 @@ async function requireAuth(req, res, next) {
   } catch {
     return res.status(401).json({ error: "Unauthorized: Invalid or expired authentication token" });
   }
-  if (decoded?.jti && await isSessionJtiRevoked(decoded.jti)) {
-    return res.status(401).json({ error: "Unauthorized: Session has been logged out or revoked" });
+  try {
+    if (decoded?.jti && await isSessionJtiRevoked(decoded.jti)) {
+      return res.status(401).json({ error: "Unauthorized: Session has been logged out or revoked" });
+    }
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Session verification service temporarily unavailable" });
+    }
+    return res.status(500).json({ error: "Session verification error" });
   }
   const targetUserId = decoded?.id ? Number(decoded.id) : null;
   const targetUserEmail = decoded?.email ? String(decoded.email).toLowerCase().trim() : null;
@@ -9388,35 +10068,66 @@ async function requireAuth(req, res, next) {
     }
   }
   let user = null;
-  if (isDatabaseConfigured) {
+  if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+    if (!isDatabaseConfigured) {
+      return res.status(503).json({ error: "Database service unavailable" });
+    }
     try {
-      const dbRes = await pool.query(
-        `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
-                u.token_version AS token_version,
-                cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
-                cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
-                cp.tier_label AS cp_tier_label, cp.status AS cp_status
-         FROM users u
-         LEFT JOIN creator_profiles cp ON cp.user_id = u.id
-         WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
-         ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
-         LIMIT 1`,
-        [targetUserId, targetUserEmail]
-      );
+      let dbRes;
+      try {
+        dbRes = await pool.query(
+          `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                  u.avatar, u.avatar_url, u.city, u.handle,
+                  u.token_version AS token_version,
+                  cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
+                  cp.engagement_rate AS cp_engagement_rate, cp.avatar_url AS cp_avatar_url,
+                  cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
+                  cp.tier_label AS cp_tier_label, cp.status AS cp_status
+           FROM users u
+           LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+           WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
+           ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
+           LIMIT 1`,
+          [targetUserId, targetUserEmail]
+        );
+      } catch (firstQueryErr) {
+        if (firstQueryErr?.code === "42703" || firstQueryErr?.code === "42P01") {
+          await ensureDatabaseSchema(true).catch(() => {
+          });
+          dbRes = await pool.query(
+            `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                    u.avatar, u.avatar_url, u.city, u.handle,
+                    cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
+                    cp.engagement_rate AS cp_engagement_rate, cp.avatar_url AS cp_avatar_url,
+                    cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
+                    cp.tier_label AS cp_tier_label, cp.status AS cp_status
+             FROM users u
+             LEFT JOIN creator_profiles cp ON cp.user_id = u.id
+             WHERE u.id = $1 OR ($2::text IS NOT NULL AND LOWER(u.email) = LOWER($2))
+             ORDER BY (CASE WHEN u.id = $1 THEN 0 ELSE 1 END) ASC
+             LIMIT 1`,
+            [targetUserId, targetUserEmail]
+          );
+        } else {
+          throw firstQueryErr;
+        }
+      }
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
         let followers = 0;
         let medianViews = null;
         let reach = null;
+        let engagementRate = null;
         let instagramUsername = null;
         let isInstagramVerified = false;
         let tierLabel = "Nano";
-        if (row.role === "creator") {
+        if (row.role === "creator" || row.cp_username) {
           if (row.cp_username) instagramUsername = row.cp_username;
           if (row.cp_followers !== null && row.cp_followers !== void 0) followers = Number(row.cp_followers);
           if (row.cp_median_views !== null && row.cp_median_views !== void 0) medianViews = Number(row.cp_median_views);
+          if (row.cp_engagement_rate !== null && row.cp_engagement_rate !== void 0) engagementRate = Number(row.cp_engagement_rate);
           if (row.cp_tier_label) tierLabel = row.cp_tier_label;
-          if (row.cp_status === "active" && (row.cp_access_token_enc || row.cp_instagram_user_id)) {
+          if (row.cp_username && row.cp_status !== "blocked" && row.cp_status !== "pending") {
             isInstagramVerified = true;
           }
         }
@@ -9429,6 +10140,8 @@ async function requireAuth(req, res, next) {
           reach = 0;
           medianViews = 0;
         }
+        const rawAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || null;
+        const cleanAvatar = rawAvatar && !String(rawAvatar).includes("photo-1534528741775-53994a69daeb") ? rawAvatar : isVerifiedConnection ? `/api/creators/${row.id}/avatar` : null;
         user = {
           id: Number(row.id),
           email: row.email,
@@ -9436,15 +10149,20 @@ async function requireAuth(req, res, next) {
           name: row.name,
           role: row.role,
           tokenVersion: Number(row.token_version || 1),
-          handle: `@${row.email.split("@")[0]}`,
-          avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
+          handle: row.handle || (instagramUsername ? `@${instagramUsername}` : `@${row.email.split("@")[0]}`),
+          avatar: cleanAvatar,
+          avatarUrl: cleanAvatar,
+          city: row.city || "",
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
           status: row.status,
           followers: isVerifiedConnection ? followers : 0,
           medianViews: isVerifiedConnection ? medianViews : 0,
           reach: isVerifiedConnection ? reach : 0,
+          engagementRate: isVerifiedConnection ? engagementRate || 4.8 : 0,
           instagramUsername: isVerifiedConnection ? instagramUsername : null,
+          instagramUserId: isVerifiedConnection ? row.cp_instagram_user_id || null : null,
+          instagramAccessToken: isVerifiedConnection ? row.cp_access_token_enc || null : null,
           instagramProfileUrl: isVerifiedConnection ? `https://instagram.com/${instagramUsername}` : null,
           instagramFollowers: isVerifiedConnection ? followers : 0,
           isInstagramVerified: isVerifiedConnection,
@@ -9453,10 +10171,11 @@ async function requireAuth(req, res, next) {
           createdAt: row.created_at
         };
       }
-    } catch {
+    } catch (dbErr) {
+      console.error("[REQUIRE AUTH DB ERROR]", dbErr?.message || dbErr);
+      return res.status(503).json({ error: "Database temporarily unavailable. Authentication cannot be verified." });
     }
-  }
-  if (!user) {
+  } else if (isInMemoryFallbackAllowed()) {
     user = registeredUsers.find(
       (u) => Number(u.id) === targetUserId || targetUserEmail && u.email?.toLowerCase() === targetUserEmail
     );
@@ -9467,9 +10186,16 @@ async function requireAuth(req, res, next) {
   if (user.status === "blocked") {
     return res.status(403).json({ error: "Forbidden: Account is blocked" });
   }
-  const currentTokenVersion = await getUserTokenVersion(Number(user.id), Number(user.tokenVersion || 1));
-  if (Number(decoded.tv || 1) < currentTokenVersion) {
-    return res.status(401).json({ error: "Unauthorized: Session has been invalidated after a password change" });
+  try {
+    const currentTokenVersion = isDatabaseConfigured ? Number(user.tokenVersion || 1) : await getUserTokenVersion(Number(user.id), Number(user.tokenVersion || 1));
+    if (Number(decoded.tv || 1) < currentTokenVersion) {
+      return res.status(401).json({ error: "Unauthorized: Session has been invalidated after a password change" });
+    }
+  } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Token verification service temporarily unavailable" });
+    }
+    return res.status(500).json({ error: "Token verification error" });
   }
   const cleanEmail = (user.email || "").toLowerCase().trim();
   if (ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL) {
@@ -9636,155 +10362,170 @@ app.use(["/api/users/:id", "/api/users/:id/*", "/api/sponsors/:id", "/api/sponso
   next();
 });
 app.post("/api/auth/signup", async (req, res) => {
-  const { name, email, password, role, city, country, companyName, verifiedToken, otpVerified, phone, ageConfirmed } = req.body || {};
-  const cleanEmail = (email || "").toLowerCase().trim();
-  const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
-  const formattedPhone = cleanPhone ? `+91${cleanPhone}` : null;
-  if (!cleanEmail) {
-    return res.status(400).json({ error: "Email address is required" });
-  }
-  if (!password || String(password).length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters long" });
-  }
-  const requestedRole = String(role || "creator").toLowerCase().trim();
-  if (requestedRole === "admin" || cleanEmail === ADMIN_EMAIL) {
-    return res.status(400).json({ error: "Admin registration is strictly prohibited." });
-  }
-  if (requestedRole !== "creator" && requestedRole !== "sponsor") {
-    return res.status(400).json({ error: "Role can only be creator or sponsor." });
-  }
-  if (ageConfirmed !== true) {
-    return res.status(400).json({
-      error: "You must confirm that you are at least 13 years old and accept our Terms of Service."
-    });
-  }
   try {
-    const existingCheck = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
-    if (existingCheck.rows.length > 0) {
-      return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
+    const { name, email, password, role, city, country, companyName, verifiedToken, otpVerified, phone, ageConfirmed } = req.body || {};
+    const cleanEmail = (email || "").toLowerCase().trim();
+    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+    const formattedPhone = cleanPhone ? `+91${cleanPhone}` : null;
+    if (!cleanEmail) {
+      return res.status(400).json({ error: "Email address is required" });
     }
-  } catch (dbErr) {
-    if (dbErr.code !== "ECONNREFUSED") {
-      console.error("[SIGNUP DB CHECK ERROR]", dbErr.message);
+    if (!password || String(password).length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters long" });
     }
-  }
-  if (cleanPhone) {
-    try {
-      const phoneRoleCheck = await pool.query(
-        `SELECT id, email, role FROM users 
-         WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) AND role = $4 LIMIT 1`,
-        [formattedPhone, cleanPhone, `%${cleanPhone}%`, requestedRole]
-      );
-      if (phoneRoleCheck.rows.length > 0) {
-        const existingRoleUser = phoneRoleCheck.rows[0];
-        const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
-        const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
-        return res.status(400).json({
-          error: `A ${roleLabel} account is already registered with this mobile number (${existingRoleUser.email}). You can link this number to a ${altRole} account, or log in to your existing account.`
-        });
-      }
-    } catch {
+    const requestedRole = String(role || "creator").toLowerCase().trim();
+    if (requestedRole === "admin" || cleanEmail === ADMIN_EMAIL) {
+      return res.status(400).json({ error: "Admin registration is strictly prohibited." });
     }
-    const memoryRoleUser = registeredUsers.find(
-      (u) => u.role === requestedRole && (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`))
-    );
-    if (memoryRoleUser) {
-      const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
-      const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
+    if (requestedRole !== "creator" && requestedRole !== "sponsor") {
+      return res.status(400).json({ error: "Role can only be creator or sponsor." });
+    }
+    if (ageConfirmed !== true) {
       return res.status(400).json({
-        error: `A ${roleLabel} account is already registered with this mobile number (${memoryRoleUser.email}). You can link this number to a ${altRole} account, or log in to your existing account.`
+        error: "You must confirm that you are at least 13 years old and accept our Terms of Service."
       });
     }
-  }
-  const existingUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (existingUser) {
-    return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
-  }
-  let isVerified = false;
-  if (verifiedSignupEmails.has(cleanEmail)) {
-    verifiedSignupEmails.delete(cleanEmail);
-    isVerified = true;
-  } else if (verifiedToken) {
-    isVerified = await consumeVerifiedEmailToken(verifiedToken, cleanEmail);
-  }
-  if (!isVerified) {
-    return res.status(403).json({ error: "Mobile number and email must be verified via OTP before registration." });
-  }
-  const passwordHash = bcrypt.hashSync(String(password), 10);
-  const userName = name?.trim() || cleanEmail.split("@")[0];
-  const userHandle = `@${cleanEmail.split("@")[0]}`;
-  const userAvatar = requestedRole === "sponsor" ? "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150" : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
-  const userTier = requestedRole === "sponsor" ? "Brand Partner" : "Nano";
-  const userCompany = requestedRole === "sponsor" ? companyName || name || "Brand Partner" : null;
-  const userCity = city || "";
-  let newUser;
-  try {
-    const insertRes = await pool.query(
-      `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name, city, phone)
-       VALUES ($1, $2, $3, $4, true, 'active', $5, $6, $7)
-       RETURNING *`,
-      [cleanEmail, passwordHash, userName, requestedRole, userCompany, userCity, formattedPhone]
-    );
-    const dbRow = insertRes.rows[0];
-    newUser = {
-      id: Number(dbRow.id),
-      email: dbRow.email,
-      passwordHash: dbRow.password_hash,
-      name: dbRow.name,
-      role: dbRow.role,
-      handle: dbRow.handle || userHandle,
-      avatar: dbRow.avatar || userAvatar,
-      tier: dbRow.tier || userTier,
-      companyName: dbRow.company_name,
-      city: dbRow.city || userCity,
-      phone: dbRow.phone || formattedPhone,
-      isEmailVerified: Boolean(dbRow.email_verified),
-      createdAt: dbRow.created_at
-    };
-    await pool.query(
-      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
-      [newUser.id]
-    );
-    if (requestedRole === "creator") {
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
+      }
       try {
-        const cpCheck = await pool.query(`SELECT id FROM creator_profiles WHERE user_id = $1`, [newUser.id]);
-        if (cpCheck.rows.length === 0) {
-          await pool.query(
-            `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
-             VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending')`,
-            [newUser.id, cleanEmail.split("@")[0]]
-          );
+        const existingCheck = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+        if (existingCheck.rows.length > 0) {
+          return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
         }
-      } catch {
+        if (cleanPhone) {
+          const phoneRoleCheck = await pool.query(
+            `SELECT id, email, role FROM users 
+             WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) AND role = $4 LIMIT 1`,
+            [formattedPhone, cleanPhone, `%${cleanPhone}%`, requestedRole]
+          );
+          if (phoneRoleCheck.rows.length > 0) {
+            const existingRoleUser = phoneRoleCheck.rows[0];
+            const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
+            const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
+            return res.status(400).json({
+              error: `A ${roleLabel} account is already registered with this mobile number (${existingRoleUser.email}). You can link this number to a ${altRole} account, or log in to your existing account.`
+            });
+          }
+        }
+      } catch (dbErr) {
+        console.error("[SIGNUP DB CHECK ERROR]", dbErr?.message || dbErr);
+        return res.status(503).json({ error: "Database temporarily unavailable. Please try again shortly." });
+      }
+    } else if (isInMemoryFallbackAllowed()) {
+      if (cleanPhone) {
+        const memoryRoleUser = registeredUsers.find(
+          (u) => u.role === requestedRole && (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone)) || u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`))
+        );
+        if (memoryRoleUser) {
+          const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
+          const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
+          return res.status(400).json({
+            error: `A ${roleLabel} account is already registered with this mobile number (${memoryRoleUser.email}). You can link this number to a ${altRole} account, or log in to your existing account.`
+          });
+        }
+      }
+      const existingUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+      if (existingUser) {
+        return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
       }
     }
+    let isVerified = false;
+    if (verifiedToken) {
+      isVerified = await consumeVerifiedEmailToken(verifiedToken, cleanEmail);
+      verifiedSignupEmails.delete(cleanEmail);
+    } else if (isInMemoryFallbackAllowed() && verifiedSignupEmails.has(cleanEmail)) {
+      verifiedSignupEmails.delete(cleanEmail);
+      isVerified = true;
+    }
+    if (!isVerified) {
+      return res.status(403).json({ error: "Mobile number and email must be verified via OTP before registration." });
+    }
+    const passwordHash = bcrypt.hashSync(String(password), 10);
+    const userName = name?.trim() || cleanEmail.split("@")[0];
+    const userHandle = `@${cleanEmail.split("@")[0]}`;
+    const userAvatar = requestedRole === "sponsor" ? "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=150" : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+    const userTier = requestedRole === "sponsor" ? "Brand Partner" : "Nano";
+    const userCompany = requestedRole === "sponsor" ? companyName || name || "Brand Partner" : null;
+    const userCity = city || "";
+    let newUser;
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      try {
+        const insertRes = await pool.query(
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, company_name, city, phone)
+           VALUES ($1, $2, $3, $4, true, 'active', $5, $6, $7)
+           RETURNING *`,
+          [cleanEmail, passwordHash, userName, requestedRole, userCompany, userCity, formattedPhone]
+        );
+        const dbRow = insertRes.rows[0];
+        newUser = {
+          id: Number(dbRow.id),
+          email: dbRow.email,
+          passwordHash: dbRow.password_hash,
+          name: dbRow.name,
+          role: dbRow.role,
+          tokenVersion: Number(dbRow.token_version || 1),
+          handle: dbRow.handle || userHandle,
+          avatar: dbRow.avatar || userAvatar,
+          tier: dbRow.tier || userTier,
+          companyName: dbRow.company_name,
+          city: dbRow.city || userCity,
+          phone: dbRow.phone || formattedPhone,
+          isEmailVerified: Boolean(dbRow.email_verified),
+          createdAt: dbRow.created_at
+        };
+        await pool.query(
+          `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+          [newUser.id]
+        );
+        if (requestedRole === "creator") {
+          await pool.query(
+            `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
+               VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending') ON CONFLICT DO NOTHING`,
+            [newUser.id, cleanEmail.split("@")[0]]
+          ).catch(() => {
+          });
+        }
+      } catch (err) {
+        console.error("[SIGNUP INSERT ERROR]", err?.message || err);
+        if (String(err?.code) === "23505") {
+          return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
+        }
+        return res.status(503).json({ error: "Database unavailable during account creation. Please try again." });
+      }
+    } else if (isInMemoryFallbackAllowed()) {
+      newUser = {
+        id: Date.now(),
+        email: cleanEmail,
+        passwordHash,
+        name: userName,
+        role: requestedRole,
+        tokenVersion: 1,
+        handle: userHandle,
+        avatar: userAvatar,
+        tier: userTier,
+        companyName: userCompany || void 0,
+        city: userCity,
+        phone: formattedPhone,
+        isEmailVerified: true,
+        balance: "0.00",
+        followers: 0,
+        engagement: "0.0",
+        reach: 0,
+        country: country || "IN",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      registeredUsers.push(newUser);
+    }
+    setAuthTokenCookie(res, newUser);
+    return res.json(sanitizeUser(newUser));
   } catch (err) {
-    console.error("[SIGNUP INSERT ERROR]", err.message);
-    newUser = {
-      id: Date.now(),
-      email: cleanEmail,
-      passwordHash,
-      name: userName,
-      role: requestedRole,
-      handle: userHandle,
-      avatar: userAvatar,
-      tier: userTier,
-      companyName: userCompany || void 0,
-      city: userCity,
-      phone: formattedPhone,
-      isEmailVerified: true,
-      balance: "0.00",
-      followers: 0,
-      engagement: "0.0",
-      reach: 0,
-      country: country || "IN",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString()
-    };
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Security verification service temporarily unavailable" });
+    }
+    return res.status(500).json({ error: "Failed to complete registration" });
   }
-  registeredUsers.push(newUser);
-  await saveRegisteredUsers(newUser);
-  setAuthTokenCookie(res, newUser);
-  return res.json(sanitizeUser(newUser));
 });
 app.post("/api/auth/login", async (req, res) => {
   try {
@@ -9795,28 +10536,33 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
     let foundUser = null;
-    try {
-      const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
-      if (dbRes.rows.length > 0) {
-        const row = dbRes.rows[0];
-        foundUser = {
-          id: Number(row.id),
-          email: row.email,
-          passwordHash: row.password_hash,
-          name: row.name,
-          role: row.role,
-          handle: row.handle || `@${row.email.split("@")[0]}`,
-          avatar: row.avatar,
-          tier: row.tier || "Nano",
-          companyName: row.company_name,
-          isEmailVerified: Boolean(row.email_verified),
-          status: row.status,
-          createdAt: row.created_at
-        };
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
       }
-    } catch (err) {
-      if (err.code !== "ECONNREFUSED") {
-        console.error("[LOGIN DB ERROR]", err.message);
+      try {
+        const dbRes = await pool.query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+        if (dbRes.rows.length > 0) {
+          const row = dbRes.rows[0];
+          foundUser = {
+            id: Number(row.id),
+            email: row.email,
+            passwordHash: row.password_hash,
+            name: row.name,
+            role: row.role,
+            tokenVersion: Number(row.token_version || 1),
+            handle: row.handle || `@${row.email.split("@")[0]}`,
+            avatar: row.avatar,
+            tier: row.tier || "Nano",
+            companyName: row.company_name,
+            isEmailVerified: Boolean(row.email_verified),
+            status: row.status,
+            createdAt: row.created_at
+          };
+        }
+      } catch (err) {
+        console.error("[LOGIN DB ERROR]", err?.message || err);
+        return res.status(503).json({ error: "Database temporarily unavailable. Please try again shortly." });
       }
     }
     const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
@@ -9824,13 +10570,14 @@ app.post("/api/auth/login", async (req, res) => {
       if (foundUser) {
         foundUser.role = "admin";
         foundUser.isEmailVerified = true;
-      } else {
+      } else if (isInMemoryFallbackAllowed()) {
         foundUser = {
           id: 99,
           email: cleanEmail,
           passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
           name: "Mingree Administrator",
           role: "admin",
+          tokenVersion: 1,
           handle: "@admin",
           tier: "Admin",
           isEmailVerified: true,
@@ -9838,7 +10585,7 @@ app.post("/api/auth/login", async (req, res) => {
         };
       }
     }
-    if (!foundUser && !isDatabaseConfigured) {
+    if (!foundUser && isInMemoryFallbackAllowed()) {
       foundUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
     }
     if (!foundUser || !foundUser.passwordHash) {
@@ -9872,77 +10619,89 @@ app.post("/api/auth/login", async (req, res) => {
 });
 app.post("/api/auth/phone-login", async (req, res) => {
   try {
-    const { phoneNumber, role, name, idToken, verifiedPhoneToken } = req.body || {};
-    let verifiedPhone = "";
-    if (idToken) {
-      try {
-        const fbToken = await verifyFirebasePhoneIdToken(String(idToken), "gen-lang-client-0314158911");
-        verifiedPhone = fbToken.phoneNumber;
-      } catch (fbErr) {
-        return res.status(401).json({
-          error: fbErr?.message || "Unauthorized: Invalid or expired Firebase authentication token"
-        });
-      }
-      if (phoneNumber) {
-        const requestedNormalized = normalizePhoneE164(String(phoneNumber));
-        if (requestedNormalized && requestedNormalized !== verifiedPhone) {
-          return res.status(403).json({
-            error: "Forbidden: Verified phone number does not match requested account phone number"
-          });
-        }
-      }
-    } else if (verifiedPhoneToken && phoneNumber) {
-      const normalized = normalizePhoneE164(String(phoneNumber));
-      const clean10 = normalized.replace(/[^0-9]/g, "").slice(-10);
-      const tokenEmails = [
-        `${clean10}@phone.mingree.com`,
-        `${normalized.replace(/\+/g, "")}@phone.mingree.com`
-      ];
-      const consumed = await consumeVerifiedEmailToken(String(verifiedPhoneToken), tokenEmails);
-      if (!consumed) {
-        return res.status(401).json({ error: "Unauthorized: Invalid, expired, or already-used phone verification proof" });
-      }
-      verifiedPhone = normalized;
-    } else {
+    const { phoneNumber, role, name, verifiedPhoneToken } = req.body || {};
+    if (!verifiedPhoneToken || !phoneNumber || typeof verifiedPhoneToken !== "string" || !verifiedPhoneToken.includes(".")) {
       return res.status(401).json({
-        error: "Unauthorized: Valid Firebase ID token or verified SMS OTP proof is required for phone login"
+        error: "Unauthorized: Verified SMS OTP proof is required for phone login"
       });
     }
+    const [tPayload, tSig] = verifiedPhoneToken.split(".");
+    if (!tPayload || !tSig) {
+      return res.status(401).json({ error: "Unauthorized: Malformed phone verification token" });
+    }
+    const expectedSig = crypto6.createHmac("sha256", getOtpSigningSecret()).update(tPayload).digest("hex");
+    const sigBuf = Buffer.from(tSig);
+    const expBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expBuf.length || !crypto6.timingSafeEqual(sigBuf, expBuf)) {
+      return res.status(401).json({ error: "Unauthorized: Invalid phone verification signature" });
+    }
+    let decodedProof;
+    try {
+      decodedProof = JSON.parse(Buffer.from(tPayload, "base64url").toString("utf-8"));
+    } catch {
+      return res.status(401).json({ error: "Unauthorized: Invalid phone verification payload" });
+    }
+    if (decodedProof?.verified !== true || Date.now() > Number(decodedProof?.expiresAt)) {
+      return res.status(401).json({ error: "Unauthorized: Phone verification token has expired" });
+    }
+    const normalized = normalizePhoneE164(String(phoneNumber));
+    const clean10 = normalized.replace(/[^0-9]/g, "").slice(-10);
+    if (!clean10 || clean10.length !== 10) {
+      return res.status(400).json({ error: "Valid 10-digit phone number is required" });
+    }
+    const tokenEmails = [
+      `${clean10}@phone.mingree.com`,
+      `${normalized.replace(/\+/g, "")}@phone.mingree.com`
+    ];
+    const proofEmail = String(decodedProof.email || "").toLowerCase().trim();
+    if (!tokenEmails.includes(proofEmail)) {
+      return res.status(403).json({
+        error: "Forbidden: Verified phone number does not match requested account phone number"
+      });
+    }
+    const consumed = await consumeVerifiedEmailToken(String(verifiedPhoneToken), tokenEmails);
+    if (!consumed) {
+      return res.status(401).json({ error: "Unauthorized: Phone verification token has already been used" });
+    }
+    const verifiedPhone = normalized;
     const formattedPhone = verifiedPhone;
     const clean10Digits = formattedPhone.replace(/[^0-9]/g, "").slice(-10);
     const userEmail = `${formattedPhone.replace(/\+/g, "")}@phone.mingree.com`;
     const requestedRole = role === "sponsor" || role === "creator" || role === "brand" ? role === "brand" ? "sponsor" : role : "creator";
     const userName = name?.trim() || `User ${formattedPhone.slice(-4)}`;
     let foundUser = null;
-    try {
-      const dbRes = await pool.query(
-        "SELECT * FROM users WHERE phone = $1 OR phone = $2 OR LOWER(email) = LOWER($3) OR LOWER(email) = LOWER($4) LIMIT 1",
-        [formattedPhone, clean10Digits, userEmail, `${clean10Digits}@phone.mingree.com`]
-      );
-      if (dbRes.rows.length > 0) {
-        const row = dbRes.rows[0];
-        foundUser = {
-          id: Number(row.id),
-          email: row.email,
-          name: row.name,
-          role: row.role,
-          tokenVersion: Number(row.token_version || 1),
-          handle: row.handle || `@user${row.id}`,
-          avatar: row.avatar,
-          tier: row.tier || "Nano",
-          companyName: row.company_name,
-          isEmailVerified: true,
-          phone: formattedPhone,
-          status: row.status,
-          createdAt: row.created_at
-        };
+    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+      if (!isDatabaseConfigured) {
+        return res.status(503).json({ error: "Database service unavailable" });
       }
-    } catch (err) {
-      if (err.code !== "ECONNREFUSED") {
-        console.error("[PHONE LOGIN DB ERROR]", err.message);
+      try {
+        const dbRes = await pool.query(
+          "SELECT * FROM users WHERE phone = $1 OR phone = $2 OR LOWER(email) = LOWER($3) OR LOWER(email) = LOWER($4) LIMIT 1",
+          [formattedPhone, clean10Digits, userEmail, `${clean10Digits}@phone.mingree.com`]
+        );
+        if (dbRes.rows.length > 0) {
+          const row = dbRes.rows[0];
+          foundUser = {
+            id: Number(row.id),
+            email: row.email,
+            name: row.name,
+            role: row.role,
+            tokenVersion: Number(row.token_version || 1),
+            handle: row.handle || `@user${row.id}`,
+            avatar: row.avatar,
+            tier: row.tier || "Nano",
+            companyName: row.company_name,
+            isEmailVerified: true,
+            phone: formattedPhone,
+            status: row.status,
+            createdAt: row.created_at
+          };
+        }
+      } catch (err) {
+        console.error("[PHONE LOGIN DB ERROR]", err?.message || err);
+        return res.status(503).json({ error: "Database temporarily unavailable." });
       }
-    }
-    if (!foundUser) {
+    } else if (isInMemoryFallbackAllowed()) {
       foundUser = registeredUsers.find(
         (u) => u.phone && (u.phone === formattedPhone || u.phone === clean10Digits) || u.email && (u.email.toLowerCase() === userEmail || u.email.toLowerCase() === `${clean10Digits}@phone.mingree.com`)
       );
@@ -9952,43 +10711,45 @@ app.post("/api/auth/phone-login", async (req, res) => {
     }
     if (!foundUser) {
       const defaultPasswordHash = bcrypt.hashSync(`Phone_${crypto6.randomBytes(16).toString("hex")}`, 10);
-      try {
-        const insertRes = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status, phone)
-           VALUES ($1, $2, $3, $4, true, 'active', $5)
-           RETURNING *`,
-          [userEmail, defaultPasswordHash, userName, requestedRole, formattedPhone]
-        );
-        const dbRow = insertRes.rows[0];
-        foundUser = {
-          id: Number(dbRow.id),
-          email: dbRow.email,
-          name: dbRow.name,
-          role: dbRow.role,
-          tokenVersion: Number(dbRow.token_version || 1),
-          handle: `@user${dbRow.id}`,
-          tier: "Nano",
-          phone: formattedPhone,
-          isEmailVerified: true,
-          status: "active",
-          createdAt: dbRow.created_at
-        };
-        await pool.query(
-          `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
-          [foundUser.id]
-        );
-        if (requestedRole === "creator") {
-          try {
+      if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+        try {
+          const insertRes = await pool.query(
+            `INSERT INTO users (email, password_hash, name, role, email_verified, status, phone)
+             VALUES ($1, $2, $3, $4, true, 'active', $5)
+             RETURNING *`,
+            [userEmail, defaultPasswordHash, userName, requestedRole, formattedPhone]
+          );
+          const dbRow = insertRes.rows[0];
+          foundUser = {
+            id: Number(dbRow.id),
+            email: dbRow.email,
+            name: dbRow.name,
+            role: dbRow.role,
+            tokenVersion: Number(dbRow.token_version || 1),
+            handle: `@user${dbRow.id}`,
+            tier: "Nano",
+            phone: formattedPhone,
+            isEmailVerified: true,
+            status: "active",
+            createdAt: dbRow.created_at
+          };
+          await pool.query(
+            `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+            [foundUser.id]
+          );
+          if (requestedRole === "creator") {
             await pool.query(
               `INSERT INTO creator_profiles (user_id, username, followers, median_views, engagement_rate, tier_label, status)
-               VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending') ON CONFLICT DO NOTHING`,
+                 VALUES ($1, $2, 0, 0, 0.00, 'Nano', 'pending') ON CONFLICT DO NOTHING`,
               [foundUser.id, `user_${formattedPhone.slice(-4)}`]
-            );
-          } catch {
+            ).catch(() => {
+            });
           }
+        } catch (err) {
+          console.error("[PHONE SIGNUP INSERT ERROR]", err?.message || err);
+          return res.status(503).json({ error: "Database unavailable during phone account creation." });
         }
-      } catch (err) {
-        console.error("[PHONE SIGNUP INSERT ERROR]", err.message);
+      } else if (isInMemoryFallbackAllowed()) {
         foundUser = {
           id: Date.now(),
           email: userEmail,
@@ -10007,12 +10768,14 @@ app.post("/api/auth/phone-login", async (req, res) => {
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         };
         registeredUsers.push(foundUser);
-        await saveRegisteredUsers(foundUser);
       }
     }
     setAuthTokenCookie(res, foundUser);
     return res.json(sanitizeUser(foundUser));
   } catch (err) {
+    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+      return res.status(503).json({ error: "Security verification store temporarily unavailable" });
+    }
     console.error("[PHONE LOGIN ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to log in with phone" });
   }
@@ -10025,7 +10788,11 @@ app.post("/api/auth/logout", async (req, res) => {
       if (decoded?.jti) {
         await revokeSessionJti(decoded.jti, decoded.exp);
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+        clearAuthTokenCookie(res);
+        return res.status(503).json({ error: "Session revocation store temporarily unavailable" });
+      }
     }
   }
   clearAuthTokenCookie(res);
@@ -10082,14 +10849,21 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
     try {
       const dbRes = await pool.query(
         `SELECT u.id, u.email, u.name, u.role, u.email_verified, u.status, u.company_name, u.gstin,
-                k.pan_masked AS pan, u.billing_address, u.avatar, u.avatar_url, u.city, u.created_at
+                u.billing_address, u.avatar, u.avatar_url, u.city, u.handle, u.created_at
          FROM users u
-         LEFT JOIN kyc k ON k.user_id = u.id
          WHERE u.id = $1`,
         [targetId]
       );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
+        let maskedPan = null;
+        try {
+          const kycRes = await pool.query(`SELECT pan_masked FROM kyc WHERE user_id = $1 LIMIT 1`, [targetId]);
+          if (kycRes.rows.length > 0) {
+            maskedPan = kycRes.rows[0].pan_masked || null;
+          }
+        } catch {
+        }
         let followers = 0;
         let medianViews = null;
         let reach = null;
@@ -10098,8 +10872,12 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
         let isInstagramVerified = false;
         let tierLabel = "Nano";
         let cpAvatar = null;
+        let cpAccessToken = null;
         try {
-          const cpRes = await pool.query("SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status, avatar_url FROM creator_profiles WHERE user_id = $1", [targetId]);
+          const cpRes = await pool.query(
+            "SELECT username, followers, median_views, engagement_rate, access_token_enc, instagram_user_id, tier_label, status, avatar_url FROM creator_profiles WHERE user_id = $1",
+            [targetId]
+          );
           if (cpRes.rows.length > 0) {
             const cp = cpRes.rows[0];
             if (cp.username) instagramUsername = cp.username;
@@ -10108,7 +10886,8 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
             if (cp.engagement_rate !== null && cp.engagement_rate !== void 0) engagementRate = Number(cp.engagement_rate);
             if (cp.tier_label) tierLabel = cp.tier_label;
             if (cp.avatar_url) cpAvatar = cp.avatar_url;
-            if (cp.status === "active" && (cp.access_token_enc || cp.instagram_user_id)) {
+            if (cp.access_token_enc) cpAccessToken = cp.access_token_enc;
+            if (cp.username && cp.status !== "blocked" && cp.status !== "pending") {
               isInstagramVerified = true;
             }
           }
@@ -10124,15 +10903,38 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
           medianViews = 0;
         }
         const regUser = registeredUsers.find((u) => u.id === targetId) || (req.user?.id === targetId ? req.user : null);
-        const resolvedAvatar = row.avatar || row.avatar_url || cpAvatar || (regUser ? regUser.avatar : null) || null;
+        let resolvedAvatar = cpAvatar || row.avatar_url || row.avatar || (regUser ? regUser.avatar : null) || null;
+        if (resolvedAvatar && String(resolvedAvatar).includes("photo-1534528741775-53994a69daeb")) {
+          resolvedAvatar = null;
+        }
+        if (isVerifiedConnection && cpAccessToken && (!resolvedAvatar || resolvedAvatar.includes("cdninstagram.com") || resolvedAvatar.includes("fbcdn.net"))) {
+          try {
+            const syncProfileRes = await fetch(
+              `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url&access_token=${encodeURIComponent(cpAccessToken)}`,
+              { signal: AbortSignal.timeout(4e3) }
+            );
+            if (syncProfileRes.ok) {
+              const syncPData = await syncProfileRes.json();
+              if (syncPData?.profile_picture_url) {
+                const refreshed = await saveCreatorProfilePicture(targetId, instagramUsername, String(syncPData.profile_picture_url));
+                if (refreshed) resolvedAvatar = refreshed;
+              }
+            }
+          } catch {
+          }
+        }
+        if (isVerifiedConnection && !resolvedAvatar) {
+          resolvedAvatar = `/api/creators/${targetId}/avatar`;
+        }
         authoritativeUser = {
           id: Number(row.id),
           email: row.email,
           name: row.name,
           role: row.role,
-          handle: `@${row.email.split("@")[0]}`,
+          handle: row.handle || (instagramUsername ? `@${instagramUsername}` : `@${row.email.split("@")[0]}`),
           avatar: resolvedAvatar,
           avatarUrl: resolvedAvatar,
+          pan: maskedPan,
           city: row.city || (regUser ? regUser.city : ""),
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
           companyName: row.company_name,
@@ -10140,7 +10942,7 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
           followers: isVerifiedConnection ? followers : 0,
           medianViews: isVerifiedConnection ? medianViews : 0,
           reach: isVerifiedConnection ? reach : 0,
-          engagementRate: isVerifiedConnection ? engagementRate : 0,
+          engagementRate: isVerifiedConnection ? engagementRate || 4.8 : 0,
           instagramUsername: isVerifiedConnection ? instagramUsername : null,
           instagramProfileUrl: isVerifiedConnection ? `https://instagram.com/${instagramUsername}` : null,
           instagramFollowers: isVerifiedConnection ? followers : 0,
@@ -10151,10 +10953,14 @@ app.get("/api/users/:id", requireAuth, async (req, res) => {
         };
       }
     } catch (err) {
-      console.warn("[DB USER FETCH WARNING]", err?.message || err);
+      console.error("[DB USER FETCH ERROR]", err?.message || err);
+      if (req.user && req.user.id === targetId) {
+        authoritativeUser = req.user;
+      } else {
+        return res.status(503).json({ error: "Database temporarily unavailable" });
+      }
     }
-  }
-  if (!authoritativeUser) {
+  } else if (isInMemoryFallbackAllowed()) {
     if (req.user.id === targetId) {
       authoritativeUser = req.user;
     } else {
@@ -10302,6 +11108,8 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req, res) =>
   const clientIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || "127.0.0.1";
   let dbTransactionError = null;
   if (isDatabaseConfigured) {
+    await ensureDatabaseSchema().catch(() => {
+    });
     let client;
     try {
       client = await pool.connect();
@@ -10330,39 +11138,6 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req, res) =>
          WHERE id = $1`,
         [targetId]
       );
-      if (previousIgId) {
-        await client.query(
-          `UPDATE instagram_identities
-           SET current_user_id = NULL, unlinked_at = now()
-           WHERE instagram_user_id = $1`,
-          [previousIgId]
-        );
-      } else if (previousUsername) {
-        await client.query(
-          `UPDATE instagram_identities
-           SET current_user_id = NULL, unlinked_at = now()
-           WHERE LOWER(username) = LOWER($1)`,
-          [previousUsername.toLowerCase()]
-        );
-      }
-      try {
-        await client.query(
-          `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
-           VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
-          [
-            "DISCONNECT_RECORDED",
-            targetId,
-            previousUsername || "unknown",
-            0,
-            JSON.stringify([]),
-            "ALLOW",
-            clientIp,
-            JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
-          ]
-        );
-      } catch (auditErr) {
-        console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
-      }
       await client.query("COMMIT");
     } catch (err) {
       if (client) {
@@ -10375,6 +11150,41 @@ app.post("/api/users/:id/instagram/disconnect", requireAuth, async (req, res) =>
       console.error("[PG DISCONNECT TRANSACTION ERROR]", dbTransactionError);
     } finally {
       if (client) client.release();
+    }
+    if (!dbTransactionError) {
+      if (previousIgId) {
+        await pool.query(
+          `UPDATE instagram_identities
+           SET current_user_id = NULL, unlinked_at = now()
+           WHERE instagram_user_id = $1`,
+          [previousIgId]
+        ).catch(() => {
+        });
+      } else if (previousUsername) {
+        await pool.query(
+          `UPDATE instagram_identities
+           SET current_user_id = NULL, unlinked_at = now()
+           WHERE LOWER(username) = LOWER($1)`,
+          [previousUsername.toLowerCase()]
+        ).catch(() => {
+        });
+      }
+      await pool.query(
+        `INSERT INTO security_audit_logs (event, action, user_id, instagram_username, risk_score, flags, decision, ip, details)
+         VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          "DISCONNECT_RECORDED",
+          targetId,
+          previousUsername || "unknown",
+          0,
+          JSON.stringify([]),
+          "ALLOW",
+          clientIp,
+          JSON.stringify({ message: `User #${targetId} disconnected Instagram @${previousUsername || "unknown"}.` })
+        ]
+      ).catch((auditErr) => {
+        console.warn("[SECURITY AUDIT LOG NON-FATAL WARNING]", auditErr?.message || auditErr);
+      });
     }
   }
   if (dbTransactionError) {
@@ -13006,12 +13816,12 @@ async function saveCreatorProfilePicture(userId, username, imageUrl, skipDbUpdat
   }
   if (!finalUrl) {
     try {
-      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(2500) });
+      const response = await fetch(imageUrl, { signal: AbortSignal.timeout(6e3) });
       if (response.ok) {
         const contentType = response.headers.get("content-type") || "image/jpeg";
         const arrayBuf = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
-        if (buffer.length > 0 && buffer.length <= 512 * 1024) {
+        if (buffer.length > 0 && buffer.length <= 2 * 1024 * 1024) {
           finalUrl = `data:${contentType.split(";")[0]};base64,${buffer.toString("base64")}`;
         } else {
           finalUrl = imageUrl;
@@ -14533,16 +15343,21 @@ app.post("/api/admin/upi-payments/:id/approve", requireAuth, requireRole("admin"
 function getCashfreeCredentials() {
   const appId = (process.env.CASHFREE_APP_ID || "").trim();
   const secretKey = (process.env.CASHFREE_SECRET_KEY || "").trim();
-  const isProd = process.env.CASHFREE_MODE === "production" || process.env.CASHFREE_ENV === "production" || secretKey.startsWith("cfsk_ma_prod_");
-  return { appId, secretKey, isProd };
+  const explicitMode = (process.env.CASHFREE_MODE || process.env.CASHFREE_ENV || "").toLowerCase().trim();
+  const isProdKey = secretKey.startsWith("cfsk_ma_prod_");
+  const isTestKey = secretKey.startsWith("cfsk_ma_test_");
+  const modeMismatch = explicitMode === "production" && isTestKey || explicitMode === "sandbox" && isProdKey;
+  const isProd = explicitMode === "sandbox" ? false : explicitMode === "production" || isProdKey;
+  return { appId, secretKey, isProd, modeMismatch };
 }
 app.get("/api/cashfree/config", (req, res) => {
-  const { appId, secretKey, isProd } = getCashfreeCredentials();
+  const { appId, secretKey, isProd, modeMismatch } = getCashfreeCredentials();
   res.json({
-    appId,
+    appId: modeMismatch ? "" : appId,
     environment: isProd ? "production" : "sandbox",
     mode: isProd ? "production" : "sandbox",
-    configured: Boolean(appId && secretKey)
+    configured: Boolean(appId && secretKey && !modeMismatch),
+    modeMismatch
   });
 });
 app.post("/api/cashfree/create-order", requireAuth, async (req, res) => {
@@ -14558,56 +15373,61 @@ app.post("/api/cashfree/create-order", requireAuth, async (req, res) => {
   const orderId = `order_${Date.now()}_${crypto6.randomBytes(6).toString("hex")}`;
   const targetPurpose = purpose || "wallet_deposit";
   try {
+    const { appId, secretKey, isProd, modeMismatch } = getCashfreeCredentials();
+    if (modeMismatch) {
+      return res.status(503).json({
+        error: "Cashfree gateway mode conflicts with configured secret key environment (production vs sandbox mismatch)"
+      });
+    }
+    if (!appId || !secretKey) {
+      return res.status(400).json({ error: "Cashfree API credentials not configured" });
+    }
     await createPaymentOrder({
       orderId,
       userId: targetUserId,
       purpose: targetPurpose,
       amount: numAmount
     });
-    const { appId, secretKey, isProd } = getCashfreeCredentials();
-    if (appId && secretKey) {
-      const baseUrl = isProd ? "https://api.cashfree.com/pg/orders" : "https://sandbox.cashfree.com/pg/orders";
-      const origin = getCanonicalAppUrl(req);
-      const cfResponse = await fetch(baseUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-client-id": appId,
-          "x-client-secret": secretKey,
-          "x-api-version": "2023-08-01"
+    const baseUrl = isProd ? "https://api.cashfree.com/pg/orders" : "https://sandbox.cashfree.com/pg/orders";
+    const origin = getCanonicalAppUrl(req);
+    const cfResponse = await fetch(baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-client-id": appId,
+        "x-client-secret": secretKey,
+        "x-api-version": "2023-08-01"
+      },
+      body: JSON.stringify({
+        order_id: orderId,
+        order_amount: numAmount,
+        order_currency: "INR",
+        customer_details: {
+          customer_id: `cust_${targetUserId}`,
+          customer_name: customerName || req.user.name || "Mingree Partner",
+          customer_email: customerEmail || req.user.email || "user@mingree.com",
+          customer_phone: customerPhone && String(customerPhone).length >= 10 ? String(customerPhone) : "9999999999"
         },
-        body: JSON.stringify({
-          order_id: orderId,
-          order_amount: numAmount,
-          order_currency: "INR",
-          customer_details: {
-            customer_id: `cust_${targetUserId}`,
-            customer_name: customerName || req.user.name || "Mingree Partner",
-            customer_email: customerEmail || req.user.email || "user@mingree.com",
-            customer_phone: customerPhone && String(customerPhone).length >= 10 ? String(customerPhone) : "9999999999"
-          },
-          order_meta: {
-            return_url: `${origin}/sponsor/wallet?order_id={order_id}`,
-            notify_url: `${origin}/api/cashfree/webhook`
-          }
-        })
+        order_meta: {
+          return_url: `${origin}/sponsor/wallet?order_id={order_id}`,
+          notify_url: `${origin}/api/cashfree/webhook`
+        }
+      })
+    });
+    const cfData = await cfResponse.json();
+    if (cfResponse.ok && cfData.payment_session_id) {
+      return res.json({
+        success: true,
+        order_id: orderId,
+        payment_session_id: cfData.payment_session_id,
+        cf_order_id: cfData.cf_order_id,
+        amount: numAmount,
+        environment: isProd ? "production" : "sandbox"
       });
-      const cfData = await cfResponse.json();
-      if (cfResponse.ok && cfData.payment_session_id) {
-        return res.json({
-          success: true,
-          order_id: orderId,
-          payment_session_id: cfData.payment_session_id,
-          cf_order_id: cfData.cf_order_id,
-          amount: numAmount,
-          environment: isProd ? "production" : "sandbox"
-        });
-      } else {
-        console.error("[CASHFREE API ERROR]", cfData);
-        return res.status(400).json({ error: cfData.message || "Cashfree order creation failed" });
-      }
+    } else {
+      console.error("[CASHFREE API ERROR]", cfData);
+      return res.status(400).json({ error: cfData.message || "Cashfree order creation failed" });
     }
-    return res.status(400).json({ error: "Cashfree API credentials not configured" });
   } catch (err) {
     console.error("[CASHFREE CREATE ORDER ERROR]", err);
     return res.status(500).json({ error: err?.message || "Failed to create Cashfree order" });
@@ -14647,12 +15467,12 @@ app.post("/api/cashfree/verify", requireAuth, async (req, res) => {
         purpose: storedOrder.purpose
       });
     }
-    const { appId, secretKey, isProd } = getCashfreeCredentials();
-    if (!appId || !secretKey) {
+    const { appId, secretKey, isProd, modeMismatch } = getCashfreeCredentials();
+    if (!appId || !secretKey || modeMismatch) {
       return res.status(503).json({
         success: false,
         orderId: cleanOrderId,
-        error: "Cashfree API credentials are not configured"
+        error: modeMismatch ? "Cashfree gateway mode conflicts with configured secret key environment" : "Cashfree API credentials are not configured"
       });
     }
     const baseUrl = isProd ? `https://api.cashfree.com/pg/orders/${encodeURIComponent(cleanOrderId)}` : `https://sandbox.cashfree.com/pg/orders/${encodeURIComponent(cleanOrderId)}`;
@@ -14870,7 +15690,8 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
           realCreatorsMap.delete(id);
           continue;
         }
-        const resolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
+        const rawResolvedAvatar = row.cp_avatar_url || row.user_avatar_url || row.avatar;
+        const resolvedAvatar = rawResolvedAvatar && !String(rawResolvedAvatar).includes("unsplash.com") ? rawResolvedAvatar : `/api/creators/${id}/avatar`;
         realCreatorsMap.set(id, {
           id,
           email: row.email,
@@ -14884,6 +15705,8 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
           instagramUsername: row.instagram_username,
           instagramFollowers: Number(row.cp_followers || 0),
           followers: Number(row.cp_followers || 0),
+          medianViews: Number(row.median_views || 0),
+          engagementRate: Number(row.engagement_rate || 4.8),
           isInstagramVerified: true,
           instagramVerificationStatus: "verified"
         });
@@ -14913,7 +15736,7 @@ app.get("/api/campaigns/creator-panel", async (req, res) => {
       const { rateCard, hasCustomRateCard } = buildResolvedRateCard(Number(u.id), tierId, dbRateCardsMap.get(Number(u.id)));
       const price = rateCard[requestedDeliverable] || rateCard.reel;
       const creatorCity = u.city ? CITIES_LIST.find((c) => c.name.toLowerCase() === (u.city || "").toLowerCase()) || { id: 0, name: u.city, state: "" } : null;
-      const avatarUrl = u.avatar && !u.avatar.includes("unsplash.com") ? u.avatar : null;
+      const avatarUrl = u.avatar && !String(u.avatar).includes("unsplash.com") ? u.avatar : `/api/creators/${u.id}/avatar`;
       const mViews = u.medianViews ? Number(u.medianViews) : followers > 0 ? Math.round(followers * 0.45) : null;
       const mReach = Number(u.reach || u.instagramReach) || (followers > 0 ? Math.round(followers * 2.2) : null);
       const engRate = u.engagementRate ? Number(u.engagementRate) : followers > 0 ? 4.8 : null;
@@ -15374,6 +16197,9 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     try {
       billData = await verifyAndConsumeBillToken(billId, sponsorId, getJwtSecret());
     } catch (billErr) {
+      if (billErr instanceof SecurityStoreUnavailableError || billErr?.name === "SecurityStoreUnavailableError") {
+        return res.status(503).json({ error: "Security verification store temporarily unavailable" });
+      }
       const msg = billErr?.message || "Invalid bill token";
       if (msg.includes("expired") || msg.includes("already been used")) {
         return res.status(409).json({ error: msg, bill: null });
@@ -15731,6 +16557,11 @@ app.use((err, req, res, _next) => {
   if (err?.type === "entity.parse.failed" || err instanceof SyntaxError && "body" in err) {
     return res.status(400).json({ error: "Malformed JSON request body" });
   }
+  if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
+    return res.status(503).json({
+      error: "Rate limit protection service is temporarily unavailable. Please try again shortly."
+    });
+  }
   const statusCode = err.statusCode || err.status || 500;
   const isProd = process.env.NODE_ENV === "production";
   return res.status(statusCode).json({
@@ -15807,6 +16638,7 @@ if (isDirectRun && !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME)
 var server_default = app;
 export {
   createSignedOtpToken,
+  createVerifiedEmailToken,
   server_default as default,
   getJwtSecret,
   requireAdmin,
