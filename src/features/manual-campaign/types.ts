@@ -106,7 +106,7 @@ export interface CampaignDetails {
   assetUrl?: string;
   assetFileName?: string;
   websiteUrl?: string;
-  promotionStyle: "lyrics" | "face_on_camera" | "direct_share";
+  promotionStyle: "lipsync" | "aesthetic_vlog" | "dance" | "comedy" | "review";
 }
 
 export interface SubmitPayload {

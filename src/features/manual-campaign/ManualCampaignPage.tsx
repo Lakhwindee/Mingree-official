@@ -43,9 +43,11 @@ function getCreatorRateForDeliverable(c: CreatorCard, deliv: DeliverableType): n
   return c.price;
 }
 const STYLES: { id: CampaignDetails["promotionStyle"]; label: string; text: string }[] = [
-  { id: "lyrics", label: "Lyrics / Page promotion", text: "Creator uses the provided audio and content only" },
-  { id: "face_on_camera", label: "Face on camera", text: "Creator appears in the video" },
-  { id: "direct_share", label: "Direct share", text: "Creator shares the file you provide" },
+  { id: "lipsync", label: "Lip-Sync & Audio Trend", text: "Creator acts, lip-syncs, or features audio with trendy expressions" },
+  { id: "aesthetic_vlog", label: "Aesthetic Lifestyle / Vlog", text: "Cinematic daily vlog or aesthetic visual style featuring the audio" },
+  { id: "dance", label: "Dance Choreography / Hook Step", text: "Creator performs dance moves or hook step to the track" },
+  { id: "comedy", label: "Comedy Skit / Relatable Story", text: "Relatable humor or mini story built around the song" },
+  { id: "review", label: "Product / Song Review", text: "Direct review or organic brand shoutout co-created by creator" },
 ];
 const STEP_CONFIG = [
   { full: "Creator Selection", short: "Creators" },
@@ -57,22 +59,22 @@ const STEPS = STEP_CONFIG.map((s) => s.full);
 const DISCLOSURE = "Add #ad or the Instagram “Paid partnership” label.";
 
 const emptyDetails: CampaignDetails = {
-  title: "New Song / Brand Promo Campaign", 
-  songUrl: "https://instagram.com/reels/sample", 
-  description: "Promote brand audio / product on Instagram Reels across top creator channels.", 
+  title: "", 
+  songUrl: "", 
+  description: "", 
   genre: "Music & Lifestyle", 
   language: "Hindi & English", 
   deliverable: "reel", 
-  deadline: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+  deadline: "",
   cityIds: [], 
   accountsToMention: [], 
   requiredTags: ["#MingreePromotions"], 
-  captionNote: "Check out this brand new release! Use official audio.", 
+  captionNote: "", 
   disclosureInstructions: "#ad | Paid Partnership", 
   assetUrl: "", 
   assetFileName: "", 
   websiteUrl: "", 
-  promotionStyle: "lyrics",
+  promotionStyle: "lipsync",
 };
 
 function Field({ id, label, required, hint, children }: { id: string; label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
@@ -781,7 +783,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                             {c.isRealRegisteredCreator ? "Featured Star" : "Verified Creator"}
                           </span>
                         </div>
-                        <span className="text-[11px] text-slate-400 font-medium">Live sync</span>
                       </div>
 
                       {/* Creator Avatar & Profile Info */}
@@ -1141,27 +1142,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
         <section className="rounded-2xl border bg-card p-5 sm:p-6 space-y-5">
           <header><h2 className="text-xl font-bold">Promotion Content</h2><p className="text-sm text-muted-foreground">Tell creators exactly what the post must contain. You will approve the post against these rules.</p></header>
           
-          <div className="space-y-1.5">
-            <div className="text-sm font-semibold">Content type <span className="text-primary">*</span></div>
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Content type">
-              {DELIVERABLES.map((x) => (
-                <button
-                  key={x.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={d.deliverable === x.id}
-                  onClick={() => setDeliverable(x.id)}
-                  className={cn(
-                    "h-10 px-4 rounded-xl border text-sm font-medium transition cursor-pointer",
-                    d.deliverable === x.id ? "border-primary bg-primary/10 text-primary font-semibold" : "hover:border-primary/50"
-                  )}
-                >
-                  {x.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="space-y-1.5">
             <div className="text-sm font-semibold">Promotion style</div>
             <div className="grid sm:grid-cols-3 gap-3" role="radiogroup" aria-label="Promotion style">

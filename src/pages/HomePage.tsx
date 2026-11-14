@@ -500,7 +500,6 @@ export default function HomePage() {
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
                     <span>{(heroCreator as any)?.badge || "Verified Creator Profile"}</span>
                   </div>
-                  <span className="text-xs text-slate-400 font-medium">Live sync</span>
                 </div>
 
                 {/* Creator Avatar & Info (Riya Sen) */}

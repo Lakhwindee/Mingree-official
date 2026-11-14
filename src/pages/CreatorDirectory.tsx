@@ -611,7 +611,6 @@ export default function CreatorDirectory() {
                       <span className="w-2 h-2 rounded-full bg-emerald-400/80 shrink-0" />
                       <span>{c.badge ? c.badge.replace(/^[^\w]+/, "").trim() : "Featured Star"}</span>
                     </div>
-                    <span className="text-[11px] text-slate-400 font-medium">Live sync</span>
                   </div>
 
                   {/* Creator Avatar & Info */}
