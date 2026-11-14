@@ -317,7 +317,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
       !d.description.trim() && "Add a short description",
       !d.deadline && "Pick a deadline",
     ].filter(Boolean) as string[],
-    [!d.captionNote.trim() && "Add a caption note with the disclosure"].filter(Boolean) as string[],
+    [],
     [
       creatorIds.length === 0 && "Select at least one creator from Step 1",
       billLoading && "Calculating bill...",
@@ -490,16 +490,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           </div>
           <Field id="accounts" label="Accounts to mention (optional)">
             <ChipInput id="accounts" values={d.accountsToMention} onChange={(v) => set("accountsToMention", v)} placeholder="@youraccount, press Enter" prefix="@" />
-          </Field>
-
-          <Field id="captionNote" label="Mandatory Caption Note" required hint="Caption copy that creators must include in their Reel">
-            <Textarea id="captionNote" value={d.captionNote} onChange={(e) => set("captionNote", e.target.value)} rows={3} placeholder="#ad | Check out..." />
-          </Field>
-          <Field id="disclosure" label="FTC / Disclosure Instructions">
-            <Input id="disclosure" value={d.disclosureInstructions || ""} onChange={(e) => set("disclosureInstructions", e.target.value)} placeholder="#ad | Paid Partnership" />
-          </Field>
-          <Field id="websiteUrl" label="Website / Landing Page Link (optional)" hint="Link for creators to promote in bio/caption">
-            <Input id="websiteUrl" value={d.websiteUrl || ""} onChange={(e) => set("websiteUrl", e.target.value)} placeholder="https://yourbrand.com" />
           </Field>
         </section>
       )}
@@ -1155,9 +1145,6 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
           </div>
           <Field id="tags" label="Required hashtags / tags" hint="Creators must include these. Press Enter to add.">
             <ChipInput id="tags" values={d.requiredTags} onChange={(v) => set("requiredTags", v)} placeholder="#yoursong" prefix="#" />
-          </Field>
-          <Field id="note" label="Caption note" required hint="Always keep the paid-promotion disclosure.">
-            <Textarea id="note" value={d.captionNote} onChange={(e) => set("captionNote", e.target.value)} rows={3} />
           </Field>
         </section>
       )}
