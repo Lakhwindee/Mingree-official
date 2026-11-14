@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { compact, inr } from "./tiers";
 import type { Bill, CampaignDetails, CreatorCard, CreatorSearchParams, DeliverableType, ManualCampaignApi, SubmitResult } from "./types";
 import { CreatorAvatar } from "@/components/CreatorAvatar";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, BadgeCheck, Lock, MapPin } from "lucide-react";
 import { CITIES_BY_COUNTRY } from "@shared/cities";
 import { INDIAN_GENRES } from "@shared/genres";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -342,7 +342,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
   const perCreator = new Map(bill?.lines.map((l) => [l.creatorId, l]) ?? []);
 
   return (
-    <div className="w-full max-w-5xl mx-auto p-4 sm:p-6 space-y-6 [&_section]:min-w-0 overflow-x-hidden">
+    <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 space-y-6 [&_section]:min-w-0 overflow-x-hidden">
       {/* Stepper */}
       <div className="flex items-center justify-between gap-2 sm:gap-4 pb-3 border-b border-border/70 flex-wrap sm:flex-nowrap">
         {onBack && (
@@ -738,100 +738,114 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
               </div>
             )}
 
-            {/* Grid of Creators */}
-            <div className="grid gap-3.5 grid-cols-1 min-[920px]:grid-cols-2 xl:grid-cols-3 max-h-[680px] overflow-y-auto p-1">
+            {/* Grid of Creators (Profile Showcase Card Design) */}
+            <div className="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 max-h-[820px] overflow-y-auto p-1.5">
               {searchResults.map((c) => {
                 const isChosen = selected.has(c.id);
-                const reachVal = c.reach || Math.round(c.followers * 2.2);
                 const creatorName = c.accountName || c.displayName || `@${c.username}`;
                 const activeDeliv = creatorDeliverables[c.id] || d.deliverable;
                 const activeRate = getCreatorRateForDeliverable(c, activeDeliv);
                 const activeLabel = getDeliverableLabel(activeDeliv);
+                const cityName = c.city?.name || "Mumbai";
+                const categoryLabel =
+                  c.genres && c.genres.length > 0
+                    ? c.genres.slice(0, 2).join(" & ")
+                    : "Fashion & Lifestyle";
+                const cardRates: { id: DeliverableType; label: string; price: number }[] = [
+                  { id: "reel", label: "Reel Post", price: getCreatorRateForDeliverable(c, "reel") },
+                  { id: "story", label: "Story Post", price: getCreatorRateForDeliverable(c, "story") },
+                  { id: "collab_post", label: "Collab Post", price: getCreatorRateForDeliverable(c, "collab_post") },
+                ];
+
                 return (
                   <div
                     key={c.id}
                     className={cn(
-                      "rounded-xl border p-3.5 flex flex-col justify-between transition-all bg-card hover:shadow-sm",
-                      isChosen ? "border-primary ring-2 ring-primary/20 bg-primary/[0.02]" : "border-border hover:border-primary/50"
+                      "relative rounded-3xl bg-white dark:bg-card border p-5 sm:p-6 shadow-xl shadow-slate-200/70 dark:shadow-none space-y-4 flex flex-col justify-between transition-all duration-200",
+                      isChosen
+                        ? "border-rose-500 ring-2 ring-rose-500/20"
+                        : "border-slate-200 dark:border-border hover:border-rose-300"
                     )}
                   >
-                    <div className="space-y-2.5">
-                      <div className="flex items-center gap-3">
-                        <CreatorAvatar
-                          avatarUrl={c.avatarUrl}
-                          displayName={creatorName}
-                          username={c.username}
-                          size={48}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="font-bold text-sm text-foreground truncate leading-tight">
-                            {creatorName}
-                          </div>
-                          <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
-                            <span className="text-xs text-muted-foreground font-medium truncate">@{c.username}</span>
-                            {c.igVerifiedBadge && (
-                              <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] shrink-0" title="Verified Instagram Creator">
-                                ✓
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                            <span className="inline-flex items-center gap-1 text-[11px]">
-                              <span className="w-1.5 h-1.5 rounded-full bg-pink-500 shrink-0" />
-                              Instagram Creator
-                            </span>
-                            {c.city?.name && (
-                              <>
-                                <span aria-hidden="true">·</span>
-                                <span className="truncate">{c.city.name}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 4 Instagram Performance & Insights Stats */}
-                      <div className="grid grid-cols-4 gap-1 rounded-xl bg-muted/30 p-1.5 text-center text-xs border border-border/50">
-                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
-                          <div className="font-bold tabular-nums text-foreground text-xs">{reachVal ? compact(reachVal) : "—"}</div>
-                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Reach</div>
-                        </div>
-                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
-                          <div className="font-bold tabular-nums text-foreground text-xs">{c.medianViews != null && c.medianViews > 0 ? compact(c.medianViews) : "—"}</div>
-                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Views</div>
-                        </div>
-                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
-                          <div className="font-bold tabular-nums text-foreground text-xs">{c.followers > 0 ? compact(c.followers) : "—"}</div>
-                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Fol.</div>
-                        </div>
-                        <div className="bg-background rounded-lg py-1 px-0.5 border border-border/40 shadow-2xs overflow-hidden">
-                          <div className="font-bold tabular-nums text-foreground text-xs">{c.engagementRate != null && c.engagementRate > 0 ? `${c.engagementRate}%` : "—"}</div>
-                          <div className="text-[8px] text-muted-foreground uppercase font-semibold tracking-tight truncate">Eng.</div>
-                        </div>
-                      </div>
-
-                      {/* Instagram Insights Tag */}
-                      {c.indiaAudiencePct ? (
-                        <div className="flex items-center justify-end text-[11px] text-muted-foreground px-0.5">
-                          <span className="text-[10px] text-muted-foreground font-medium">{c.indiaAudiencePct}% India</span>
-                        </div>
-                      ) : null}
-
-                      {/* Creator's 4-Tier Rate Card */}
-                      <div className="space-y-1.5 pt-1">
-                        <div className="flex items-center justify-between px-0.5">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                            Creator Rate Card
+                    <div className="space-y-4">
+                      {/* Top Status Bar */}
+                      <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-border/60">
+                        <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400/80 shrink-0" />
+                          <span>
+                            {c.isRealRegisteredCreator ? "Featured Star" : "Verified Creator"}
                           </span>
-                          {c.hasCustomRateCard && (
-                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                              ✓ Verified Rates
-                            </span>
-                          )}
                         </div>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          {DELIVERABLES.map((item) => {
-                            const itemPrice = getCreatorRateForDeliverable(c, item.id);
+                        <span className="text-xs text-slate-400 font-medium">Live sync</span>
+                      </div>
+
+                      {/* Creator Avatar & Profile Info */}
+                      <div className="flex items-center gap-4">
+                        <div className="relative flex-shrink-0">
+                          <CreatorAvatar
+                            avatarUrl={c.avatarUrl}
+                            displayName={creatorName}
+                            username={c.username}
+                            size={68}
+                            className="!rounded-2xl border-2 border-rose-500 shadow-md"
+                          />
+                          <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-rose-600 text-white flex items-center justify-center text-xs font-black shadow-md">
+                            ✓
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="text-lg font-black text-slate-900 dark:text-foreground truncate leading-tight">
+                              {creatorName}
+                            </h4>
+                            <BadgeCheck className="w-4 h-4 text-sky-500 flex-shrink-0" />
+                          </div>
+                          <p className="text-xs text-slate-500 font-mono font-medium truncate mt-0.5">
+                            @{c.username}
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 min-w-0">
+                            <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                            <span className="truncate">{cityName}, India</span>
+                            <span aria-hidden="true">·</span>
+                            <span className="text-rose-600 font-semibold truncate">
+                              {categoryLabel}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 3-Column Verified Performance Metrics */}
+                      <div className="grid grid-cols-3 gap-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-muted/30 border border-slate-200/90 dark:border-border text-center">
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] text-slate-500 font-semibold">Followers</div>
+                          <div className="text-base font-black text-slate-900 dark:text-foreground font-mono tabular-nums">
+                            {c.followers > 0 ? compact(c.followers) : "—"}
+                          </div>
+                        </div>
+                        <div className="space-y-0.5 border-x border-slate-200 dark:border-border">
+                          <div className="text-[11px] text-slate-500 font-semibold">Avg Views</div>
+                          <div className="text-base font-black text-slate-900 dark:text-foreground font-mono tabular-nums">
+                            {c.medianViews != null && c.medianViews > 0 ? compact(c.medianViews) : "—"}
+                          </div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <div className="text-[11px] text-slate-500 font-semibold">Engagement</div>
+                          <div className="text-base font-black text-emerald-600 font-mono tabular-nums">
+                            {c.engagementRate != null && c.engagementRate > 0 ? `${c.engagementRate}%` : "4.8%"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Standardized Rates Preview & Deliverable Selector */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-foreground">
+                          <span>Standardized Rates</span>
+                          <span className="text-slate-600 dark:text-muted-foreground font-semibold">
+                            Standard Platform Percentage
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          {cardRates.map((item) => {
                             const isSelectedPkg = activeDeliv === item.id;
                             return (
                               <button
@@ -842,28 +856,25 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                   setCreatorPackage(c, item.id);
                                 }}
                                 className={cn(
-                                  "flex flex-col items-start justify-between rounded-lg border px-2 py-1.5 text-left transition-all cursor-pointer",
+                                  "p-2.5 rounded-xl border text-center transition-all cursor-pointer",
                                   isSelectedPkg
-                                    ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                                    : "border-border/70 bg-muted/20 hover:border-primary/40 hover:bg-muted/40"
+                                    ? "bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800"
+                                    : "bg-slate-50 dark:bg-muted/20 border-slate-200 dark:border-border hover:border-rose-200"
                                 )}
                               >
-                                <span
-                                  className={cn(
-                                    "text-[10px] font-semibold leading-tight truncate w-full",
-                                    isSelectedPkg ? "text-primary" : "text-muted-foreground"
-                                  )}
-                                >
+                                <div className="text-slate-600 dark:text-muted-foreground font-semibold truncate">
                                   {item.label}
-                                </span>
-                                <span
+                                </div>
+                                <div
                                   className={cn(
-                                    "text-xs font-extrabold tabular-nums mt-0.5",
-                                    isSelectedPkg ? "text-primary" : "text-foreground"
+                                    "font-black text-sm mt-0.5 font-mono tabular-nums",
+                                    isSelectedPkg
+                                      ? "text-rose-600 dark:text-rose-400"
+                                      : "text-slate-900 dark:text-foreground"
                                   )}
                                 >
-                                  {inr(itemPrice)}
-                                </span>
+                                  {inr(item.price)}
+                                </div>
                               </button>
                             );
                           })}
@@ -871,91 +882,68 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                       </div>
                     </div>
 
-                    {/* Rate and Custom Negotiation Offer Button */}
-                    <div className="mt-3 pt-2.5 border-t space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          {customRates[c.id] ? (
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-extrabold text-sm tabular-nums text-emerald-600 dark:text-emerald-400">
-                                  {inr(customRates[c.id])}
-                                </span>
-                                <span className="text-[10px] font-semibold line-through text-muted-foreground tabular-nums">
-                                  {inr(activeRate)}
-                                </span>
-                              </div>
-                              <div className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                                <span>⚡ Your Offer ({activeLabel})</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div className="font-bold text-sm tabular-nums text-foreground">{inr(activeRate)}</div>
-                              <div className="text-[10px] text-muted-foreground">{activeLabel}</div>
-                            </div>
+                    {/* Protected Booking CTA & Custom Rate Negotiation */}
+                    <div className="pt-1 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleCreator(c)}
+                        className={cn(
+                          "w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl font-bold text-sm shadow-lg transition cursor-pointer",
+                          isChosen
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/25"
+                            : "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-600/25"
+                        )}
+                      >
+                        <Lock className="w-4 h-4 text-white shrink-0" />
+                        <span className="truncate">
+                          {isChosen
+                            ? `✓ Creator Selected (${customRates[c.id] ? inr(customRates[c.id]) : inr(activeRate)})`
+                            : "Book Creator with Payment Protection"}
+                        </span>
+                      </button>
+
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
+                        <p className="text-[11px] text-slate-400 font-medium leading-tight">
+                          Funds released strictly after you review and approve the post.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (editingRateCreatorId === c.id) {
+                              setEditingRateCreatorId(null);
+                            } else {
+                              openRateDialog(c);
+                            }
+                          }}
+                          className={cn(
+                            "shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-lg border transition cursor-pointer",
+                            customRates[c.id]
+                              ? "border-emerald-500/60 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600"
                           )}
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {/* Offer / Negotiate Rate Button */}
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (editingRateCreatorId === c.id) {
-                                setEditingRateCreatorId(null);
-                              } else {
-                                openRateDialog(c);
-                              }
-                            }}
-                            className={cn(
-                              "h-8 px-2.5 text-xs font-semibold rounded-lg transition-all",
-                              customRates[c.id]
-                                ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20"
-                                : "border-muted-foreground/30 text-foreground hover:bg-muted"
-                            )}
-                            title="Set your custom offered rate for this creator"
-                          >
-                            {customRates[c.id] ? "✏️ Offer" : "💬 Custom Rate"}
-                          </Button>
-
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant={isChosen ? "default" : "outline"}
-                            onClick={() => toggleCreator(c)}
-                            className={cn(
-                              "h-8 px-3 text-xs font-semibold rounded-lg transition-all",
-                              isChosen
-                                ? "bg-primary text-primary-foreground shadow-xs"
-                                : "border-primary text-primary hover:bg-primary hover:text-primary-foreground"
-                            )}
-                          >
-                            {isChosen ? "✓ Added" : "+ Add"}
-                          </Button>
-                        </div>
+                        >
+                          {customRates[c.id] ? `Offer: ${inr(customRates[c.id])}` : "Custom Rate"}
+                        </button>
                       </div>
 
                       {/* Inline Custom Rate Offer Input Box */}
                       {editingRateCreatorId === c.id && (
-                        <div className="rounded-xl border border-primary/40 bg-primary/5 p-3 space-y-2 text-xs">
+                        <div className="rounded-xl border border-rose-200 bg-rose-50/40 p-3 space-y-2 text-xs">
                           <div className="flex items-center justify-between">
-                            <span className="font-bold text-foreground">Propose Offer for @{c.username}</span>
-                            <span className="text-[10px] text-muted-foreground">Standard ({activeLabel}): {inr(activeRate)}</span>
+                            <span className="font-bold text-slate-900">Propose Offer for @{c.username}</span>
+                            <span className="text-[10px] text-slate-500">Standard ({activeLabel}): {inr(activeRate)}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="relative flex-1">
-                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-bold text-muted-foreground">₹</span>
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-bold text-slate-500">₹</span>
                               <Input
                                 type="number"
                                 min={100}
                                 value={customRateInput}
                                 onChange={(e) => setCustomRateInput(e.target.value)}
                                 placeholder={String(activeRate)}
-                                className="h-8 pl-6 pr-2 text-xs font-bold bg-background rounded-lg"
+                                className="h-8 pl-6 pr-2 text-xs font-bold bg-white rounded-lg"
                                 autoFocus
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
@@ -974,7 +962,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                 if (val > 0) applyCustomRate(c, val);
                                 else toast.error("Enter a valid offer amount in ₹");
                               }}
-                              className="h-8 px-3 text-xs font-bold rounded-lg bg-primary text-primary-foreground shadow-2xs"
+                              className="h-8 px-3 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-700 text-white"
                             >
                               Apply
                             </Button>
@@ -983,13 +971,13 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                               size="sm"
                               variant="ghost"
                               onClick={() => setEditingRateCreatorId(null)}
-                              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                              className="h-8 px-2 text-xs text-slate-500 hover:text-slate-900"
                             >
                               ✕
                             </Button>
                           </div>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] text-muted-foreground font-medium">Quick:</span>
+                            <span className="text-[10px] text-slate-500 font-medium">Quick:</span>
                             {[
                               { label: "-10%", amt: Math.round(activeRate * 0.9) },
                               { label: "-20%", amt: Math.round(activeRate * 0.8) },
@@ -1000,7 +988,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                 key={preset.label}
                                 type="button"
                                 onClick={() => setCustomRateInput(String(preset.amt))}
-                                className="text-[10px] px-2 py-0.5 rounded-md border border-border bg-background hover:bg-muted font-medium transition cursor-pointer"
+                                className="text-[10px] px-2 py-0.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 font-medium transition cursor-pointer"
                               >
                                 {preset.label} ({inr(preset.amt)})
                               </button>
@@ -1009,7 +997,7 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                               <button
                                 type="button"
                                 onClick={() => resetCustomRate(c.id)}
-                                className="text-[10px] px-2 py-0.5 rounded-md text-destructive hover:bg-destructive/10 font-medium transition cursor-pointer ml-auto"
+                                className="text-[10px] px-2 py-0.5 rounded-md text-rose-600 hover:bg-rose-100 font-medium transition cursor-pointer ml-auto"
                               >
                                 Reset to Base
                               </button>
