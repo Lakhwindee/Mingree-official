@@ -622,10 +622,12 @@ export async function saveSingleWorkspace(workspace: CampaignWorkspaceData): Pro
   await saveAllWorkspaces(all);
 }
 
-// Check participant access
+// Check participant access strictly: only admin, owning sponsor, or participating creator
 export function canUserAccessWorkspace(user: { id: number; role: string }, campaign: CampaignWorkspaceData): boolean {
   if (!user || !campaign) return false;
-  return true;
+  if (user.role === "admin") return true;
+  if (Number(campaign.sponsorId) === Number(user.id)) return true;
+  return (campaign.participants || []).some((p) => Number(p.creatorId) === Number(user.id));
 }
 
 // Discoverable campaign summary for marketplace
@@ -737,10 +739,9 @@ export function getMarketplaceCampaigns(filters?: {
     });
 }
 
-// Brand Campaign Cards Summary
+// Brand Campaign Cards Summary (strictly scoped to sponsorId)
 export function getBrandCampaignCards(sponsorId: number) {
-  const all = loadAllWorkspaces();
-  // Return all campaigns sorted newest first so no campaigns ever disappear when a new one is created!
+  const all = loadAllWorkspaces().filter((c) => Number(c.sponsorId) === Number(sponsorId));
   const sorted = [...all].sort((a, b) => {
     const timeA = new Date(a.createdAt || 0).getTime();
     const timeB = new Date(b.createdAt || 0).getTime();
@@ -805,7 +806,7 @@ export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: st
   const normalizedHandle = creatorHandle ? `@${String(creatorHandle).replace(/^@/, "").toLowerCase()}` : null;
 
   for (const c of all) {
-    let participant = (c.participants || []).find((p) => {
+    const participant = (c.participants || []).find((p) => {
       if (Number(p.creatorId) === Number(creatorId) || Number(p.id) === Number(creatorId)) return true;
       if (normalizedHandle && p.creatorHandle) {
         const pHandle = `@${String(p.creatorHandle).replace(/^@/, "").toLowerCase()}`;
@@ -813,33 +814,6 @@ export function getCreatorCampaignsSummary(creatorId: number, creatorHandle?: st
       }
       return false;
     });
-
-    // If creator wasn't matched by ID/handle, check if campaign has a single invited participant or open slots
-    if (!participant && Array.isArray(c.participants) && c.participants.length === 1) {
-      participant = c.participants[0];
-    }
-
-    if (!participant && (c.status === "filling_slots" || c.status === "published" || c.status === "in_progress")) {
-      participant = {
-        id: creatorId,
-        campaignId: c.id,
-        creatorId,
-        creatorName: creatorHandle || `Creator #${creatorId}`,
-        creatorHandle: creatorHandle ? `@${String(creatorHandle).replace(/^@/, "")}` : `@creator${creatorId}`,
-        creatorAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-        creatorFollowers: 10000,
-        creatorMedianViews: 4500,
-        status: "pending",
-        payoutAmount: c.payAmount || 1200,
-        reservedAt: c.createdAt || new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
-        briefAcknowledgedVersion: 1,
-        submission: null,
-        revisions: [],
-        draftSubmission: null,
-        draftStatus: "none",
-      };
-    }
 
     if (participant) {
       const latestBriefVersion = c.briefVersions && c.briefVersions.length > 0 ? c.briefVersions[c.briefVersions.length - 1].version : 1;
@@ -1876,65 +1850,19 @@ export async function negotiateCampaignPrice(params: {
 }> {
   return acquireLock(params.campaignId || 1, async () => {
     await ensureWorkspacesLoaded(true);
-    const all = loadAllWorkspaces();
-    const targetCreatorId =
-      params.user.role === "creator" ? Number(params.user.id) : Number(params.creatorId || 1);
-
-    let campaign =
-      getWorkspaceById(params.campaignId) ||
-      all.find((w) => Number(w.sponsorId) === Number(params.user.id)) ||
-      all.find((w) =>
-        (w.participants || []).some(
-          (p) => Number(p.creatorId) === targetCreatorId || Number(p.id) === targetCreatorId
-        )
-      ) ||
-      all[0] ||
-      null;
-
-    const nowIso = new Date().toISOString();
+    const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) {
-      const initialRate = Number(params.baseRate) || 1200;
-      campaign = {
-        id: Number(params.campaignId) || 1,
-        sponsorId: params.user.role === "sponsor" ? Number(params.user.id) : 1,
-        title: "Instagram Reels Promotion Campaign",
-        brand: params.brandName || (params.user.role === "sponsor" ? params.user.name : "Brand Partner"),
-        brandLogo: params.user.avatar || "",
-        description: "Promote brand audio / product on Instagram Reels.",
-        genre: "Music & Lifestyle",
-        language: "Hindi & English",
-        contentTypes: ["Reel"],
-        promotionStyle: "Hook Step / Creative Reel",
-        audioUrl: "",
-        referenceVideoUrl: "",
-        productAssets: [],
-        payAmount: initialRate,
-        totalBudget: Math.round(initialRate * 1.075),
-        escrowHeld: Math.round(initialRate * 1.075),
-        committedPayouts: initialRate,
-        releasedPayouts: 0,
-        totalSlots: 1,
-        reservedSlots: 1,
-        remainingSlots: 0,
-        bookingModel: "instant",
-        minFollowers: 1000,
-        minMedianViews: 500,
-        targetCountries: ["India"],
-        targetCities: ["All"],
-        requiredCaptionNote: "",
-        requiredTags: ["#Mingree"],
-        requiredMentions: [],
-        disclosureInstructions: "Include #ad #collab in caption",
-        minDurationSecs: 15,
-        deadline: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
-        status: "in_progress",
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        briefVersions: [],
-        participants: [],
-        messages: [],
-      };
+      throw new Error("Campaign workspace not found");
     }
+
+    const isAdmin = params.user.role === "admin";
+    const isSponsorOwner = Number(campaign.sponsorId) === Number(params.user.id);
+    if (!isAdmin && params.user.role === "sponsor" && !isSponsorOwner) {
+      throw new Error("Forbidden: You are not the owner of this campaign");
+    }
+
+    const targetCreatorId =
+      params.user.role === "creator" ? Number(params.user.id) : Number(params.creatorId || 0);
 
     let participant = (campaign.participants || []).find(
       (p) =>
@@ -1945,42 +1873,14 @@ export async function negotiateCampaignPrice(params: {
           p.creatorHandle.replace(/^@/, "").toLowerCase() ===
             params.creatorHandle.replace(/^@/, "").toLowerCase())
     );
-    if (!participant && campaign.participants.length > 0) {
-      participant = campaign.participants[0];
-    }
     if (!participant) {
-      const fallbackBase = Number(params.baseRate) || campaign.payAmount || 1200;
-      participant = {
-        id: targetCreatorId || 1,
-        campaignId: campaign.id,
-        creatorId: targetCreatorId || 1,
-        creatorName:
-          params.creatorName ||
-          (params.user.role === "creator" ? params.user.name : "neww"),
-        creatorHandle:
-          params.creatorHandle ||
-          (params.user.role === "creator" ? params.user.handle || "@creator" : "@ijudgesaab"),
-        creatorAvatar:
-          params.creatorAvatar ||
-          (params.user.role === "creator" ? params.user.avatar || "" : ""),
-        creatorFollowers: 68756,
-        creatorMedianViews: 30940,
-        status: "reserved",
-        payoutAmount: fallbackBase,
-        baseRate: fallbackBase,
-        reservedAt: nowIso,
-        expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
-        briefAcknowledgedVersion: 1,
-        submission: null,
-        revisions: [],
-        draftSubmission: null,
-        draftStatus: "none",
-        negotiationStatus: "initial",
-        lastOfferedPrice: fallbackBase,
-        lastOfferBy: "sponsor",
-      };
-      campaign.participants.push(participant);
+      throw new Error("Forbidden: Creator is not a participant in this campaign");
     }
+    if (params.user.role === "creator" && Number(participant.creatorId) !== Number(params.user.id)) {
+      throw new Error("Forbidden: Cannot negotiate on behalf of another creator");
+    }
+
+    const nowIso = new Date().toISOString();
 
     const maxCreatorRate =
       participant.baseRate ||

@@ -48,11 +48,23 @@ function getR2Client(): { client: S3Client; bucket: string; publicUrl: string } 
 }
 
 export async function uploadToStorage(options: UploadOptions): Promise<UploadResult> {
-  const { buffer, originalName, mimeType, folder = "uploads" } = options;
+  const { buffer, originalName, mimeType } = options;
+  const safeFolder = String(options.folder || "uploads").replace(/[^a-zA-Z0-9_-]/g, "") || "uploads";
   const uniqueId = crypto.randomBytes(8).toString("hex");
-  const ext = path.extname(originalName) || (mimeType.includes("image/jpeg") ? ".jpg" : mimeType.includes("image/png") ? ".png" : ".bin");
-  const cleanBaseName = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const key = `${folder}/${Date.now()}_${uniqueId}_${cleanBaseName}${ext}`;
+  const rawExt = path.extname(path.basename(originalName || "")).toLowerCase();
+  const safeExt = /^\.[a-z0-9]{1,8}$/.test(rawExt)
+    ? rawExt
+    : mimeType.includes("image/jpeg")
+    ? ".jpg"
+    : mimeType.includes("image/png")
+    ? ".png"
+    : ".bin";
+  const cleanBaseName = path
+    .basename(String(originalName || "file"), path.extname(String(originalName || "")))
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 64) || "file";
+  const safeFileName = `${Date.now()}_${uniqueId}_${cleanBaseName}${safeExt}`;
+  const key = `${safeFolder}/${safeFileName}`;
 
   // 1. Cloudflare Workers Native R2 Binding
   const workerBucket = activeR2BucketBinding || (globalThis as any).__CF_R2_BUCKET__;
@@ -67,7 +79,7 @@ export async function uploadToStorage(options: UploadOptions): Promise<UploadRes
       return {
         success: true,
         url: `${publicBase}/${key}`,
-        fileName: path.basename(key),
+        fileName: safeFileName,
         size: buffer.length,
         storageProvider: "r2",
       };
@@ -91,7 +103,7 @@ export async function uploadToStorage(options: UploadOptions): Promise<UploadRes
       return {
         success: true,
         url,
-        fileName: path.basename(key),
+        fileName: safeFileName,
         size: buffer.length,
         storageProvider: "r2",
       };
@@ -111,7 +123,7 @@ export async function uploadToStorage(options: UploadOptions): Promise<UploadRes
       return {
         success: true,
         url: blob.url,
-        fileName: path.basename(key),
+        fileName: safeFileName,
         size: buffer.length,
         storageProvider: "vercel_blob",
       };
@@ -127,29 +139,21 @@ export async function uploadToStorage(options: UploadOptions): Promise<UploadRes
     );
   }
 
-  // 5. Local Fallback for Development & Preview Mode
-  try {
-    const localDir = path.join(process.cwd(), "public", "uploads");
-    if (!fs.existsSync(localDir)) {
-      fs.mkdirSync(localDir, { recursive: true });
-    }
-    const localFileName = `${Date.now()}_${uniqueId}_${cleanBaseName}${ext}`;
-    const localFilePath = path.join(localDir, localFileName);
-    fs.writeFileSync(localFilePath, buffer);
-    return {
-      success: true,
-      url: `/uploads/${localFileName}`,
-      fileName: localFileName,
-      size: buffer.length,
-      storageProvider: "local",
-    };
-  } catch {
-    return {
-      success: true,
-      url: `data:${mimeType};base64,${buffer.toString("base64")}`,
-      fileName: originalName,
-      size: buffer.length,
-      storageProvider: "local",
-    };
+  // 5. Local Fallback for Development & Preview Mode (strict path confinement)
+  const localDir = path.resolve(process.cwd(), "public", "uploads");
+  if (!fs.existsSync(localDir)) {
+    fs.mkdirSync(localDir, { recursive: true });
   }
+  const localFilePath = path.resolve(localDir, safeFileName);
+  if (!localFilePath.startsWith(localDir + path.sep)) {
+    throw new Error("Unsafe upload path rejected");
+  }
+  fs.writeFileSync(localFilePath, buffer);
+  return {
+    success: true,
+    url: `/uploads/${safeFileName}`,
+    fileName: safeFileName,
+    size: buffer.length,
+    storageProvider: "local",
+  };
 }

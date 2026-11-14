@@ -57,14 +57,16 @@ export default function Contact() {
           <Card className="border-border">
             <CardHeader className="pb-2">
               <CardTitle className="text-base font-bold text-foreground">
-                Office Address
+                Registered Enterprise Details
               </CardTitle>
             </CardHeader>
             <CardContent className="text-xs sm:text-sm">
-              <p className="text-muted-foreground">
-                <strong className="text-foreground">LAKHWINDER Singh / MusicLand Studios</strong><br />
-                (Brand: Mingree)<br />
-                India
+              <p className="text-muted-foreground space-y-1 leading-relaxed">
+                <strong className="text-foreground">MINGREE</strong> (Sole Proprietorship)<br />
+                <span>Proprietor: <strong className="text-foreground">Shri Lakhwinder Singh</strong></span><br />
+                <span>Udyam Reg. No.: <strong className="text-foreground">UDYAM-PB-20-0059364</strong></span><br />
+                <span>Activity: Services (NIC 73100 – Advertising Services)</span><br />
+                <span>India</span>
               </p>
             </CardContent>
           </Card>

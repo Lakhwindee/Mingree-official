@@ -6,9 +6,9 @@ var __export = (target, all) => {
 
 // server.ts
 import express from "express";
-import path2 from "path";
+import path3 from "path";
 import fs2 from "fs";
-import crypto5 from "crypto";
+import crypto6 from "crypto";
 import nodemailer from "nodemailer";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
@@ -804,6 +804,7 @@ async function ensureDatabaseSchema(force = false) {
           ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_address text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version int NOT NULL DEFAULT 1;
 
           -- 2. Ensure creator_profiles exists with all required columns
           CREATE TABLE IF NOT EXISTS creator_profiles (
@@ -1040,15 +1041,91 @@ async function ensureDatabaseSchema(force = false) {
             UPDATE rate_cards SET creator_id = user_id WHERE creator_id IS NULL AND user_id IS NOT NULL;
             UPDATE rate_cards SET price = base_price WHERE (price IS NULL OR price = 0) AND base_price IS NOT NULL;
             UPDATE rate_cards SET base_price = price WHERE base_price IS NULL AND price IS NOT NULL;
-            DELETE FROM rate_cards a
-            USING rate_cards b
-            WHERE a.id < b.id
-              AND a.user_id IS NOT NULL
-              AND a.user_id = b.user_id
-              AND a.deliverable_type = b.deliverable_type;
           EXCEPTION WHEN OTHERS THEN
             NULL;
           END;
+
+          -- 5c. Ensure wallets, ledger_entries, wallet_transactions, payment_orders, and upi_payments tables exist
+          CREATE TABLE IF NOT EXISTS wallets (
+            user_id bigint PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            balance numeric(12,2) NOT NULL DEFAULT 0.00,
+            escrow_held numeric(12,2) NOT NULL DEFAULT 0.00,
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+          ALTER TABLE wallets ADD COLUMN IF NOT EXISTS balance numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE wallets ADD COLUMN IF NOT EXISTS escrow_held numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE wallets ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS ledger_entries (
+            id bigserial PRIMARY KEY,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            type text NOT NULL,
+            amount numeric(12,2) NOT NULL,
+            balance_after numeric(12,2) NOT NULL,
+            ref_type text,
+            ref_id text,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS ref_type text;
+          ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS ref_id text;
+          ALTER TABLE ledger_entries ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS wallet_transactions (
+            id bigserial PRIMARY KEY,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            type text NOT NULL,
+            amount numeric(12,2) NOT NULL,
+            balance_after numeric(12,2) NOT NULL,
+            escrow_after numeric(12,2) NOT NULL DEFAULT 0.00,
+            reference_type text,
+            reference_id text,
+            description text,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS escrow_after numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS reference_type text;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS reference_id text;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS description text;
+          ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS payment_orders (
+            id bigserial PRIMARY KEY,
+            order_id text NOT NULL UNIQUE,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount numeric(12,2) NOT NULL,
+            purpose text NOT NULL,
+            metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+            cashfree_payment_id text,
+            status text NOT NULL DEFAULT 'pending',
+            created_at timestamptz NOT NULL DEFAULT now(),
+            paid_at timestamptz
+          );
+
+          CREATE TABLE IF NOT EXISTS upi_payments (
+            id bigserial PRIMARY KEY,
+            utr text NOT NULL UNIQUE,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            amount numeric(12,2) NOT NULL,
+            status text NOT NULL DEFAULT 'pending',
+            created_at timestamptz NOT NULL DEFAULT now(),
+            reviewed_at timestamptz
+          );
+
+          -- 5d. Security tables for revoked session JTIs and single-use OTP/bill JTIs
+          CREATE TABLE IF NOT EXISTS revoked_tokens (
+            jti text PRIMARY KEY,
+            expires_at timestamptz NOT NULL,
+            revoked_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens (expires_at);
+
+          CREATE TABLE IF NOT EXISTS used_jti_tokens (
+            jti_key text PRIMARY KEY,
+            namespace text NOT NULL DEFAULT 'general',
+            expires_at timestamptz NOT NULL,
+            used_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX IF NOT EXISTS idx_used_jti_expires ON used_jti_tokens (expires_at);
 
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
@@ -1057,6 +1134,8 @@ async function ensureDatabaseSchema(force = false) {
           CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states (expires_at);
           CREATE INDEX IF NOT EXISTS idx_instagram_identities_user ON instagram_identities (current_user_id);
           CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_cards_user_deliverable ON rate_cards (user_id, deliverable_type);
+          CREATE INDEX IF NOT EXISTS idx_ledger_entries_user_created ON ledger_entries (user_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_created ON wallet_transactions (user_id, created_at DESC);
         END $$;
       `);
       schemaEnsured = true;
@@ -1170,7 +1249,7 @@ async function verifyDbConnection() {
 }
 
 // server.ts
-import { eq as eq7 } from "drizzle-orm";
+import { eq as eq7, and as and5 } from "drizzle-orm";
 
 // shared/tiers.ts
 var TIERS = [
@@ -1236,11 +1315,14 @@ function getR2Client() {
   return { client, bucket, publicUrl };
 }
 async function uploadToStorage(options) {
-  const { buffer, originalName, mimeType, folder = "uploads" } = options;
+  const { buffer, originalName, mimeType } = options;
+  const safeFolder = String(options.folder || "uploads").replace(/[^a-zA-Z0-9_-]/g, "") || "uploads";
   const uniqueId = crypto.randomBytes(8).toString("hex");
-  const ext = path.extname(originalName) || (mimeType.includes("image/jpeg") ? ".jpg" : mimeType.includes("image/png") ? ".png" : ".bin");
-  const cleanBaseName = path.basename(originalName, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const key = `${folder}/${Date.now()}_${uniqueId}_${cleanBaseName}${ext}`;
+  const rawExt = path.extname(path.basename(originalName || "")).toLowerCase();
+  const safeExt = /^\.[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : mimeType.includes("image/jpeg") ? ".jpg" : mimeType.includes("image/png") ? ".png" : ".bin";
+  const cleanBaseName = path.basename(String(originalName || "file"), path.extname(String(originalName || ""))).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64) || "file";
+  const safeFileName = `${Date.now()}_${uniqueId}_${cleanBaseName}${safeExt}`;
+  const key = `${safeFolder}/${safeFileName}`;
   const workerBucket = activeR2BucketBinding || globalThis.__CF_R2_BUCKET__;
   if (workerBucket && typeof workerBucket.put === "function") {
     try {
@@ -1253,7 +1335,7 @@ async function uploadToStorage(options) {
       return {
         success: true,
         url: `${publicBase}/${key}`,
-        fileName: path.basename(key),
+        fileName: safeFileName,
         size: buffer.length,
         storageProvider: "r2"
       };
@@ -1275,7 +1357,7 @@ async function uploadToStorage(options) {
       return {
         success: true,
         url,
-        fileName: path.basename(key),
+        fileName: safeFileName,
         size: buffer.length,
         storageProvider: "r2"
       };
@@ -1293,7 +1375,7 @@ async function uploadToStorage(options) {
       return {
         success: true,
         url: blob.url,
-        fileName: path.basename(key),
+        fileName: safeFileName,
         size: buffer.length,
         storageProvider: "vercel_blob"
       };
@@ -1306,30 +1388,22 @@ async function uploadToStorage(options) {
       "Persistent cloud storage is required in production. Cloudflare R2 (R2_BUCKET binding or R2 credentials: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME) must be configured. Local filesystem storage is disabled in production."
     );
   }
-  try {
-    const localDir = path.join(process.cwd(), "public", "uploads");
-    if (!fs.existsSync(localDir)) {
-      fs.mkdirSync(localDir, { recursive: true });
-    }
-    const localFileName = `${Date.now()}_${uniqueId}_${cleanBaseName}${ext}`;
-    const localFilePath = path.join(localDir, localFileName);
-    fs.writeFileSync(localFilePath, buffer);
-    return {
-      success: true,
-      url: `/uploads/${localFileName}`,
-      fileName: localFileName,
-      size: buffer.length,
-      storageProvider: "local"
-    };
-  } catch {
-    return {
-      success: true,
-      url: `data:${mimeType};base64,${buffer.toString("base64")}`,
-      fileName: originalName,
-      size: buffer.length,
-      storageProvider: "local"
-    };
+  const localDir = path.resolve(process.cwd(), "public", "uploads");
+  if (!fs.existsSync(localDir)) {
+    fs.mkdirSync(localDir, { recursive: true });
   }
+  const localFilePath = path.resolve(localDir, safeFileName);
+  if (!localFilePath.startsWith(localDir + path.sep)) {
+    throw new Error("Unsafe upload path rejected");
+  }
+  fs.writeFileSync(localFilePath, buffer);
+  return {
+    success: true,
+    url: `/uploads/${safeFileName}`,
+    fileName: safeFileName,
+    size: buffer.length,
+    storageProvider: "local"
+  };
 }
 
 // server/envValidation.ts
@@ -1435,6 +1509,543 @@ function enforceProductionEnvironment() {
     }
     console.log("================================================================================\n");
   }
+}
+
+// server/security.ts
+import crypto2 from "crypto";
+import path2 from "path";
+function escapeHtml(input) {
+  const str = String(input ?? "");
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/`/g, "&#96;");
+}
+function isSafeRelativeRedirect(rawPath, fallback = "/profile") {
+  if (typeof rawPath !== "string") return fallback;
+  const trimmed = rawPath.trim();
+  if (!trimmed || trimmed.length > 512) return fallback;
+  if (!trimmed.startsWith("/")) return fallback;
+  if (trimmed.startsWith("//") || trimmed.startsWith("/\\") || trimmed.includes("\\")) return fallback;
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) return fallback;
+  try {
+    const parsed = new URL(trimmed, "https://mingree.invalid");
+    if (parsed.origin !== "https://mingree.invalid") return fallback;
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+function isSafeAssetUrl(rawUrl, allowRasterDataUri = true) {
+  if (typeof rawUrl !== "string") return false;
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.length > 2e6) return false;
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) return false;
+  if (trimmed.startsWith("/")) {
+    if (trimmed.startsWith("//") || trimmed.includes("..")) return false;
+    return true;
+  }
+  if (allowRasterDataUri && /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "https:") return true;
+    if (process.env.NODE_ENV !== "production" && parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+function getCanonicalAppUrl(req) {
+  const configured = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.protocol === "https:" || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+        return parsed.origin;
+      }
+    } catch {
+    }
+  }
+  if (process.env.NODE_ENV !== "production" && req) {
+    const host = (req.get("host") || "").trim();
+    if (/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host)) {
+      return `${req.protocol === "https" ? "https" : "http"}://${host}`;
+    }
+  }
+  return process.env.NODE_ENV === "production" ? "https://mingree.com" : "http://localhost:3000";
+}
+var DEFAULT_ALLOWED_ORIGINS = [
+  "https://mingree.com",
+  "https://www.mingree.com",
+  "https://app.mingree.com",
+  "https://mingree.pages.dev",
+  "https://shareinair.com",
+  "https://www.shareinair.com"
+];
+function buildAllowedOriginSet() {
+  const allowed = new Set(DEFAULT_ALLOWED_ORIGINS);
+  if (process.env.NODE_ENV !== "production") {
+    allowed.add("http://localhost:3000");
+    allowed.add("http://127.0.0.1:3000");
+    allowed.add("http://localhost:5173");
+    allowed.add("http://127.0.0.1:5173");
+  }
+  const envUrls = [
+    process.env.APP_URL,
+    process.env.SHARED_APP_URL,
+    ...(process.env.ALLOWED_ORIGINS || "").split(",")
+  ];
+  for (const candidate of envUrls) {
+    const trimmed = (candidate || "").trim();
+    if (!trimmed) continue;
+    try {
+      allowed.add(new URL(trimmed).origin);
+    } catch {
+    }
+  }
+  return allowed;
+}
+function isCorsOriginAllowed(origin) {
+  if (!origin) return true;
+  try {
+    const parsedOrigin = new URL(origin).origin;
+    const allowedSet = buildAllowedOriginSet();
+    if (allowedSet.has(parsedOrigin)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+var DANGEROUS_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+function sanitizePlainObject(val, depth = 0) {
+  if (depth > 16 || val === null || val === void 0 || typeof val !== "object") {
+    return val;
+  }
+  if (Buffer.isBuffer(val) || val instanceof Date) {
+    return val;
+  }
+  if (Array.isArray(val)) {
+    for (let i = 0; i < val.length; i++) {
+      val[i] = sanitizePlainObject(val[i], depth + 1);
+    }
+    return val;
+  }
+  const obj = val;
+  for (const key of Object.keys(obj)) {
+    if (DANGEROUS_KEYS.has(key)) {
+      delete obj[key];
+    } else {
+      obj[key] = sanitizePlainObject(obj[key], depth + 1);
+    }
+  }
+  return val;
+}
+function stripDangerousKeysMiddleware(req, _res, next) {
+  if (req.body && typeof req.body === "object") {
+    sanitizePlainObject(req.body);
+  }
+  if (req.query && typeof req.query === "object") {
+    sanitizePlainObject(req.query);
+  }
+  if (req.params && typeof req.params === "object") {
+    sanitizePlainObject(req.params);
+  }
+  next();
+}
+function normalizePhoneE164(raw) {
+  const cleaned = String(raw || "").replace(/[^0-9+]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.startsWith("+")) {
+    return cleaned;
+  }
+  if (cleaned.length === 10) {
+    return `+91${cleaned}`;
+  }
+  if (cleaned.length === 12 && cleaned.startsWith("91")) {
+    return `+${cleaned}`;
+  }
+  return `+${cleaned}`;
+}
+var cachedFirebaseCerts = null;
+async function fetchFirebasePublicCerts() {
+  const testPubKey = (process.env.FIREBASE_TEST_PUBLIC_KEY || "").trim();
+  const testKid = (process.env.FIREBASE_TEST_KID || "test-kid").trim();
+  if (testPubKey && process.env.NODE_ENV !== "production") {
+    return { [testKid]: testPubKey };
+  }
+  const now = Date.now();
+  if (cachedFirebaseCerts && cachedFirebaseCerts.expiresAt > now) {
+    return cachedFirebaseCerts.certs;
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6e3);
+  try {
+    const resp = await fetch(
+      "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com",
+      { signal: controller.signal }
+    );
+    if (!resp.ok) {
+      throw new Error(`Failed to fetch Google Firebase certificates (${resp.status})`);
+    }
+    const cacheControl = resp.headers.get("cache-control") || "";
+    const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
+    const maxAgeMs = maxAgeMatch ? Math.max(60, Number(maxAgeMatch[1])) * 1e3 : 3600 * 1e3;
+    const certs = await resp.json();
+    if (!certs || typeof certs !== "object") {
+      throw new Error("Invalid certificate payload from Google");
+    }
+    if (testPubKey && process.env.NODE_ENV !== "production") {
+      certs[testKid] = testPubKey;
+    }
+    cachedFirebaseCerts = { certs, expiresAt: now + maxAgeMs };
+    return certs;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+async function verifyFirebasePhoneIdToken(idToken, expectedProjectId) {
+  if (!idToken || typeof idToken !== "string" || idToken.length > 8192) {
+    throw new Error("Missing or malformed Firebase ID token");
+  }
+  const parts = idToken.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Malformed Firebase ID token structure");
+  }
+  const [headerB64, payloadB64, signatureB64] = parts;
+  let header;
+  let payload;
+  try {
+    header = JSON.parse(Buffer.from(headerB64, "base64url").toString("utf8"));
+    payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("Invalid Firebase ID token encoding");
+  }
+  if (!header || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
+    throw new Error("Invalid Firebase ID token algorithm or key ID");
+  }
+  const certs = await fetchFirebasePublicCerts();
+  let certPem = certs[header.kid];
+  if (!certPem) {
+    cachedFirebaseCerts = null;
+    const refreshed = await fetchFirebasePublicCerts();
+    certPem = refreshed[header.kid];
+  }
+  if (!certPem) {
+    throw new Error("Firebase ID token signed by unknown key");
+  }
+  const verifier = crypto2.createVerify("RSA-SHA256");
+  verifier.update(`${headerB64}.${payloadB64}`);
+  verifier.end();
+  const signatureBuf = Buffer.from(signatureB64, "base64url");
+  const isSignatureValid = verifier.verify(certPem, signatureBuf);
+  if (!isSignatureValid) {
+    throw new Error("Firebase ID token signature verification failed");
+  }
+  const nowSec = Math.floor(Date.now() / 1e3);
+  if (typeof payload.exp !== "number" || payload.exp <= nowSec) {
+    throw new Error("Firebase ID token has expired");
+  }
+  if (typeof payload.iat !== "number" || payload.iat > nowSec + 30) {
+    throw new Error("Firebase ID token issued-at timestamp is invalid");
+  }
+  if (typeof payload.auth_time === "number" && payload.auth_time > nowSec + 30) {
+    throw new Error("Firebase ID token auth_time is in the future");
+  }
+  if (payload.aud !== expectedProjectId) {
+    throw new Error("Firebase ID token audience mismatch");
+  }
+  const expectedIssuer = `https://securetoken.google.com/${expectedProjectId}`;
+  if (payload.iss !== expectedIssuer) {
+    throw new Error("Firebase ID token issuer mismatch");
+  }
+  if (typeof payload.sub !== "string" || !payload.sub || payload.sub.length > 128) {
+    throw new Error("Firebase ID token subject is missing or invalid");
+  }
+  const phone = normalizePhoneE164(String(payload.phone_number || ""));
+  if (!phone || phone.length < 8) {
+    throw new Error("Firebase ID token does not contain a verified phone number");
+  }
+  return {
+    uid: payload.sub,
+    phoneNumber: phone,
+    iss: payload.iss,
+    aud: payload.aud,
+    exp: payload.exp,
+    iat: payload.iat
+  };
+}
+var consumedJtiMap = /* @__PURE__ */ new Map();
+var revokedSessionMap = /* @__PURE__ */ new Map();
+var userTokenVersionMap = /* @__PURE__ */ new Map();
+var otpFailedAttemptMap = /* @__PURE__ */ new Map();
+function pruneBoundedMap(map, maxSize = 5e3) {
+  const now = Date.now();
+  for (const [k, exp] of map.entries()) {
+    if (exp <= now) map.delete(k);
+  }
+  while (map.size > maxSize) {
+    const firstKey = map.keys().next().value;
+    if (!firstKey) break;
+    map.delete(firstKey);
+  }
+}
+async function consumeSingleUseJti(jti, namespace, ttlMs = 30 * 60 * 1e3) {
+  if (!jti || typeof jti !== "string") return false;
+  const scopedKey = `${namespace}:${jti}`;
+  pruneBoundedMap(consumedJtiMap);
+  if (consumedJtiMap.has(scopedKey)) {
+    return false;
+  }
+  if (isDatabaseConfigured) {
+    try {
+      const expiresAt = new Date(Date.now() + ttlMs);
+      const res = await pool.query(
+        `INSERT INTO used_jti_tokens (jti_key, namespace, expires_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (jti_key) DO NOTHING
+         RETURNING jti_key`,
+        [scopedKey, namespace, expiresAt]
+      );
+      if (res.rows.length === 0) {
+        consumedJtiMap.set(scopedKey, Date.now() + ttlMs);
+        return false;
+      }
+    } catch {
+    }
+  }
+  consumedJtiMap.set(scopedKey, Date.now() + ttlMs);
+  return true;
+}
+async function revokeSessionJti(jti, expEpochSec) {
+  if (!jti || typeof jti !== "string") return;
+  pruneBoundedMap(revokedSessionMap);
+  const expMs = expEpochSec && expEpochSec * 1e3 > Date.now() ? expEpochSec * 1e3 : Date.now() + 7 * 24 * 60 * 60 * 1e3;
+  revokedSessionMap.set(jti, expMs);
+  if (isDatabaseConfigured) {
+    try {
+      await pool.query(
+        `INSERT INTO revoked_tokens (jti, expires_at)
+         VALUES ($1, $2)
+         ON CONFLICT (jti) DO NOTHING`,
+        [jti, new Date(expMs)]
+      );
+    } catch {
+    }
+  }
+}
+async function isSessionJtiRevoked(jti) {
+  if (!jti) return false;
+  const cachedExp = revokedSessionMap.get(jti);
+  if (cachedExp && cachedExp > Date.now()) {
+    return true;
+  }
+  if (isDatabaseConfigured) {
+    try {
+      const res = await pool.query(
+        `SELECT expires_at FROM revoked_tokens WHERE jti = $1 AND expires_at > now() LIMIT 1`,
+        [jti]
+      );
+      if (res.rows.length > 0) {
+        revokedSessionMap.set(jti, new Date(res.rows[0].expires_at).getTime());
+        return true;
+      }
+    } catch {
+    }
+  }
+  return false;
+}
+async function getUserTokenVersion(userId, memoryHint) {
+  let version = Math.max(1, Number(userTokenVersionMap.get(userId) || memoryHint || 1));
+  if (isDatabaseConfigured) {
+    try {
+      const res = await pool.query(`SELECT token_version FROM users WHERE id = $1`, [userId]);
+      if (res.rows.length > 0 && res.rows[0].token_version) {
+        version = Math.max(version, Number(res.rows[0].token_version));
+        userTokenVersionMap.set(userId, version);
+      }
+    } catch {
+    }
+  }
+  return version;
+}
+async function bumpUserTokenVersion(userId) {
+  let nextVersion = (userTokenVersionMap.get(userId) || 1) + 1;
+  if (isDatabaseConfigured) {
+    try {
+      const res = await pool.query(
+        `UPDATE users SET token_version = COALESCE(token_version, 1) + 1 WHERE id = $1 RETURNING token_version`,
+        [userId]
+      );
+      if (res.rows.length > 0 && res.rows[0].token_version) {
+        nextVersion = Math.max(nextVersion, Number(res.rows[0].token_version));
+      }
+    } catch {
+    }
+  }
+  userTokenVersionMap.set(userId, nextVersion);
+  return nextVersion;
+}
+function checkOtpAttemptLock(key) {
+  const now = Date.now();
+  const entry = otpFailedAttemptMap.get(key);
+  if (!entry) return { allowed: true, retryAfterSec: 0 };
+  if (entry.lockedUntil > now) {
+    return { allowed: false, retryAfterSec: Math.ceil((entry.lockedUntil - now) / 1e3) };
+  }
+  if (now - entry.firstAttemptAt > 15 * 60 * 1e3) {
+    otpFailedAttemptMap.delete(key);
+  }
+  return { allowed: true, retryAfterSec: 0 };
+}
+function recordOtpFailedAttempt(key, maxAttempts = 5, lockDurationMs = 15 * 60 * 1e3) {
+  const now = Date.now();
+  const existing = otpFailedAttemptMap.get(key);
+  if (!existing || now - existing.firstAttemptAt > 15 * 60 * 1e3) {
+    otpFailedAttemptMap.set(key, { count: 1, lockedUntil: 0, firstAttemptAt: now });
+    return { locked: false, attemptsRemaining: maxAttempts - 1 };
+  }
+  existing.count += 1;
+  if (existing.count >= maxAttempts) {
+    existing.lockedUntil = now + lockDurationMs;
+    return { locked: true, attemptsRemaining: 0 };
+  }
+  return { locked: false, attemptsRemaining: maxAttempts - existing.count };
+}
+function clearOtpAttempts(key) {
+  otpFailedAttemptMap.delete(key);
+}
+function createSignedBillToken(payload, hmacSecret) {
+  const fullPayload = {
+    ...payload,
+    jti: crypto2.randomBytes(16).toString("hex"),
+    exp: Date.now() + 30 * 60 * 1e3
+  };
+  const data = Buffer.from(JSON.stringify(fullPayload)).toString("base64url");
+  const sig = crypto2.createHmac("sha256", hmacSecret).update(data).digest("base64url");
+  return `${data}.${sig}`;
+}
+async function verifyAndConsumeBillToken(billId, expectedSponsorId, hmacSecret) {
+  if (!billId || typeof billId !== "string" || !billId.includes(".")) {
+    throw new Error("Invalid or unsigned billing token");
+  }
+  const parts = billId.split(".");
+  if (parts.length !== 2) {
+    throw new Error("Malformed billing token");
+  }
+  const [data, sig] = parts;
+  const expectedSig = crypto2.createHmac("sha256", hmacSecret).update(data).digest("base64url");
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto2.timingSafeEqual(sigBuf, expectedBuf)) {
+    throw new Error("Invalid billing token signature");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("Corrupted billing token payload");
+  }
+  if (!parsed || typeof parsed.exp !== "number" || Date.now() > parsed.exp) {
+    throw new Error("Billing summary expired. Please generate a fresh quote.");
+  }
+  if (Number(parsed.sponsorId) !== Number(expectedSponsorId)) {
+    throw new Error("Billing summary does not belong to the authenticated brand account");
+  }
+  if (!parsed.jti || !await consumeSingleUseJti(parsed.jti, "bill_token", 35 * 60 * 1e3)) {
+    throw new Error("Billing summary has already been used");
+  }
+  return parsed;
+}
+function verifyMetaSignedRequest(signedRequest, appSecret) {
+  if (!signedRequest || !appSecret || typeof signedRequest !== "string") return null;
+  const parts = signedRequest.split(".", 2);
+  if (parts.length !== 2) return null;
+  const [encodedSig, payload] = parts;
+  try {
+    const sig = Buffer.from(encodedSig.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+    const expectedSig = crypto2.createHmac("sha256", appSecret).update(payload).digest();
+    if (sig.length !== expectedSig.length || !crypto2.timingSafeEqual(sig, expectedSig)) {
+      return null;
+    }
+    const jsonStr = Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const parsed = JSON.parse(jsonStr);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function hasPrefix(buf, bytes, offset = 0) {
+  if (buf.length < offset + bytes.length) return false;
+  for (let i = 0; i < bytes.length; i++) {
+    if (buf[offset + i] !== bytes[i]) return false;
+  }
+  return true;
+}
+function hasAscii(buf, text2, offset = 0) {
+  if (buf.length < offset + text2.length) return false;
+  return buf.subarray(offset, offset + text2.length).toString("ascii") === text2;
+}
+function validateUploadedFileMagicBytes(buffer, declaredMime, originalName) {
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    return { valid: false, detectedMime: "", safeExtension: "", safeFilename: "", reason: "Empty file buffer" };
+  }
+  const headerSlice = buffer.subarray(0, Math.min(buffer.length, 512)).toString("utf8").trimStart().toLowerCase();
+  if (headerSlice.startsWith("<!doctype") || headerSlice.startsWith("<html") || headerSlice.startsWith("<svg") || headerSlice.startsWith("<script") || headerSlice.startsWith("<?xml") || headerSlice.startsWith("<?php") || headerSlice.startsWith("#!")) {
+    return { valid: false, detectedMime: "", safeExtension: "", safeFilename: "", reason: "Executable, SVG, or HTML markup files are strictly prohibited" };
+  }
+  if (hasPrefix(buffer, [77, 90]) || hasPrefix(buffer, [127, 69, 76, 70])) {
+    return { valid: false, detectedMime: "", safeExtension: "", safeFilename: "", reason: "Executable binary files are prohibited" };
+  }
+  const baseName = path2.basename(String(originalName || "file")).replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80) || "upload";
+  const cleanStem = path2.basename(baseName, path2.extname(baseName)).replace(/[^a-zA-Z0-9_-]/g, "_") || "file";
+  if (hasPrefix(buffer, [255, 216, 255])) {
+    return { valid: true, detectedMime: "image/jpeg", safeExtension: ".jpg", safeFilename: `${cleanStem}.jpg` };
+  }
+  if (hasPrefix(buffer, [137, 80, 78, 71, 13, 10, 26, 10])) {
+    return { valid: true, detectedMime: "image/png", safeExtension: ".png", safeFilename: `${cleanStem}.png` };
+  }
+  if (hasAscii(buffer, "GIF87a") || hasAscii(buffer, "GIF89a")) {
+    return { valid: true, detectedMime: "image/gif", safeExtension: ".gif", safeFilename: `${cleanStem}.gif` };
+  }
+  if (hasAscii(buffer, "RIFF", 0) && hasAscii(buffer, "WEBP", 8)) {
+    return { valid: true, detectedMime: "image/webp", safeExtension: ".webp", safeFilename: `${cleanStem}.webp` };
+  }
+  if (hasAscii(buffer, "%PDF-", 0)) {
+    return { valid: true, detectedMime: "application/pdf", safeExtension: ".pdf", safeFilename: `${cleanStem}.pdf` };
+  }
+  if (hasAscii(buffer, "RIFF", 0) && hasAscii(buffer, "WAVE", 8)) {
+    return { valid: true, detectedMime: "audio/wav", safeExtension: ".wav", safeFilename: `${cleanStem}.wav` };
+  }
+  if (hasPrefix(buffer, [26, 69, 223, 163])) {
+    const isAudio = String(declaredMime || "").toLowerCase().startsWith("audio/");
+    return {
+      valid: true,
+      detectedMime: isAudio ? "audio/webm" : "video/webm",
+      safeExtension: ".webm",
+      safeFilename: `${cleanStem}.webm`
+    };
+  }
+  if (buffer.length >= 12 && hasAscii(buffer, "ftyp", 4)) {
+    const brand = buffer.subarray(8, 12).toString("ascii");
+    if (brand === "M4A " || String(declaredMime || "").toLowerCase().startsWith("audio/")) {
+      return { valid: true, detectedMime: "audio/mp4", safeExtension: ".m4a", safeFilename: `${cleanStem}.m4a` };
+    }
+    if (brand === "qt  ") {
+      return { valid: true, detectedMime: "video/quicktime", safeExtension: ".mov", safeFilename: `${cleanStem}.mov` };
+    }
+    return { valid: true, detectedMime: "video/mp4", safeExtension: ".mp4", safeFilename: `${cleanStem}.mp4` };
+  }
+  if (hasAscii(buffer, "ID3", 0) || buffer.length >= 2 && buffer[0] === 255 && (buffer[1] === 251 || buffer[1] === 243 || buffer[1] === 242)) {
+    return { valid: true, detectedMime: "audio/mpeg", safeExtension: ".mp3", safeFilename: `${cleanStem}.mp3` };
+  }
+  return {
+    valid: false,
+    detectedMime: "",
+    safeExtension: "",
+    safeFilename: "",
+    reason: "Unsupported or unrecognized file signature. Allowed formats: JPG, PNG, GIF, WEBP, MP4, MOV, WEBM, MP3, WAV, M4A, PDF."
+  };
 }
 
 // server/instagramSecurity.ts
@@ -1804,11 +2415,11 @@ function getAllIdentities() {
 
 // server/walletAndPayments.ts
 import { eq as eq2 } from "drizzle-orm";
-import crypto3 from "crypto";
+import crypto4 from "crypto";
 
 // server/withdrawalsAndKyc.ts
 import { eq } from "drizzle-orm";
-import crypto2 from "crypto";
+import crypto3 from "crypto";
 function throwDbUnavailable(err) {
   const error = new Error("Database unavailable");
   error.status = 503;
@@ -1818,22 +2429,22 @@ function throwDbUnavailable(err) {
 var ephemeralDevPanKey = null;
 function getEphemeralDevPanKey() {
   if (!ephemeralDevPanKey) {
-    ephemeralDevPanKey = crypto2.randomBytes(32).toString("hex");
+    ephemeralDevPanKey = crypto3.randomBytes(32).toString("hex");
   }
   return ephemeralDevPanKey;
 }
 function getPanEncryptionKey() {
   const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
   if (!raw) {
-    return crypto2.scryptSync(getEphemeralDevPanKey(), "pan_salt", 32);
+    return crypto3.scryptSync(getEphemeralDevPanKey(), "pan_salt", 32);
   }
-  return crypto2.scryptSync(raw, "pan_salt", 32);
+  return crypto3.scryptSync(raw, "pan_salt", 32);
 }
 function encryptPan(panText) {
   if (!panText) return "";
   const cleanPan = panText.trim().toUpperCase();
-  const iv = crypto2.randomBytes(12);
-  const cipher = crypto2.createCipheriv("aes-256-gcm", getPanEncryptionKey(), iv);
+  const iv = crypto3.randomBytes(12);
+  const cipher = crypto3.createCipheriv("aes-256-gcm", getPanEncryptionKey(), iv);
   let encrypted = cipher.update(cleanPan, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
@@ -1979,6 +2590,9 @@ async function getUserPayoutMethods(userId) {
 }
 async function requestWithdrawal(params) {
   const { userId, userRole, amount, payoutMethodId } = params;
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Withdrawal amount must be a positive number");
+  }
   const minWithdrawal = userRole === "creator" ? CONFIG.MIN_CREATOR_WITHDRAWAL : CONFIG.MIN_ARTIST_WITHDRAWAL;
   if (amount < minWithdrawal) {
     throw new Error(`Minimum withdrawal amount for ${userRole}s is \u20B9${minWithdrawal}`);
@@ -1989,37 +2603,60 @@ async function requestWithdrawal(params) {
       throw new Error("KYC verification required before requesting your first withdrawal. Please provide your PAN and Name as per PAN.");
     }
   }
-  const currentW = await getOrCreateWallet(userId);
-  if (currentW.balance < amount) {
-    throw new Error(`Insufficient available balance (\u20B9${currentW.balance.toFixed(2)}) for withdrawal request of \u20B9${amount.toFixed(2)}`);
+  if (!isDatabaseConfigured) {
+    throwDbUnavailable(new Error("Database not configured"));
   }
-  const newBalance = currentW.balance - amount;
-  const withdrawalId = Date.now();
+  const withdrawalId = Date.now() + Math.floor(Math.random() * 1e3);
+  let newBalance = 0;
+  const client = await pool.connect();
   try {
-    await db.transaction(async (tx) => {
-      await tx.update(wallets).set({
-        balance: newBalance.toFixed(2)
-      }).where(eq(wallets.userId, userId));
-      await tx.insert(ledgerEntries).values({
-        userId,
-        type: "withdrawal_hold",
-        amount: (-amount).toFixed(2),
-        balanceAfter: newBalance.toFixed(2),
-        refType: "withdrawal_request",
-        refId: String(withdrawalId)
-      });
-      await tx.insert(withdrawals).values({
-        id: withdrawalId,
-        userId,
-        amount: amount.toFixed(2),
-        tdsAmount: "0.00",
-        payoutMethodId,
-        status: "pending"
-      });
-    });
+    await client.query("BEGIN");
+    const pmRes = await client.query(
+      `SELECT id FROM payout_methods WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [payoutMethodId, userId]
+    );
+    if (pmRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Invalid or unauthorized payout method");
+    }
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [userId]
+    );
+    const walletRes = await client.query(
+      `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
+      [userId]
+    );
+    const currentBalance = Number(walletRes.rows[0]?.balance || 0);
+    if (currentBalance < amount) {
+      await client.query("ROLLBACK");
+      throw new Error(`Insufficient available balance (\u20B9${currentBalance.toFixed(2)}) for withdrawal request of \u20B9${amount.toFixed(2)}`);
+    }
+    newBalance = Math.round((currentBalance - amount) * 100) / 100;
+    await client.query(
+      `UPDATE wallets SET balance = $1 WHERE user_id = $2`,
+      [newBalance.toFixed(2), userId]
+    );
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+       VALUES ($1, 'withdrawal_hold', $2, $3, 'withdrawal_request', $4)`,
+      [userId, (-amount).toFixed(2), newBalance.toFixed(2), String(withdrawalId)]
+    );
+    await client.query(
+      `INSERT INTO withdrawals (id, user_id, amount, tds_amount, payout_method_id, status)
+       VALUES ($1, $2, $3, '0.00', $4, 'pending')`,
+      [withdrawalId, userId, amount.toFixed(2), payoutMethodId]
+    );
+    await client.query("COMMIT");
   } catch (err) {
-    if (err?.status === 503) throw err;
+    await client.query("ROLLBACK").catch(() => {
+    });
+    if (err?.status === 503 || err?.message?.includes("Insufficient") || err?.message?.includes("payout method")) {
+      throw err;
+    }
     throwDbUnavailable(err);
+  } finally {
+    client.release();
   }
   return {
     withdrawalId,
@@ -2031,38 +2668,60 @@ async function approveWithdrawal(withdrawalId, adminUserId, utrRef) {
   if (!utrRef || !utrRef.trim()) {
     throw new Error("Transfer reference / UTR is required to approve withdrawal");
   }
-  let record = null;
-  try {
-    const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
-    if (rows.length > 0) record = rows[0];
-  } catch (err) {
-    throwDbUnavailable(err);
+  if (!isDatabaseConfigured) {
+    throwDbUnavailable(new Error("Database not configured"));
   }
-  if (!record) throw new Error("Withdrawal request not found");
-  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
-  const amountNum = parseFloat(record.amount);
-  const targetUserId = record.userId;
+  const cleanUtr = utrRef.trim();
+  let amountNum = 0;
+  let targetUserId = 0;
+  const client = await pool.connect();
   try {
-    await db.transaction(async (tx) => {
-      await tx.update(withdrawals).set({ status: "approved", utrRef: utrRef.trim() }).where(eq(withdrawals.id, withdrawalId));
-      await tx.insert(ledgerEntries).values({
-        userId: targetUserId,
-        type: "withdrawal_completed",
-        amount: (-amountNum).toFixed(2),
-        balanceAfter: "0.00",
-        refType: "withdrawal_approved",
-        refId: String(withdrawalId)
-      });
-      await tx.insert(notifications).values({
-        userId: targetUserId,
-        title: "Withdrawal Approved! \u{1F389}",
-        message: `Your withdrawal of \u20B9${amountNum.toFixed(2)} has been transferred! Reference UTR: ${utrRef.trim()}`,
-        read: false
-      });
-    });
+    await client.query("BEGIN");
+    const wRes = await client.query(
+      `SELECT id, user_id, amount, status FROM withdrawals WHERE id = $1 FOR UPDATE`,
+      [withdrawalId]
+    );
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal request not found");
+    }
+    const record = wRes.rows[0];
+    if (record.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal is already ${record.status}`);
+    }
+    amountNum = parseFloat(record.amount);
+    targetUserId = Number(record.user_id);
+    const walletRes = await client.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [targetUserId]);
+    const currentBal = Number(walletRes.rows[0]?.balance || 0);
+    await client.query(
+      `UPDATE withdrawals SET status = 'approved', utr_ref = $1 WHERE id = $2`,
+      [cleanUtr, withdrawalId]
+    );
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+       VALUES ($1, 'withdrawal_completed', $2, $3, 'withdrawal_approved', $4)`,
+      [targetUserId, (-amountNum).toFixed(2), currentBal.toFixed(2), String(withdrawalId)]
+    );
+    await client.query(
+      `INSERT INTO notifications (user_id, title, message, read)
+       VALUES ($1, $2, $3, false)`,
+      [
+        targetUserId,
+        "Withdrawal Approved! \u{1F389}",
+        `Your withdrawal of \u20B9${amountNum.toFixed(2)} has been transferred! Reference UTR: ${cleanUtr}`
+      ]
+    );
+    await client.query("COMMIT");
   } catch (err) {
-    if (err?.status === 503) throw err;
+    await client.query("ROLLBACK").catch(() => {
+    });
+    if (err?.message?.includes("not found") || err?.message?.includes("already")) {
+      throw err;
+    }
     throwDbUnavailable(err);
+  } finally {
+    client.release();
   }
   recordSecurityEvent({
     event: "ADMIN_IDENTITY_UNLOCKED",
@@ -2076,49 +2735,77 @@ async function approveWithdrawal(withdrawalId, adminUserId, utrRef) {
     ipAddress: "127.0.0.1",
     userAgent: "Admin",
     decision: "ALLOW",
-    details: `Admin #${adminUserId} approved Withdrawal #${withdrawalId} (\u20B9${amountNum}) for User #${targetUserId}. UTR: ${utrRef.trim()}`
+    details: `Admin #${adminUserId} approved Withdrawal #${withdrawalId} (\u20B9${amountNum}) for User #${targetUserId}. UTR: ${cleanUtr}`
   });
-  return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${utrRef.trim()}` };
+  return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${cleanUtr}` };
 }
 async function rejectWithdrawal(withdrawalId, adminUserId, reason) {
   if (!reason || !reason.trim()) {
     throw new Error("Rejection reason is required");
   }
-  let record = null;
-  try {
-    const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
-    if (rows.length > 0) record = rows[0];
-  } catch (err) {
-    throwDbUnavailable(err);
+  if (!isDatabaseConfigured) {
+    throwDbUnavailable(new Error("Database not configured"));
   }
-  if (!record) throw new Error("Withdrawal request not found");
-  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
-  const amountNum = parseFloat(record.amount);
-  const targetUserId = record.userId;
-  const currentW = await getOrCreateWallet(targetUserId);
-  const refundedBalance = currentW.balance + amountNum;
+  const cleanReason = reason.trim();
+  let amountNum = 0;
+  let targetUserId = 0;
+  const client = await pool.connect();
   try {
-    await db.transaction(async (tx) => {
-      await tx.update(withdrawals).set({ status: "rejected", rejectionReason: reason.trim() }).where(eq(withdrawals.id, withdrawalId));
-      await tx.update(wallets).set({ balance: refundedBalance.toFixed(2) }).where(eq(wallets.userId, targetUserId));
-      await tx.insert(ledgerEntries).values({
-        userId: targetUserId,
-        type: "withdrawal_refund",
-        amount: amountNum.toFixed(2),
-        balanceAfter: refundedBalance.toFixed(2),
-        refType: "withdrawal_rejected",
-        refId: String(withdrawalId)
-      });
-      await tx.insert(notifications).values({
-        userId: targetUserId,
-        title: "Withdrawal Request Returned",
-        message: `Your withdrawal of \u20B9${amountNum.toFixed(2)} was returned to your balance. Reason: ${reason.trim()}`,
-        read: false
-      });
-    });
+    await client.query("BEGIN");
+    const wRes = await client.query(
+      `SELECT id, user_id, amount, status FROM withdrawals WHERE id = $1 FOR UPDATE`,
+      [withdrawalId]
+    );
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal request not found");
+    }
+    const record = wRes.rows[0];
+    if (record.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal is already ${record.status}`);
+    }
+    amountNum = parseFloat(record.amount);
+    targetUserId = Number(record.user_id);
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [targetUserId]
+    );
+    const walletRes = await client.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [targetUserId]);
+    const currentBal = Number(walletRes.rows[0]?.balance || 0);
+    const refundedBalance = Math.round((currentBal + amountNum) * 100) / 100;
+    await client.query(
+      `UPDATE withdrawals SET status = 'rejected', rejection_reason = $1 WHERE id = $2`,
+      [cleanReason, withdrawalId]
+    );
+    await client.query(
+      `UPDATE wallets SET balance = $1 WHERE user_id = $2`,
+      [refundedBalance.toFixed(2), targetUserId]
+    );
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+       VALUES ($1, 'withdrawal_refund', $2, $3, 'withdrawal_rejected', $4)`,
+      [targetUserId, amountNum.toFixed(2), refundedBalance.toFixed(2), String(withdrawalId)]
+    );
+    await client.query(
+      `INSERT INTO notifications (user_id, title, message, read)
+       VALUES ($1, $2, $3, false)`,
+      [
+        targetUserId,
+        "Withdrawal Request Returned",
+        `Your withdrawal of \u20B9${amountNum.toFixed(2)} was returned to your balance. Reason: ${cleanReason}`
+      ]
+    );
+    await client.query("COMMIT");
   } catch (err) {
-    if (err?.status === 503) throw err;
+    await client.query("ROLLBACK").catch(() => {
+    });
+    if (err?.message?.includes("not found") || err?.message?.includes("already")) {
+      throw err;
+    }
     throwDbUnavailable(err);
+  } finally {
+    client.release();
   }
   recordSecurityEvent({
     event: "ADMIN_IDENTITY_UNLOCKED",
@@ -2132,7 +2819,7 @@ async function rejectWithdrawal(withdrawalId, adminUserId, reason) {
     ipAddress: "127.0.0.1",
     userAgent: "Admin",
     decision: "ALLOW",
-    details: `Admin #${adminUserId} rejected Withdrawal #${withdrawalId} (\u20B9${amountNum}). Returned to User #${targetUserId}. Reason: ${reason.trim()}`
+    details: `Admin #${adminUserId} rejected Withdrawal #${withdrawalId} (\u20B9${amountNum}). Returned to User #${targetUserId}. Reason: ${cleanReason}`
   });
   return { success: true, message: `Withdrawal #${withdrawalId} rejected. Funds returned to user's wallet.` };
 }
@@ -2219,7 +2906,7 @@ async function getOrCreateWallet(userId) {
       escrowHeld: Number(memoryWallets[userId].escrowHeld || 0)
     };
   }
-  const initBalance = userId === 99 ? 25e4 : 0;
+  const initBalance = 0;
   memoryWallets[userId] = { userId, balance: initBalance, escrowHeld: 0 };
   return { balance: initBalance, escrowHeld: 0 };
 }
@@ -2817,11 +3504,11 @@ function verifyCashfreeSignature(rawBody, timestamp2, signature, secretKey) {
   if (!rawBody || !timestamp2 || !signature || !secretKey) return false;
   try {
     const payload = `${timestamp2}${rawBody.toString()}`;
-    const expectedSig = crypto3.createHmac("sha256", secretKey).update(payload).digest("base64");
+    const expectedSig = crypto4.createHmac("sha256", secretKey).update(payload).digest("base64");
     const sigBuf = Buffer.from(signature);
     const expBuf = Buffer.from(expectedSig);
     if (sigBuf.length !== expBuf.length) return false;
-    return crypto3.timingSafeEqual(sigBuf, expBuf);
+    return crypto4.timingSafeEqual(sigBuf, expBuf);
   } catch (err) {
     console.error("[CASHFREE WEBHOOK SIG ERROR]", err);
     return false;
@@ -2958,7 +3645,11 @@ async function adminCreditWallet(adminUserId, targetUserId, amount, reason) {
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {
     });
-    throwDbUnavailable2(err);
+    if (err?.code === "ECONNREFUSED" || err?.code === "ETIMEDOUT") {
+      throwDbUnavailable2(err);
+    }
+    console.error("[ADMIN CREDIT WALLET PG ERROR]", err?.message || err);
+    throw new Error(err?.message || "Failed to credit wallet in database");
   } finally {
     client.release();
   }
@@ -2983,25 +3674,25 @@ async function adminCreditWallet(adminUserId, targetUserId, amount, reason) {
 import { eq as eq3, sql as sql2 } from "drizzle-orm";
 
 // server/instagramMetrics.ts
-import crypto4 from "crypto";
+import crypto5 from "crypto";
 var ephemeralDevTokenKey = null;
 function getEphemeralDevTokenKey() {
   if (!ephemeralDevTokenKey) {
-    ephemeralDevTokenKey = crypto4.randomBytes(32).toString("hex");
+    ephemeralDevTokenKey = crypto5.randomBytes(32).toString("hex");
   }
   return ephemeralDevTokenKey;
 }
 function getTokenEncryptionKey() {
   const raw = (process.env.TOKEN_ENC_KEY || process.env.JWT_SECRET || "").trim();
   if (!raw) {
-    return crypto4.scryptSync(getEphemeralDevTokenKey(), "mingree_salt_v1", 32);
+    return crypto5.scryptSync(getEphemeralDevTokenKey(), "mingree_salt_v1", 32);
   }
-  return crypto4.scryptSync(raw, "mingree_salt_v1", 32);
+  return crypto5.scryptSync(raw, "mingree_salt_v1", 32);
 }
 function encryptAccessToken(plainText) {
   if (!plainText) return "";
-  const iv = crypto4.randomBytes(12);
-  const cipher = crypto4.createCipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
+  const iv = crypto5.randomBytes(12);
+  const cipher = crypto5.createCipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
   let encrypted = cipher.update(plainText, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
@@ -3015,7 +3706,7 @@ function decryptAccessToken(encryptedText) {
   try {
     const iv = Buffer.from(ivHex, "hex");
     const authTag = Buffer.from(authTagHex, "hex");
-    const decipher = crypto4.createDecipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
+    const decipher = crypto5.createDecipheriv("aes-256-gcm", getTokenEncryptionKey(), iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(cipherHex, "hex", "utf8");
     decrypted += decipher.final("utf8");
@@ -4000,22 +4691,29 @@ async function getDisputesAdmin(params) {
   const limit = Math.max(1, Math.min(100, Number(params.limit || 15)));
   const offset = (page - 1) * limit;
   try {
-    let whereClause = "1=1";
-    if (params.status && params.status !== "all") {
-      whereClause = `disp.status = '${params.status}'`;
-    }
-    const countRes = await pool.query(`SELECT COUNT(*) FROM disputes disp WHERE ${whereClause}`);
+    const hasStatusFilter = Boolean(params.status && params.status !== "all");
+    const countRes = hasStatusFilter ? await pool.query(`SELECT COUNT(*) FROM disputes disp WHERE disp.status = $1`, [params.status]) : await pool.query(`SELECT COUNT(*) FROM disputes disp`);
     const total = Number(countRes.rows[0]?.count || 0);
-    const itemsRes = await pool.query(
+    const itemsRes = hasStatusFilter ? await pool.query(
       `SELECT disp.*, d.price, d.post_url, u_r.name as raised_by_name, u_a.name as artist_name, u_c.name as creator_name
-       FROM disputes disp
-       JOIN deals d ON d.id = disp.deal_id
-       JOIN users u_r ON u_r.id = disp.raised_by_user_id
-       JOIN users u_a ON u_a.id = d.artist_id
-       JOIN users u_c ON u_c.id = d.creator_id
-       WHERE ${whereClause}
-       ORDER BY disp.id DESC
-       LIMIT $1 OFFSET $2`,
+           FROM disputes disp
+           JOIN deals d ON d.id = disp.deal_id
+           JOIN users u_r ON u_r.id = disp.raised_by_user_id
+           JOIN users u_a ON u_a.id = d.artist_id
+           JOIN users u_c ON u_c.id = d.creator_id
+           WHERE disp.status = $1
+           ORDER BY disp.id DESC
+           LIMIT $2 OFFSET $3`,
+      [params.status, limit, offset]
+    ) : await pool.query(
+      `SELECT disp.*, d.price, d.post_url, u_r.name as raised_by_name, u_a.name as artist_name, u_c.name as creator_name
+           FROM disputes disp
+           JOIN deals d ON d.id = disp.deal_id
+           JOIN users u_r ON u_r.id = disp.raised_by_user_id
+           JOIN users u_a ON u_a.id = d.artist_id
+           JOIN users u_c ON u_c.id = d.creator_id
+           ORDER BY disp.id DESC
+           LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     const disputeList = itemsRes.rows.map((disp) => ({
@@ -4119,24 +4817,33 @@ async function getWithdrawalsAdmin(params) {
   const limit = Math.max(1, Math.min(100, Number(params.limit || 15)));
   const offset = (page - 1) * limit;
   try {
-    let whereClause = "1=1";
-    if (params.status && params.status !== "all") {
-      whereClause = `w.status = '${params.status}'`;
-    }
-    const countRes = await pool.query(`SELECT COUNT(*) FROM withdrawals w WHERE ${whereClause}`);
+    const hasStatusFilter = Boolean(params.status && params.status !== "all");
+    const countRes = hasStatusFilter ? await pool.query(`SELECT COUNT(*) FROM withdrawals w WHERE w.status = $1`, [params.status]) : await pool.query(`SELECT COUNT(*) FROM withdrawals w`);
     const total = Number(countRes.rows[0]?.count || 0);
-    const itemsRes = await pool.query(
+    const itemsRes = hasStatusFilter ? await pool.query(
       `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
-              pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
-              cp.status as creator_status
-       FROM withdrawals w
-       LEFT JOIN users u ON u.id = w.user_id
-       LEFT JOIN payout_methods pm ON pm.id = w.payout_method_id
-       LEFT JOIN kyc k ON k.user_id = w.user_id
-       LEFT JOIN creator_profiles cp ON cp.user_id = w.user_id
-       WHERE ${whereClause}
-       ORDER BY w.id DESC
-       LIMIT $1 OFFSET $2`,
+                  pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
+                  cp.status as creator_status
+           FROM withdrawals w
+           LEFT JOIN users u ON u.id = w.user_id
+           LEFT JOIN payout_methods pm ON pm.id = w.payout_method_id
+           LEFT JOIN kyc k ON k.user_id = w.user_id
+           LEFT JOIN creator_profiles cp ON cp.user_id = w.user_id
+           WHERE w.status = $1
+           ORDER BY w.id DESC
+           LIMIT $2 OFFSET $3`,
+      [params.status, limit, offset]
+    ) : await pool.query(
+      `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
+                  pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
+                  cp.status as creator_status
+           FROM withdrawals w
+           LEFT JOIN users u ON u.id = w.user_id
+           LEFT JOIN payout_methods pm ON pm.id = w.payout_method_id
+           LEFT JOIN kyc k ON k.user_id = w.user_id
+           LEFT JOIN creator_profiles cp ON cp.user_id = w.user_id
+           ORDER BY w.id DESC
+           LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
     const withdrawalList = itemsRes.rows.map((w) => {
@@ -4151,7 +4858,6 @@ async function getWithdrawalsAdmin(params) {
         tdsAmount: parseFloat(w.tds_amount || "0"),
         netAmount: parseFloat((parseFloat(w.amount || "0") - parseFloat(w.tds_amount || "0")).toFixed(2)),
         status: w.status,
-        // pending | paid | failed | reversed
         maskedPayoutMethod: `${w.payout_type || "UPI/Bank"} (${maskedPayout})`,
         kycStatus: w.kyc_status || "verified",
         creatorStrikes: w.creator_status === "blocked" ? 1 : 0,
@@ -4170,32 +4876,46 @@ async function approveWithdrawalAdmin(adminUserId, withdrawalId, utrRef, ipAddre
   if (!utrRef || !utrRef.trim()) {
     throw new Error("UTR reference transfer number is strictly required to approve a withdrawal.");
   }
-  const wRes = await pool.query(`SELECT * FROM withdrawals WHERE id = $1`, [withdrawalId]);
-  if (wRes.rows.length === 0) throw new Error("Withdrawal record not found");
-  const withdrawal = wRes.rows[0];
-  if (withdrawal.status !== "pending") {
-    throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
-  }
+  const cleanUtr = utrRef.trim();
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query("BEGIN");
+    const wRes = await client.query(`SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE`, [withdrawalId]);
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal record not found");
+    }
+    const withdrawal = wRes.rows[0];
+    if (withdrawal.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
+    }
+    await client.query(
       `UPDATE withdrawals SET status = 'paid', utr_ref = $1 WHERE id = $2`,
-      [utrRef.trim(), withdrawalId]
+      [cleanUtr, withdrawalId]
     );
-    const userWallet = await getOrCreateWallet(withdrawal.user_id);
-    await pool.query(
+    const wRow = await client.query(`SELECT balance, escrow_held FROM wallets WHERE user_id = $1 FOR UPDATE`, [withdrawal.user_id]);
+    const bal = Number(wRow.rows[0]?.balance || 0);
+    const esc = Number(wRow.rows[0]?.escrow_held || 0);
+    await client.query(
       `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
        VALUES ($1, 'withdrawal_paid', $2, $3, $4, 'withdrawal', $5, $6)`,
       [
         withdrawal.user_id,
         (-parseFloat(withdrawal.amount)).toFixed(2),
-        userWallet.balance.toFixed(2),
-        userWallet.escrowHeld.toFixed(2),
+        bal.toFixed(2),
+        esc.toFixed(2),
         String(withdrawalId),
-        `Withdrawal paid via UTR ${utrRef.trim()}`
+        `Withdrawal paid via UTR ${cleanUtr}`
       ]
     );
+    await client.query("COMMIT");
   } catch (err) {
-    console.error("[APPROVE WITHDRAWAL ERROR]", err);
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw err;
+  } finally {
+    client.release();
   }
   await recordAdminAuditLog(
     adminUserId,
@@ -4203,45 +4923,64 @@ async function approveWithdrawalAdmin(adminUserId, withdrawalId, utrRef, ipAddre
     "withdrawal",
     withdrawalId,
     { status: "pending" },
-    { status: "paid", utrRef: utrRef.trim() },
-    `Approved payout with UTR ${utrRef.trim()}`,
+    { status: "paid", utrRef: cleanUtr },
+    `Approved payout with UTR ${cleanUtr}`,
     ipAddress
   );
-  return { success: true, withdrawalId, utrRef: utrRef.trim(), message: `Withdrawal #${withdrawalId} approved and paid.` };
+  return { success: true, withdrawalId, utrRef: cleanUtr, message: `Withdrawal #${withdrawalId} approved and paid.` };
 }
 async function rejectWithdrawalAdmin(adminUserId, withdrawalId, reason, ipAddress) {
   if (!reason || !reason.trim()) {
     throw new Error("A typed reason is strictly required to reject a withdrawal.");
   }
-  const wRes = await pool.query(`SELECT * FROM withdrawals WHERE id = $1`, [withdrawalId]);
-  if (wRes.rows.length === 0) throw new Error("Withdrawal record not found");
-  const withdrawal = wRes.rows[0];
-  if (withdrawal.status !== "pending") {
-    throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
-  }
-  const amountToReturn = parseFloat(withdrawal.amount);
+  const cleanReason = reason.trim();
+  let amountToReturn = 0;
+  const client = await pool.connect();
   try {
-    await pool.query(
-      `UPDATE withdrawals SET status = 'rejected', rejection_reason = $1 WHERE id = $2`,
-      [reason.trim(), withdrawalId]
+    await client.query("BEGIN");
+    const wRes = await client.query(`SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE`, [withdrawalId]);
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal record not found");
+    }
+    const withdrawal = wRes.rows[0];
+    if (withdrawal.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
+    }
+    amountToReturn = parseFloat(withdrawal.amount);
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [withdrawal.user_id]
     );
-    const userWallet = await getOrCreateWallet(withdrawal.user_id);
-    const newBalance = userWallet.balance + amountToReturn;
-    await pool.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance.toFixed(2), withdrawal.user_id]);
-    await pool.query(
+    const wRow = await client.query(`SELECT balance, escrow_held FROM wallets WHERE user_id = $1 FOR UPDATE`, [withdrawal.user_id]);
+    const currentBal = Number(wRow.rows[0]?.balance || 0);
+    const currentEsc = Number(wRow.rows[0]?.escrow_held || 0);
+    const newBalance = Math.round((currentBal + amountToReturn) * 100) / 100;
+    await client.query(
+      `UPDATE withdrawals SET status = 'rejected', rejection_reason = $1 WHERE id = $2`,
+      [cleanReason, withdrawalId]
+    );
+    await client.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance.toFixed(2), withdrawal.user_id]);
+    await client.query(
       `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
        VALUES ($1, 'withdrawal_refund', $2, $3, $4, 'withdrawal', $5, $6)`,
       [
         withdrawal.user_id,
         amountToReturn.toFixed(2),
         newBalance.toFixed(2),
-        userWallet.escrowHeld.toFixed(2),
+        currentEsc.toFixed(2),
         String(withdrawalId),
-        `Withdrawal rejected refund: ${reason.trim()}`
+        `Withdrawal rejected refund: ${cleanReason}`
       ]
     );
+    await client.query("COMMIT");
   } catch (err) {
-    console.error("[REJECT WITHDRAWAL ERROR]", err);
+    await client.query("ROLLBACK").catch(() => {
+    });
+    throw err;
+  } finally {
+    client.release();
   }
   await recordAdminAuditLog(
     adminUserId,
@@ -4249,8 +4988,8 @@ async function rejectWithdrawalAdmin(adminUserId, withdrawalId, reason, ipAddres
     "withdrawal",
     withdrawalId,
     { status: "pending" },
-    { status: "rejected", reason: reason.trim() },
-    reason.trim(),
+    { status: "rejected", reason: cleanReason },
+    cleanReason,
     ipAddress
   );
   return { success: true, withdrawalId, message: `Withdrawal #${withdrawalId} rejected and \u20B9${amountToReturn.toFixed(2)} refunded to creator.` };
@@ -5266,6 +6005,11 @@ async function respondToDirectOffer(params) {
     offer = memoryOffers.get(offerId) || null;
   }
   if (!offer) throw new Error("Offer not found");
+  if (Number(offer.creatorId) !== Number(params.creatorId)) {
+    const err = new Error("Forbidden: You are not the invited creator for this direct offer");
+    err.status = 403;
+    throw err;
+  }
   if (action === "decline") {
     offer.status = "declined";
     try {
@@ -5554,6 +6298,11 @@ async function raiseDispute(params) {
     throwDbUnavailable3(err);
   }
   if (!deal) throw new Error("Deal not found");
+  if (Number(deal.artistId) !== Number(raisedByUserId) && Number(deal.creatorId) !== Number(raisedByUserId)) {
+    const err = new Error("Forbidden: Only the campaign sponsor or assigned creator can dispute this deal");
+    err.status = 403;
+    throw err;
+  }
   if (deal.status === "released" || deal.status === "refunded") {
     throw new Error("Cannot open dispute on a completed or fully refunded deal.");
   }
@@ -5798,7 +6547,7 @@ function generateTaxInvoiceHtml(data) {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Tax Invoice - ${data.invoiceNumber}</title>
+  <title>Tax Invoice - ${escapeHtml(data.invoiceNumber)}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 30px; color: #1e293b; background-color: #f8fafc; }
     .invoice-card { max-width: 750px; margin: 0 auto; background: #ffffff; padding: 40px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
@@ -5821,30 +6570,30 @@ function generateTaxInvoiceHtml(data) {
     <div class="header">
       <div>
         <h1 class="brand-title">Mingree</h1>
-        <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b;">Creator & Sponsor Platform</p>
+        <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b;">Creator &amp; Sponsor Platform</p>
       </div>
       <div>
         <h2 class="invoice-title">Tax Invoice</h2>
-        <p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;"># ${data.invoiceNumber}</p>
-        <p style="margin: 2px 0 0 0; font-size: 13px; color: #64748b;">Date: ${data.invoiceDate}</p>
+        <p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;"># ${escapeHtml(data.invoiceNumber)}</p>
+        <p style="margin: 2px 0 0 0; font-size: 13px; color: #64748b;">Date: ${escapeHtml(data.invoiceDate)}</p>
       </div>
     </div>
 
     <div class="grid">
       <div class="info-block">
         <div class="info-title">Billed By:</div>
-        <strong>Mingree Technologies Pvt Ltd</strong><br>
+        <strong>MINGREE</strong> (Proprietary Enterprise)<br>
         GSTIN: 27AABCM1234F1Z1<br>
         PAN: AABCM1234F<br>
-        Mumbai, Maharashtra, India
+        India
       </div>
       <div class="info-block">
         <div class="info-title">Billed To:</div>
-        <strong>${data.customerName}</strong><br>
-        ${data.customerEmail}<br>
-        ${data.customerGstin ? `GSTIN: ${data.customerGstin}<br>` : ""}
-        ${data.customerPan ? `PAN: ${data.customerPan}<br>` : ""}
-        ${data.billingAddress || "India"}
+        <strong>${escapeHtml(data.customerName)}</strong><br>
+        ${escapeHtml(data.customerEmail)}<br>
+        ${data.customerGstin ? `GSTIN: ${escapeHtml(data.customerGstin)}<br>` : ""}
+        ${data.customerPan ? `PAN: ${escapeHtml(data.customerPan)}<br>` : ""}
+        ${escapeHtml(data.billingAddress || "India")}
       </div>
     </div>
 
@@ -5861,7 +6610,7 @@ function generateTaxInvoiceHtml(data) {
       </thead>
       <tbody>
         <tr>
-          <td>${data.description}</td>
+          <td>${escapeHtml(data.description)}</td>
           <td class="text-right">${data.baseAmount.toFixed(2)}</td>
           <td class="text-right">${data.platformFee.toFixed(2)}</td>
           <td class="text-right">${cgst}</td>
@@ -5877,7 +6626,7 @@ function generateTaxInvoiceHtml(data) {
 
     <div class="footer">
       <p>This is a computer-generated tax invoice and requires no physical signature.</p>
-      <p>&copy; ${(/* @__PURE__ */ new Date()).getFullYear()} Mingree Platform. Statutory GST Compliance ID: MINGREE-INV-${Date.now()}</p>
+      <p>&copy; ${(/* @__PURE__ */ new Date()).getFullYear()} MINGREE. Statutory GST Compliance ID: MINGREE-INV-${Date.now()}</p>
     </div>
   </div>
 </body>
@@ -6296,7 +7045,9 @@ async function saveSingleWorkspace(workspace) {
 }
 function canUserAccessWorkspace(user, campaign) {
   if (!user || !campaign) return false;
-  return true;
+  if (user.role === "admin") return true;
+  if (Number(campaign.sponsorId) === Number(user.id)) return true;
+  return (campaign.participants || []).some((p) => Number(p.creatorId) === Number(user.id));
 }
 function getMarketplaceCampaigns(filters) {
   const all = loadAllWorkspaces();
@@ -6385,7 +7136,7 @@ function getMarketplaceCampaigns(filters) {
   });
 }
 function getBrandCampaignCards(sponsorId) {
-  const all = loadAllWorkspaces();
+  const all = loadAllWorkspaces().filter((c) => Number(c.sponsorId) === Number(sponsorId));
   const sorted = [...all].sort((a, b) => {
     const timeA = new Date(a.createdAt || 0).getTime();
     const timeB = new Date(b.createdAt || 0).getTime();
@@ -6439,7 +7190,7 @@ function getCreatorCampaignsSummary(creatorId, creatorHandle) {
   const results = [];
   const normalizedHandle = creatorHandle ? `@${String(creatorHandle).replace(/^@/, "").toLowerCase()}` : null;
   for (const c of all) {
-    let participant = (c.participants || []).find((p) => {
+    const participant = (c.participants || []).find((p) => {
       if (Number(p.creatorId) === Number(creatorId) || Number(p.id) === Number(creatorId)) return true;
       if (normalizedHandle && p.creatorHandle) {
         const pHandle = `@${String(p.creatorHandle).replace(/^@/, "").toLowerCase()}`;
@@ -6447,30 +7198,6 @@ function getCreatorCampaignsSummary(creatorId, creatorHandle) {
       }
       return false;
     });
-    if (!participant && Array.isArray(c.participants) && c.participants.length === 1) {
-      participant = c.participants[0];
-    }
-    if (!participant && (c.status === "filling_slots" || c.status === "published" || c.status === "in_progress")) {
-      participant = {
-        id: creatorId,
-        campaignId: c.id,
-        creatorId,
-        creatorName: creatorHandle || `Creator #${creatorId}`,
-        creatorHandle: creatorHandle ? `@${String(creatorHandle).replace(/^@/, "")}` : `@creator${creatorId}`,
-        creatorAvatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
-        creatorFollowers: 1e4,
-        creatorMedianViews: 4500,
-        status: "pending",
-        payoutAmount: c.payAmount || 1200,
-        reservedAt: c.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
-        expiresAt: new Date(Date.now() + 14 * 864e5).toISOString(),
-        briefAcknowledgedVersion: 1,
-        submission: null,
-        revisions: [],
-        draftSubmission: null,
-        draftStatus: "none"
-      };
-    }
     if (participant) {
       const latestBriefVersion = c.briefVersions && c.briefVersions.length > 0 ? c.briefVersions[c.briefVersions.length - 1].version : 1;
       const needsBriefAcknowledgement = (participant.briefAcknowledgedVersion || 1) < latestBriefVersion;
@@ -7254,90 +7981,26 @@ function getWorkspaceMessages(params) {
 async function negotiateCampaignPrice(params) {
   return acquireLock(params.campaignId || 1, async () => {
     await ensureWorkspacesLoaded(true);
-    const all = loadAllWorkspaces();
-    const targetCreatorId = params.user.role === "creator" ? Number(params.user.id) : Number(params.creatorId || 1);
-    let campaign = getWorkspaceById(params.campaignId) || all.find((w) => Number(w.sponsorId) === Number(params.user.id)) || all.find(
-      (w) => (w.participants || []).some(
-        (p) => Number(p.creatorId) === targetCreatorId || Number(p.id) === targetCreatorId
-      )
-    ) || all[0] || null;
-    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    const campaign = getWorkspaceById(params.campaignId);
     if (!campaign) {
-      const initialRate = Number(params.baseRate) || 1200;
-      campaign = {
-        id: Number(params.campaignId) || 1,
-        sponsorId: params.user.role === "sponsor" ? Number(params.user.id) : 1,
-        title: "Instagram Reels Promotion Campaign",
-        brand: params.brandName || (params.user.role === "sponsor" ? params.user.name : "Brand Partner"),
-        brandLogo: params.user.avatar || "",
-        description: "Promote brand audio / product on Instagram Reels.",
-        genre: "Music & Lifestyle",
-        language: "Hindi & English",
-        contentTypes: ["Reel"],
-        promotionStyle: "Hook Step / Creative Reel",
-        audioUrl: "",
-        referenceVideoUrl: "",
-        productAssets: [],
-        payAmount: initialRate,
-        totalBudget: Math.round(initialRate * 1.075),
-        escrowHeld: Math.round(initialRate * 1.075),
-        committedPayouts: initialRate,
-        releasedPayouts: 0,
-        totalSlots: 1,
-        reservedSlots: 1,
-        remainingSlots: 0,
-        bookingModel: "instant",
-        minFollowers: 1e3,
-        minMedianViews: 500,
-        targetCountries: ["India"],
-        targetCities: ["All"],
-        requiredCaptionNote: "",
-        requiredTags: ["#Mingree"],
-        requiredMentions: [],
-        disclosureInstructions: "Include #ad #collab in caption",
-        minDurationSecs: 15,
-        deadline: new Date(Date.now() + 7 * 864e5).toISOString().split("T")[0],
-        status: "in_progress",
-        createdAt: nowIso,
-        updatedAt: nowIso,
-        briefVersions: [],
-        participants: [],
-        messages: []
-      };
+      throw new Error("Campaign workspace not found");
     }
+    const isAdmin = params.user.role === "admin";
+    const isSponsorOwner = Number(campaign.sponsorId) === Number(params.user.id);
+    if (!isAdmin && params.user.role === "sponsor" && !isSponsorOwner) {
+      throw new Error("Forbidden: You are not the owner of this campaign");
+    }
+    const targetCreatorId = params.user.role === "creator" ? Number(params.user.id) : Number(params.creatorId || 0);
     let participant = (campaign.participants || []).find(
       (p) => Number(p.creatorId) === targetCreatorId || Number(p.id) === targetCreatorId || params.creatorHandle && p.creatorHandle && p.creatorHandle.replace(/^@/, "").toLowerCase() === params.creatorHandle.replace(/^@/, "").toLowerCase()
     );
-    if (!participant && campaign.participants.length > 0) {
-      participant = campaign.participants[0];
-    }
     if (!participant) {
-      const fallbackBase = Number(params.baseRate) || campaign.payAmount || 1200;
-      participant = {
-        id: targetCreatorId || 1,
-        campaignId: campaign.id,
-        creatorId: targetCreatorId || 1,
-        creatorName: params.creatorName || (params.user.role === "creator" ? params.user.name : "neww"),
-        creatorHandle: params.creatorHandle || (params.user.role === "creator" ? params.user.handle || "@creator" : "@ijudgesaab"),
-        creatorAvatar: params.creatorAvatar || (params.user.role === "creator" ? params.user.avatar || "" : ""),
-        creatorFollowers: 68756,
-        creatorMedianViews: 30940,
-        status: "reserved",
-        payoutAmount: fallbackBase,
-        baseRate: fallbackBase,
-        reservedAt: nowIso,
-        expiresAt: new Date(Date.now() + 14 * 864e5).toISOString(),
-        briefAcknowledgedVersion: 1,
-        submission: null,
-        revisions: [],
-        draftSubmission: null,
-        draftStatus: "none",
-        negotiationStatus: "initial",
-        lastOfferedPrice: fallbackBase,
-        lastOfferBy: "sponsor"
-      };
-      campaign.participants.push(participant);
+      throw new Error("Forbidden: Creator is not a participant in this campaign");
     }
+    if (params.user.role === "creator" && Number(participant.creatorId) !== Number(params.user.id)) {
+      throw new Error("Forbidden: Cannot negotiate on behalf of another creator");
+    }
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     const maxCreatorRate = participant.baseRate || Number(params.baseRate) || (campaign.totalBudget && campaign.totalBudget > 0 ? Math.round(campaign.totalBudget / 1.075 / Math.max(1, campaign.participants.length)) : campaign.payAmount) || 1200;
     participant.baseRate = maxCreatorRate;
     const requestedAmount = Math.round(
@@ -7501,24 +8164,24 @@ app.use(
     contentSecurityPolicy: false,
     frameguard: false,
     crossOriginOpenerPolicy: false,
-    crossOriginResourcePolicy: false
+    crossOriginResourcePolicy: false,
+    xContentTypeOptions: true,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    hsts: process.env.NODE_ENV === "production" ? { maxAge: 31536e3, includeSubDomains: true } : false
   })
 );
-var allowedOrigins = [
-  process.env.APP_URL,
-  "http://localhost:3000",
-  "http://127.0.0.1:3000"
-].filter(Boolean);
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.some((o) => o && origin.startsWith(o)) || process.env.NODE_ENV !== "production") {
+      if (!origin || isCorsOriginAllowed(origin)) {
         callback(null, true);
       } else {
-        callback(null, true);
+        callback(null, false);
       }
     },
-    credentials: true
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
   })
 );
 var globalRateLimiter = rateLimit({
@@ -7566,7 +8229,14 @@ app.use(
     }
   })
 );
-app.use(express.urlencoded({ extended: true, limit: "100kb" }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: "100kb",
+  verify: (req, _res, buf) => {
+    if (!req.rawBody) req.rawBody = buf;
+  }
+}));
+app.use(stripDangerousKeysMiddleware);
 app.use((req, res, next) => {
   const matchedPath = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"];
   const invokePath = req.headers["x-invoke-path"] || req.headers["x-forwarded-uri"];
@@ -7601,24 +8271,35 @@ app.get(["/api/health", "/api/system/db-sync"], async (req, res) => {
     res.status(200).json({
       status: "ok",
       database: "warning",
-      schemaError: err?.message,
+      ...process.env.NODE_ENV !== "production" ? { schemaError: err?.message } : {},
       timestamp: (/* @__PURE__ */ new Date()).toISOString()
     });
   }
 });
+var uploadRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1e3,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many file uploads. Please try again in 15 minutes." }
+});
 var upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { fileSize: 25 * 1024 * 1024 }
 });
-app.post("/api/upload", upload.single("file"), async (req, res) => {
+app.post("/api/upload", requireAuth, uploadRateLimiter, upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
+  }
+  const validation = validateUploadedFileMagicBytes(req.file.buffer, req.file.mimetype, req.file.originalname);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.reason || "Invalid or unsafe file content" });
   }
   try {
     const result = await uploadToStorage({
       buffer: req.file.buffer,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
+      originalName: validation.safeFilename,
+      mimeType: validation.detectedMime,
       folder: "uploads"
     });
     return res.json({
@@ -7630,11 +8311,19 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({
-      error: err?.message || "File upload failed"
+      error: process.env.NODE_ENV === "production" ? "File upload failed" : err?.message || "File upload failed"
     });
   }
 });
-app.use("/uploads", express.static(path2.join(process.cwd(), "public", "uploads")));
+app.use(
+  "/uploads",
+  express.static(path3.join(process.cwd(), "public", "uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", "inline");
+    }
+  })
+);
 app.get("/api/creators/:id/avatar", (req, res) => {
   const userId = Number(req.params.id);
   const user = registeredUsers.find((u) => u.id === userId);
@@ -7643,12 +8332,20 @@ app.get("/api/creators/:id/avatar", (req, res) => {
     return res.status(404).json({ error: "Avatar not found" });
   }
   if (avatar.startsWith("/uploads/")) {
-    const filePath = path2.join(process.cwd(), "public", avatar);
+    const uploadsRoot = path3.resolve(process.cwd(), "public", "uploads");
+    const filePath = path3.resolve(process.cwd(), "public", avatar.replace(/^\/+/, ""));
+    if (!filePath.startsWith(uploadsRoot + path3.sep)) {
+      return res.status(403).json({ error: "Invalid avatar path" });
+    }
     if (fs2.existsSync(filePath)) {
-      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "public, max-age=86400");
       return res.sendFile(filePath);
     }
+    return res.status(404).json({ error: "Avatar file not found" });
+  }
+  if (!isSafeAssetUrl(avatar, false)) {
+    return res.status(404).json({ error: "Avatar not available" });
   }
   return res.redirect(avatar);
 });
@@ -7754,7 +8451,7 @@ function deleteOtpRecord(identifier) {
 }
 var verifiedSignupEmails = /* @__PURE__ */ new Set();
 function generateOtp() {
-  return crypto5.randomInt(1e5, 1e6).toString();
+  return crypto6.randomInt(1e5, 1e6).toString();
 }
 async function sendEmailOtp(toEmail, otp, userName) {
   const creds = getEmailCredentials();
@@ -7782,10 +8479,10 @@ async function sendEmailOtp(toEmail, otp, userName) {
           <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator & Sponsor Collaboration Platform</p>
         </div>
         <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
-          <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${userName || "there"}</strong>,</p>
+          <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${escapeHtml(userName || "there")}</strong>,</p>
           <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">Use the 6-digit verification code below to complete your email verification on Mingree:</p>
           <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${otp}</span>
+            <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${escapeHtml(otp)}</span>
           </div>
           <p style="color: #64748b; font-size: 13px; margin: 16px 0 0 0; text-align: center;">\u23F1\uFE0F This OTP is valid for <strong>10 minutes</strong>. Please do not share it with anyone.</p>
         </div>
@@ -7809,60 +8506,81 @@ async function sendEmailOtp(toEmail, otp, userName) {
 app.get("/api/auth/email-status", (req, res) => {
   const creds = getEmailCredentials();
   res.json({
-    configured: Boolean(creds),
-    user: creds ? creds.user : null
+    configured: Boolean(creds)
   });
 });
 var ephemeralDevSigningSecret = null;
 function getEphemeralDevSigningSecret() {
   if (!ephemeralDevSigningSecret) {
-    ephemeralDevSigningSecret = crypto5.randomBytes(32).toString("hex");
+    ephemeralDevSigningSecret = crypto6.randomBytes(32).toString("hex");
   }
   return ephemeralDevSigningSecret;
 }
 function getOtpSigningSecret() {
   const secret = (process.env.OTP_SIGNING_SECRET || process.env.JWT_SECRET || "").trim();
   if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("FATAL: OTP_SIGNING_SECRET or JWT_SECRET must be configured in production.");
+    }
     return getEphemeralDevSigningSecret();
   }
   return secret;
 }
 function createSignedOtpToken(email, otpHash, expiresAt) {
-  const payload = Buffer.from(JSON.stringify({ email, otpHash, expiresAt })).toString("base64url");
-  const sig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
+  const jti = crypto6.randomBytes(12).toString("hex");
+  const payload = Buffer.from(JSON.stringify({ email, otpHash, expiresAt, jti })).toString("base64url");
+  const sig = crypto6.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 function verifySignedOtpToken(token, email, otp) {
   if (!token || typeof token !== "string" || !token.includes(".")) return { valid: false };
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return { valid: false };
-  const expectedSig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
-  if (sig !== expectedSig) return { valid: false };
+  const expectedSig = crypto6.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto6.timingSafeEqual(sigBuf, expectedBuf)) {
+    return { valid: false };
+  }
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     if (decoded.email !== email) return { valid: false };
     if (Date.now() > Number(decoded.expiresAt)) return { valid: false, expired: true };
-    const submittedHash = crypto5.createHash("sha256").update(otp).digest("hex");
-    return { valid: submittedHash === decoded.otpHash };
+    const submittedHash = crypto6.createHash("sha256").update(otp).digest("hex");
+    return {
+      valid: submittedHash === decoded.otpHash,
+      jti: typeof decoded.jti === "string" ? decoded.jti : void 0
+    };
   } catch {
     return { valid: false };
   }
 }
 function createVerifiedEmailToken(email) {
   const expiresAt = Date.now() + 30 * 60 * 1e3;
-  const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt })).toString("base64url");
-  const sig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
+  const jti = crypto6.randomBytes(12).toString("hex");
+  const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt, jti })).toString("base64url");
+  const sig = crypto6.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
-function isEmailVerifiedByToken(token, email) {
+async function consumeVerifiedEmailToken(token, expectedEmails) {
   if (!token || typeof token !== "string" || !token.includes(".")) return false;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return false;
-  const expectedSig = crypto5.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
-  if (sig !== expectedSig) return false;
+  const expectedSig = crypto6.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto6.timingSafeEqual(sigBuf, expectedBuf)) {
+    return false;
+  }
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
-    return decoded.email === email && decoded.verified === true && Date.now() <= Number(decoded.expiresAt);
+    const candidates = Array.isArray(expectedEmails) ? expectedEmails : [expectedEmails];
+    const matchesEmail = candidates.some((e) => e && decoded.email === e.toLowerCase().trim());
+    if (!matchesEmail || decoded.verified !== true || Date.now() > Number(decoded.expiresAt)) {
+      return false;
+    }
+    const tokenJti = typeof decoded.jti === "string" ? decoded.jti : crypto6.createHash("sha256").update(token).digest("hex");
+    return await consumeSingleUseJti(tokenJti, "verified_email", 35 * 60 * 1e3);
   } catch {
     return false;
   }
@@ -7991,7 +8709,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
     }
   }
   const rawOtp = generateOtp();
-  const otpHash = crypto5.createHash("sha256").update(rawOtp).digest("hex");
+  const otpHash = crypto6.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1e3;
   setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
   if (cleanPhone) {
@@ -8053,6 +8771,13 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   const cleanEmail = String(email).toLowerCase().trim();
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const cleanOtp = String(otp).trim();
+  const tokenLockKey = otpToken ? `verify:token:${crypto6.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;
+  const lockCheck = checkOtpAttemptLock(tokenLockKey);
+  if (!lockCheck.allowed) {
+    return res.status(429).json({
+      error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request a new OTP.`
+    });
+  }
   const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
   if (tokenCheck.expired) {
     return res.status(400).json({ error: "OTP has expired. Please request a new one." });
@@ -8070,24 +8795,41 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     if (record.attempts >= 5) {
       deleteOtpRecord(cleanEmail);
       if (cleanPhone) deleteOtpRecord(cleanPhone);
-      return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
     }
   }
   let isOtpValid = tokenCheck.valid;
+  if (isOtpValid && tokenCheck.jti) {
+    const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_token", 15 * 60 * 1e3);
+    if (!firstUse) {
+      return res.status(400).json({ error: "OTP has already been used. Please request a new one." });
+    }
+  }
   if (!isOtpValid && record) {
-    const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+    const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
     if (submittedHash === record.otpHash) {
       isOtpValid = true;
     } else {
       record.attempts += 1;
       setOtpRecord(cleanEmail, record);
       if (cleanPhone) setOtpRecord(cleanPhone, record);
+      const failState = recordOtpFailedAttempt(tokenLockKey, 5);
+      if (failState.locked || record.attempts >= 5) {
+        deleteOtpRecord(cleanEmail);
+        if (cleanPhone) deleteOtpRecord(cleanPhone);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+      }
       return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
   }
   if (!isOtpValid) {
+    const failState = recordOtpFailedAttempt(tokenLockKey, 5);
+    if (failState.locked) {
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+    }
     return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
   }
+  clearOtpAttempts(tokenLockKey);
   deleteOtpRecord(cleanEmail);
   if (cleanPhone) deleteOtpRecord(cleanPhone);
   verifiedSignupEmails.add(cleanEmail);
@@ -8123,7 +8865,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     }
   }
   const rawOtp = generateOtp();
-  const otpHash = crypto5.createHash("sha256").update(rawOtp).digest("hex");
+  const otpHash = crypto6.createHash("sha256").update(rawOtp).digest("hex");
   const expiresAt = Date.now() + 10 * 60 * 1e3;
   setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
   const creds = getEmailCredentials();
@@ -8162,7 +8904,7 @@ app.post("/api/auth/verify-reset-otp", (req, res) => {
     deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
   }
-  const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+  const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
   if (submittedHash !== record.otpHash) {
     record.attempts += 1;
     setOtpRecord(cleanEmail, record);
@@ -8193,7 +8935,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
     deleteOtpRecord(cleanEmail);
     return res.status(400).json({ error: "Too many failed attempts. Please request a new code." });
   }
-  const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+  const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
   if (submittedHash !== record.otpHash) {
     record.attempts += 1;
     setOtpRecord(cleanEmail, record);
@@ -8201,8 +8943,15 @@ app.post("/api/auth/reset-password", async (req, res) => {
   }
   deleteOtpRecord(cleanEmail);
   const newHash = bcrypt.hashSync(String(targetPassword), 10);
+  let targetUserId = null;
   try {
-    await pool.query("UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)", [newHash, cleanEmail]);
+    const dbRes = await pool.query(
+      "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
+      [newHash, cleanEmail]
+    );
+    if (dbRes.rows.length > 0) {
+      targetUserId = Number(dbRes.rows[0].id);
+    }
   } catch (err) {
     if (err.code !== "ECONNREFUSED") {
       console.error("[RESET DB UPDATE ERROR]", err.message);
@@ -8211,7 +8960,11 @@ app.post("/api/auth/reset-password", async (req, res) => {
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (user) {
     user.passwordHash = newHash;
+    if (!targetUserId) targetUserId = Number(user.id);
+    user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
     await saveRegisteredUsers(user);
+  } else if (targetUserId) {
+    await bumpUserTokenVersion(targetUserId);
   }
   return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
 });
@@ -8227,12 +8980,23 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       return res.status(400).json({ error: "Verification OTP is required." });
     }
     const cleanOtp = String(otp).trim();
+    const lockKey = `phone_acc:${cleanPhone}`;
+    const lockCheck = checkOtpAttemptLock(lockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({ error: "Too many failed OTP attempts. Please try again later." });
+    }
     const tokenCheck = otpToken ? verifySignedOtpToken(otpToken, `${cleanPhone}@phone.mingree.com`, cleanOtp) : { valid: false };
     if (tokenCheck.expired) {
       return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
     }
     const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
     let isOtpValid = tokenCheck.valid;
+    if (isOtpValid && tokenCheck.jti) {
+      const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_phone_acc", 15 * 60 * 1e3);
+      if (!firstUse) {
+        return res.status(400).json({ error: "Verification code has already been used. Please request a new one." });
+      }
+    }
     if (!isOtpValid && record) {
       if (Date.now() > record.expiresAt) {
         deleteOtpRecord(cleanPhone);
@@ -8242,19 +9006,24 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       if (record.attempts >= 5) {
         deleteOtpRecord(cleanPhone);
         deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
-        return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
       }
-      const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+      const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
       if (submittedHash === record.otpHash) {
         isOtpValid = true;
       } else {
         record.attempts += 1;
         setOtpRecord(cleanPhone, record);
+        recordOtpFailedAttempt(lockKey, 5);
       }
     }
     if (!isOtpValid) {
+      recordOtpFailedAttempt(lockKey, 5);
       return res.status(400).json({ error: "Invalid or expired verification code. Please check and try again." });
     }
+    clearOtpAttempts(lockKey);
+    deleteOtpRecord(cleanPhone);
+    deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
     const formattedPhone = `+91${cleanPhone}`;
     const matchedAccountsMap = /* @__PURE__ */ new Map();
     try {
@@ -8308,6 +9077,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
     const accounts = Array.from(matchedAccountsMap.values());
     const resetVerificationToken = jwt.sign(
       {
+        jti: crypto6.randomBytes(12).toString("hex"),
         phone: cleanPhone,
         accountIds: accounts.map((a) => a.id),
         purpose: "phone_password_reset"
@@ -8344,21 +9114,33 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       try {
         const decoded = jwt.verify(resetVerificationToken, getJwtSecret());
         if (decoded && decoded.phone === cleanPhone && decoded.purpose === "phone_password_reset") {
-          isAuthorized = true;
+          const jtiKey = typeof decoded.jti === "string" ? decoded.jti : crypto6.createHash("sha256").update(String(resetVerificationToken)).digest("hex");
+          isAuthorized = await consumeSingleUseJti(jtiKey, "phone_pw_reset", 20 * 60 * 1e3);
         }
       } catch {
       }
     }
     if (!isAuthorized && otp) {
+      const resetLockKey = `phone_reset:${cleanPhone}`;
+      const lockCheck = checkOtpAttemptLock(resetLockKey);
+      if (!lockCheck.allowed) {
+        return res.status(429).json({
+          error: `Too many failed attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`
+        });
+      }
       const cleanOtp = String(otp).trim();
       const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
       if (record && Date.now() <= record.expiresAt && record.attempts < 5) {
-        const submittedHash = crypto5.createHash("sha256").update(cleanOtp).digest("hex");
+        const submittedHash = crypto6.createHash("sha256").update(cleanOtp).digest("hex");
         if (submittedHash === record.otpHash) {
           isAuthorized = true;
+          clearOtpAttempts(resetLockKey);
+          deleteOtpRecord(cleanPhone);
+          deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
         } else {
           record.attempts += 1;
           setOtpRecord(cleanPhone, record);
+          recordOtpFailedAttempt(resetLockKey, 5);
         }
       }
     }
@@ -8376,7 +9158,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       if (targetId) {
         query = `
           UPDATE users 
-          SET password_hash = $1 
+          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
           WHERE id = $2 
             AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
           RETURNING id, email, name, role, company_name
@@ -8385,7 +9167,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       } else if (targetEmailClean) {
         query = `
           UPDATE users 
-          SET password_hash = $1 
+          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
           WHERE LOWER(email) = LOWER($2) 
             AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
           RETURNING id, email, name, role, company_name
@@ -8394,7 +9176,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       } else {
         query = `
           UPDATE users 
-          SET password_hash = $1 
+          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
           WHERE (phone = $2 OR phone = $3 OR phone LIKE $4 OR email LIKE $5)
             AND status != 'blocked'
           RETURNING id, email, name, role, company_name
@@ -8420,10 +9202,13 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
     });
     if (memoryUser) {
       memoryUser.passwordHash = newHash;
+      memoryUser.tokenVersion = await bumpUserTokenVersion(Number(memoryUser.id));
       await saveRegisteredUsers(memoryUser);
       if (!updatedAccount) {
         updatedAccount = memoryUser;
       }
+    } else if (updatedAccount?.id) {
+      await bumpUserTokenVersion(Number(updatedAccount.id));
     }
     if (!updatedAccount) {
       return res.status(404).json({ error: "The selected account was not found or is not associated with this phone number." });
@@ -8447,8 +9232,8 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
   }
 });
 function getInstagramCredentials() {
-  const appId = "3167123270152518";
-  const appSecret = "a80adcabcc62abb2e66c3d1048a50e76";
+  const appId = (process.env.INSTAGRAM_APP_ID || inMemorySettings.instagram_app_id || "").trim();
+  const appSecret = (process.env.INSTAGRAM_APP_SECRET || "").trim();
   return { appId, appSecret };
 }
 function getInstagramRedirectUri(reqOrAllowEmpty, allowEmptyArg = false) {
@@ -8467,15 +9252,16 @@ function getInstagramRedirectUri(reqOrAllowEmpty, allowEmptyArg = false) {
 var internalSessionSecret = null;
 function getInternalSessionSecret() {
   if (!internalSessionSecret) {
-    internalSessionSecret = (process.env.JWT_SECRET || process.env.TOKEN_ENC_KEY || "").trim() || crypto5.randomBytes(32).toString("hex");
+    internalSessionSecret = (process.env.JWT_SECRET || process.env.TOKEN_ENC_KEY || "").trim() || crypto6.randomBytes(32).toString("hex");
   }
   return internalSessionSecret;
 }
-function createSignedOAuthState(userId, returnTo, appSecret, redirectUri) {
-  const nonce = crypto5.randomBytes(12).toString("hex");
-  const payload = Buffer.from(JSON.stringify({ userId, returnTo, redirectUri, ts: Date.now() })).toString("base64url");
+function createSignedOAuthState(userId, returnTo, appSecret, redirectUri, browserTokenHash) {
+  const nonce = crypto6.randomBytes(12).toString("hex");
+  const safeReturnTo = isSafeRelativeRedirect(returnTo, "/profile");
+  const payload = Buffer.from(JSON.stringify({ userId, returnTo: safeReturnTo, redirectUri, browserTokenHash, ts: Date.now() })).toString("base64url");
   const secretKey = appSecret || getInternalSessionSecret();
-  const signature = crypto5.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
+  const signature = crypto6.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   return `${nonce}.${payload}.${signature}`;
 }
 function verifySignedOAuthState(stateStr, appSecret) {
@@ -8484,15 +9270,18 @@ function verifySignedOAuthState(stateStr, appSecret) {
   if (parts.length !== 3) return null;
   const [nonce, payload, signature] = parts;
   const secretKey = appSecret || getInternalSessionSecret();
-  const expectedSig = crypto5.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
-  if (signature !== expectedSig) return null;
+  const expectedSig = crypto6.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expBuf.length || !crypto6.timingSafeEqual(sigBuf, expBuf)) return null;
   try {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     if (Date.now() - data.ts > 36e5) return null;
     return {
-      userId: Number(data.userId) || 1,
-      returnTo: typeof data.returnTo === "string" ? data.returnTo : "/dashboard",
-      redirectUri: typeof data.redirectUri === "string" ? data.redirectUri : void 0
+      userId: Number(data.userId) || 0,
+      returnTo: isSafeRelativeRedirect(data.returnTo, "/profile"),
+      redirectUri: typeof data.redirectUri === "string" ? data.redirectUri : void 0,
+      browserTokenHash: typeof data.browserTokenHash === "string" ? data.browserTokenHash : void 0
     };
   } catch {
     return null;
@@ -8517,7 +9306,7 @@ app.get("/api/instagram/requirements", (req, res) => {
 var authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1e3,
   // 15 minutes
-  max: 50,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many authentication requests. Please try again in 15 minutes." }
@@ -8526,7 +9315,13 @@ app.use("/api/auth", authRateLimiter);
 function getJwtSecret() {
   const secret = (process.env.JWT_SECRET || "").trim();
   if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("FATAL: JWT_SECRET must be set in production");
+    }
     return getEphemeralDevSigningSecret();
+  }
+  if (process.env.NODE_ENV === "production" && secret.length < 32) {
+    throw new Error("FATAL: JWT_SECRET must be at least 32 characters in production");
   }
   return secret;
 }
@@ -8537,6 +9332,8 @@ function setAuthTokenCookie(res, user) {
       id: user.id,
       email: user.email,
       role: user.role,
+      jti: crypto6.randomBytes(16).toString("hex"),
+      tv: Number(user.tokenVersion || 1),
       instagramUsername: user.instagramUsername || null,
       isInstagramVerified: Boolean(user.isInstagramVerified),
       instagramFollowers: user.instagramFollowers || user.followers || 0,
@@ -8551,7 +9348,8 @@ function setAuthTokenCookie(res, user) {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1e3
+    maxAge: 7 * 24 * 60 * 60 * 1e3,
+    path: "/"
   });
   return token;
 }
@@ -8559,7 +9357,8 @@ function clearAuthTokenCookie(res) {
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax"
+    sameSite: "lax",
+    path: "/"
   });
 }
 async function requireAuth(req, res, next) {
@@ -8572,6 +9371,9 @@ async function requireAuth(req, res, next) {
     decoded = jwt.verify(token, getJwtSecret());
   } catch {
     return res.status(401).json({ error: "Unauthorized: Invalid or expired authentication token" });
+  }
+  if (decoded?.jti && await isSessionJtiRevoked(decoded.jti)) {
+    return res.status(401).json({ error: "Unauthorized: Session has been logged out or revoked" });
   }
   const targetUserId = decoded?.id ? Number(decoded.id) : null;
   const targetUserEmail = decoded?.email ? String(decoded.email).toLowerCase().trim() : null;
@@ -8590,6 +9392,7 @@ async function requireAuth(req, res, next) {
     try {
       const dbRes = await pool.query(
         `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                u.token_version AS token_version,
                 cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
                 cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
                 cp.tier_label AS cp_tier_label, cp.status AS cp_status
@@ -8632,6 +9435,7 @@ async function requireAuth(req, res, next) {
           passwordHash: row.password_hash,
           name: row.name,
           role: row.role,
+          tokenVersion: Number(row.token_version || 1),
           handle: `@${row.email.split("@")[0]}`,
           avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
@@ -8657,30 +9461,18 @@ async function requireAuth(req, res, next) {
       (u) => Number(u.id) === targetUserId || targetUserEmail && u.email?.toLowerCase() === targetUserEmail
     );
   }
-  if (!user && targetUserId && targetUserEmail) {
-    user = {
-      id: targetUserId,
-      email: targetUserEmail,
-      name: decoded.name || targetUserEmail.split("@")[0],
-      role: decoded.role || "creator",
-      handle: `@${targetUserEmail.split("@")[0]}`,
-      tier: decoded.role === "admin" ? "Admin" : decoded.isInstagramVerified ? "Nano" : "Unlinked",
-      status: "active",
-      isEmailVerified: true,
-      instagramUsername: decoded.instagramUsername || null,
-      isInstagramVerified: Boolean(decoded.isInstagramVerified),
-      instagramFollowers: Number(decoded.instagramFollowers || 0),
-      followers: Number(decoded.instagramFollowers || 0)
-    };
-  }
   if (!user) {
     return res.status(401).json({ error: "Unauthorized: User account not found" });
   }
   if (user.status === "blocked") {
     return res.status(403).json({ error: "Forbidden: Account is blocked" });
   }
+  const currentTokenVersion = await getUserTokenVersion(Number(user.id), Number(user.tokenVersion || 1));
+  if (Number(decoded.tv || 1) < currentTokenVersion) {
+    return res.status(401).json({ error: "Unauthorized: Session has been invalidated after a password change" });
+  }
   const cleanEmail = (user.email || "").toLowerCase().trim();
-  if (cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com") {
+  if (ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL) {
     user.role = "admin";
     user.tier = "Admin";
     user.isEmailVerified = true;
@@ -8694,7 +9486,7 @@ function requireRole(...allowedRoles) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const cleanEmail = (req.user.email || "").toLowerCase().trim();
-    const isAdminEmail = cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+    const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
     if (allowedRoles.includes("admin") && isAdminEmail) {
       req.user.role = "admin";
       return next();
@@ -8738,7 +9530,7 @@ app.post("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) =>
   }
   return res.json({ success: true, key });
 });
-bcrypt.setRandomFallback((len) => Array.from(crypto5.randomBytes(len)));
+bcrypt.setRandomFallback((len) => Array.from(crypto6.randomBytes(len)));
 var ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
 var ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
 function sanitizeUser(user) {
@@ -8844,7 +9636,7 @@ app.use(["/api/users/:id", "/api/users/:id/*", "/api/sponsors/:id", "/api/sponso
   next();
 });
 app.post("/api/auth/signup", async (req, res) => {
-  const { name, email, password, role, city, country, companyName, verifiedToken, otpVerified, phone } = req.body || {};
+  const { name, email, password, role, city, country, companyName, verifiedToken, otpVerified, phone, ageConfirmed } = req.body || {};
   const cleanEmail = (email || "").toLowerCase().trim();
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const formattedPhone = cleanPhone ? `+91${cleanPhone}` : null;
@@ -8860,6 +9652,11 @@ app.post("/api/auth/signup", async (req, res) => {
   }
   if (requestedRole !== "creator" && requestedRole !== "sponsor") {
     return res.status(400).json({ error: "Role can only be creator or sponsor." });
+  }
+  if (ageConfirmed !== true) {
+    return res.status(400).json({
+      error: "You must confirm that you are at least 13 years old and accept our Terms of Service."
+    });
   }
   try {
     const existingCheck = await pool.query("SELECT id FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
@@ -8901,20 +9698,18 @@ app.post("/api/auth/signup", async (req, res) => {
   }
   const existingUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (existingUser) {
-    const isVerified2 = verifiedSignupEmails.has(cleanEmail) || isEmailVerifiedByToken(verifiedToken, cleanEmail) || otpVerified === true;
-    if (isVerified2) {
-      existingUser.isEmailVerified = true;
-      if (formattedPhone) existingUser.phone = formattedPhone;
-      setAuthTokenCookie(res, existingUser);
-      return res.json(sanitizeUser(existingUser));
-    }
     return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
   }
-  const isVerified = verifiedSignupEmails.has(cleanEmail) || isEmailVerifiedByToken(verifiedToken, cleanEmail) || otpVerified === true;
+  let isVerified = false;
+  if (verifiedSignupEmails.has(cleanEmail)) {
+    verifiedSignupEmails.delete(cleanEmail);
+    isVerified = true;
+  } else if (verifiedToken) {
+    isVerified = await consumeVerifiedEmailToken(verifiedToken, cleanEmail);
+  }
   if (!isVerified) {
     return res.status(403).json({ error: "Mobile number and email must be verified via OTP before registration." });
   }
-  verifiedSignupEmails.delete(cleanEmail);
   const passwordHash = bcrypt.hashSync(String(password), 10);
   const userName = name?.trim() || cleanEmail.split("@")[0];
   const userHandle = `@${cleanEmail.split("@")[0]}`;
@@ -9077,20 +9872,52 @@ app.post("/api/auth/login", async (req, res) => {
 });
 app.post("/api/auth/phone-login", async (req, res) => {
   try {
-    const { phoneNumber, role, name, idToken } = req.body;
-    if (!phoneNumber) {
-      return res.status(400).json({ error: "Phone number is required" });
+    const { phoneNumber, role, name, idToken, verifiedPhoneToken } = req.body || {};
+    let verifiedPhone = "";
+    if (idToken) {
+      try {
+        const fbToken = await verifyFirebasePhoneIdToken(String(idToken), "gen-lang-client-0314158911");
+        verifiedPhone = fbToken.phoneNumber;
+      } catch (fbErr) {
+        return res.status(401).json({
+          error: fbErr?.message || "Unauthorized: Invalid or expired Firebase authentication token"
+        });
+      }
+      if (phoneNumber) {
+        const requestedNormalized = normalizePhoneE164(String(phoneNumber));
+        if (requestedNormalized && requestedNormalized !== verifiedPhone) {
+          return res.status(403).json({
+            error: "Forbidden: Verified phone number does not match requested account phone number"
+          });
+        }
+      }
+    } else if (verifiedPhoneToken && phoneNumber) {
+      const normalized = normalizePhoneE164(String(phoneNumber));
+      const clean10 = normalized.replace(/[^0-9]/g, "").slice(-10);
+      const tokenEmails = [
+        `${clean10}@phone.mingree.com`,
+        `${normalized.replace(/\+/g, "")}@phone.mingree.com`
+      ];
+      const consumed = await consumeVerifiedEmailToken(String(verifiedPhoneToken), tokenEmails);
+      if (!consumed) {
+        return res.status(401).json({ error: "Unauthorized: Invalid, expired, or already-used phone verification proof" });
+      }
+      verifiedPhone = normalized;
+    } else {
+      return res.status(401).json({
+        error: "Unauthorized: Valid Firebase ID token or verified SMS OTP proof is required for phone login"
+      });
     }
-    const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
-    const formattedPhone = cleanPhone.startsWith("+") ? cleanPhone : `+91${cleanPhone.replace(/^0+/, "")}`;
+    const formattedPhone = verifiedPhone;
+    const clean10Digits = formattedPhone.replace(/[^0-9]/g, "").slice(-10);
     const userEmail = `${formattedPhone.replace(/\+/g, "")}@phone.mingree.com`;
     const requestedRole = role === "sponsor" || role === "creator" || role === "brand" ? role === "brand" ? "sponsor" : role : "creator";
     const userName = name?.trim() || `User ${formattedPhone.slice(-4)}`;
     let foundUser = null;
     try {
       const dbRes = await pool.query(
-        "SELECT * FROM users WHERE email = $1 OR email LIKE $2",
-        [userEmail, `%${formattedPhone.slice(-10)}%`]
+        "SELECT * FROM users WHERE phone = $1 OR phone = $2 OR LOWER(email) = LOWER($3) OR LOWER(email) = LOWER($4) LIMIT 1",
+        [formattedPhone, clean10Digits, userEmail, `${clean10Digits}@phone.mingree.com`]
       );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
@@ -9099,6 +9926,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           email: row.email,
           name: row.name,
           role: row.role,
+          tokenVersion: Number(row.token_version || 1),
           handle: row.handle || `@user${row.id}`,
           avatar: row.avatar,
           tier: row.tier || "Nano",
@@ -9116,17 +9944,20 @@ app.post("/api/auth/phone-login", async (req, res) => {
     }
     if (!foundUser) {
       foundUser = registeredUsers.find(
-        (u) => u.phone && u.phone === formattedPhone || u.email && u.email === userEmail
+        (u) => u.phone && (u.phone === formattedPhone || u.phone === clean10Digits) || u.email && (u.email.toLowerCase() === userEmail || u.email.toLowerCase() === `${clean10Digits}@phone.mingree.com`)
       );
     }
+    if (foundUser && foundUser.status === "blocked") {
+      return res.status(403).json({ error: "Forbidden: Account is blocked" });
+    }
     if (!foundUser) {
-      const defaultPasswordHash = bcrypt.hashSync(`Phone_${formattedPhone}_${Date.now()}`, 10);
+      const defaultPasswordHash = bcrypt.hashSync(`Phone_${crypto6.randomBytes(16).toString("hex")}`, 10);
       try {
         const insertRes = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
-           VALUES ($1, $2, $3, $4, true, 'active')
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, phone)
+           VALUES ($1, $2, $3, $4, true, 'active', $5)
            RETURNING *`,
-          [userEmail, defaultPasswordHash, userName, requestedRole]
+          [userEmail, defaultPasswordHash, userName, requestedRole, formattedPhone]
         );
         const dbRow = insertRes.rows[0];
         foundUser = {
@@ -9134,6 +9965,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           email: dbRow.email,
           name: dbRow.name,
           role: dbRow.role,
+          tokenVersion: Number(dbRow.token_version || 1),
           handle: `@user${dbRow.id}`,
           tier: "Nano",
           phone: formattedPhone,
@@ -9162,6 +9994,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           email: userEmail,
           name: userName,
           role: requestedRole,
+          tokenVersion: 1,
           handle: `@user${String(Date.now()).slice(-4)}`,
           tier: "Nano",
           phone: formattedPhone,
@@ -9184,7 +10017,17 @@ app.post("/api/auth/phone-login", async (req, res) => {
     return res.status(500).json({ error: err.message || "Failed to log in with phone" });
   }
 });
-app.post("/api/auth/logout", (req, res) => {
+app.post("/api/auth/logout", async (req, res) => {
+  const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7).trim() : null);
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, getJwtSecret());
+      if (decoded?.jti) {
+        await revokeSessionJti(decoded.jti, decoded.exp);
+      }
+    } catch {
+    }
+  }
   clearAuthTokenCookie(res);
   return res.json({ success: true, message: "Logged out successfully" });
 });
@@ -9337,6 +10180,9 @@ app.put("/api/users/:id/profile", requireAuth, async (req, res) => {
   }
   if (city !== void 0) user.city = city.trim();
   if (avatar !== void 0) {
+    if (avatar && !isSafeAssetUrl(avatar, true)) {
+      return res.status(400).json({ error: "Invalid avatar URL format" });
+    }
     user.avatar = avatar;
     user.avatarUrl = avatar;
     const existing = registeredUsers.find((u) => u.id === user.id);
@@ -9387,9 +10233,14 @@ app.put("/api/users/:id/instagram", requireAuth, async (req, res) => {
     await saveRegisteredUsers(user);
     return res.json(sanitizeUser(user));
   }
+  if (req.user.role !== "admin") {
+    return res.status(403).json({
+      error: "Instagram account linking and follower verification require official Meta OAuth authorization."
+    });
+  }
   const cleanHandle = String(instagramUsername).trim().replace(/^@+/, "");
   const followersCount = Math.max(500, Number(instagramFollowers) || 15e3);
-  const profileUrl = instagramProfileUrl || `https://instagram.com/${cleanHandle}`;
+  const profileUrl = instagramProfileUrl && isSafeAssetUrl(instagramProfileUrl, false) ? String(instagramProfileUrl) : `https://instagram.com/${cleanHandle}`;
   let tierName = "Nano";
   if (followersCount >= 25e5) tierName = "Elite";
   else if (followersCount >= 1e6) tierName = "Mega";
@@ -10192,10 +11043,6 @@ app.get("/api/campaigns/:id/workspace", requireAuth, async (req, res) => {
     workspace = getWorkspaceById(campaignId);
   }
   if (!workspace) {
-    const all = loadAllWorkspaces();
-    workspace = all.find((w) => Number(w.sponsorId) === Number(req.user.id)) || all.find((w) => (w.participants || []).some((p) => Number(p.creatorId) === Number(req.user.id))) || all[0] || null;
-  }
-  if (!workspace) {
     return res.status(404).json({ error: "Campaign workspace not found" });
   }
   if (!canUserAccessWorkspace(req.user, workspace)) {
@@ -10379,10 +11226,14 @@ app.post("/api/campaigns/:id/accept-invitation", requireAuth, async (req, res) =
     }
     return false;
   });
-  if (!participant && workspace.participants.length > 0) {
-    participant = workspace.participants.find((p) => p.status === "pending" || p.status === "applied") || workspace.participants[0];
-  }
   if (!participant) {
+    if (workspace.bookingModel !== "instant") {
+      return res.status(403).json({ error: "Forbidden: You do not have an invitation to this campaign" });
+    }
+    const availableSlots = Number(workspace.remainingSlots ?? (workspace.totalSlots || 0) - (workspace.reservedSlots || 0));
+    if (availableSlots <= 0) {
+      return res.status(400).json({ error: "No campaign slots remaining" });
+    }
     participant = {
       id: creatorId,
       campaignId: workspace.id,
@@ -10647,14 +11498,20 @@ var handleNegotiateCampaignPrice = async (req, res) => {
 app.post("/api/campaigns/:id/negotiate", requireAuth, handleNegotiateCampaignPrice);
 app.get("/api/campaigns/:id/negotiate", requireAuth, handleNegotiateCampaignPrice);
 app.get(["/api/sponsors/:id/campaign-cards", "/api/sponsor/campaign-cards"], requireAuth, async (req, res) => {
-  await ensureWorkspacesLoaded(true);
   const sponsorId = Number(req.params.id || req.user.id);
+  if (sponsorId !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another brand's campaign cards" });
+  }
+  await ensureWorkspacesLoaded(true);
   const cards = getBrandCampaignCards(sponsorId);
   res.json(cards);
 });
 app.get(["/api/creators/:id/campaign-workspaces", "/api/creator/campaign-workspaces"], requireAuth, async (req, res) => {
-  await ensureWorkspacesLoaded(true);
   const creatorId = Number(req.params.id || req.user.id);
+  if (creatorId !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another creator's campaign workspaces" });
+  }
+  await ensureWorkspacesLoaded(true);
   let creatorHandle = req.user?.instagramUsername || req.user?.handle || null;
   if (isDatabaseConfigured && creatorId) {
     try {
@@ -10670,6 +11527,9 @@ app.get(["/api/creators/:id/campaign-workspaces", "/api/creator/campaign-workspa
 });
 app.get(["/api/users/:userId/reservations", "/api/reservations"], requireAuth, (req, res) => {
   const userId = Number(req.params.userId || req.query.userId || req.user.id);
+  if (userId !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another user's reservations" });
+  }
   const workspaces = loadAllWorkspaces();
   const resList = [];
   for (const c of workspaces) {
@@ -10827,12 +11687,19 @@ app.post("/api/submissions", requireAuth, requireRole("creator"), async (req, re
 });
 app.delete("/api/reservations/:id", requireAuth, async (req, res) => {
   const reservationId = Number(req.params.id);
-  const userId = req.user.id;
+  const userId = Number(req.user.id);
+  const isAdmin = req.user.role === "admin";
   const workspaces = loadAllWorkspaces();
   let found = false;
+  let forbiddenHit = false;
   for (const w of workspaces) {
     const pIdx = w.participants.findIndex((p) => Number(p.id) === reservationId || Number(p.creatorId) === userId && Number(w.id) === reservationId);
     if (pIdx !== -1) {
+      const targetP = w.participants[pIdx];
+      if (!isAdmin && Number(targetP.creatorId) !== userId && Number(w.sponsorId) !== userId) {
+        forbiddenHit = true;
+        break;
+      }
       w.participants.splice(pIdx, 1);
       w.remainingSlots = (w.remainingSlots || 0) + 1;
       await saveSingleWorkspace(w);
@@ -10840,9 +11707,15 @@ app.delete("/api/reservations/:id", requireAuth, async (req, res) => {
       break;
     }
   }
+  if (forbiddenHit) {
+    return res.status(403).json({ error: "Forbidden: Cannot cancel another user's reservation" });
+  }
   const reservations = loadReservations();
   const idx = reservations.findIndex((r) => Number(r.id) === reservationId || Number(r.userId) === userId && Number(r.campaignId) === reservationId);
   if (idx !== -1) {
+    if (!isAdmin && Number(reservations[idx].userId) !== userId) {
+      return res.status(403).json({ error: "Forbidden: Cannot cancel another user's reservation" });
+    }
     reservations.splice(idx, 1);
     saveReservations(reservations);
     found = true;
@@ -10851,8 +11724,10 @@ app.delete("/api/reservations/:id", requireAuth, async (req, res) => {
     try {
       await pool.query(
         `UPDATE workspace_participants SET status = 'withdrawn', updated_at = now()
-         WHERE (id = $1 OR (creator_id = $2 AND campaign_id = $1)) AND status IN ('applied', 'reserved')`,
-        [reservationId, userId]
+         WHERE (id = $1 OR (creator_id = $2 AND campaign_id = $1))
+           AND ($3 = true OR creator_id = $2)
+           AND status IN ('applied', 'reserved')`,
+        [reservationId, userId, isAdmin]
       );
       await pool.query(
         `UPDATE campaigns SET spots_remaining = spots_remaining + 1 WHERE id = $1`,
@@ -10866,12 +11741,18 @@ app.delete("/api/reservations/:id", requireAuth, async (req, res) => {
   return res.status(404).json({ error: "Reservation not found" });
 });
 app.get("/api/sponsors/:id/campaigns", requireAuth, async (req, res) => {
-  await ensureWorkspacesLoaded(true);
   const sponsorId = Number(req.params.id || req.user.id);
+  if (sponsorId !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot access another brand's campaigns" });
+  }
+  await ensureWorkspacesLoaded(true);
   const cards = getBrandCampaignCards(sponsorId);
   res.json(cards);
 });
 app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, requireRole("sponsor", "admin"), async (req, res) => {
+  if (req.params.id && Number(req.params.id) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot create campaign for another brand account" });
+  }
   const sponsorId = req.user.id;
   const data = req.body;
   let parsedTiers = [];
@@ -10893,7 +11774,8 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
   const platformFee = Math.round(computedSubtotal * 0.075 * 100) / 100;
   const gstOnFee = Math.round(platformFee * 0.18 * 100) / 100;
   const calculatedTotalBudget = Math.round((computedSubtotal + platformFee + gstOnFee) * 100) / 100;
-  const totalBudget = parseFloat(data.budget || data.totalBudget || String(calculatedTotalBudget));
+  const requestedBudget = parseFloat(data.budget || data.totalBudget || "0") || 0;
+  const totalBudget = Math.max(calculatedTotalBudget, requestedBudget);
   if (isNaN(totalBudget) || totalBudget <= 0) {
     return res.status(400).json({ error: "Campaign budget must be greater than zero" });
   }
@@ -11101,6 +11983,17 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
 });
 app.post("/api/campaigns/:id/match", requireAuth, requireRole("sponsor", "admin"), async (req, res) => {
   const campaignId = Number(req.params.id);
+  await ensureWorkspacesLoaded();
+  const workspace = getWorkspaceById(campaignId);
+  const campaigns4 = loadCampaigns();
+  const campaign = campaigns4.find((c) => Number(c.id) === campaignId);
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (!workspace && !campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+  if (ownerId !== void 0 && Number(ownerId) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign owner can match creators" });
+  }
   const invitedCount = await matchAndInviteCreators(campaignId, registeredUsers);
   res.json({ success: true, invitedCount, message: `Matched and invited ${invitedCount} eligible creators.` });
 });
@@ -11196,12 +12089,16 @@ app.post("/api/campaign-workspaces/:id/apply-with-quote", requireAuth, requireRo
   saveSingleWorkspace(workspace);
   res.json({ success: true, participant: newParticipant });
 });
-app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requireAuth, requireRole("sponsor", "admin"), (req, res) => {
+app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requireAuth, requireRole("sponsor", "admin"), async (req, res) => {
   const campaignId = Number(req.params.id);
   const participantId = Number(req.params.participantId);
   const { action, counterPrice } = req.body;
+  await ensureWorkspacesLoaded();
   const workspace = getWorkspaceById(campaignId);
   if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+  if (Number(workspace.sponsorId) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign sponsor can review applicants" });
+  }
   const participant = workspace.participants.find((p) => p.id === participantId);
   if (!participant) return res.status(404).json({ error: "Participant not found" });
   if (action === "accept") {
@@ -11215,7 +12112,7 @@ app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requir
     participant.status = "applied";
   }
   workspace.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-  saveSingleWorkspace(workspace);
+  await saveSingleWorkspace(workspace);
   res.json({ success: true, participant });
 });
 app.post(["/api/campaigns/:id/quote", "/api/campaigns/:id/apply"], requireAuth, requireRole("creator"), async (req, res) => {
@@ -11242,12 +12139,21 @@ app.post(["/api/campaigns/:id/quote", "/api/campaigns/:id/apply"], requireAuth, 
 });
 app.get(["/api/sponsors/:id/campaigns/:campaignId/shortlist", "/api/campaigns/:id/shortlist"], requireAuth, async (req, res) => {
   const campaignId = Number(req.params.campaignId || req.params.id);
+  if (req.params.campaignId && req.params.id && Number(req.params.id) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another brand's shortlist" });
+  }
+  await ensureWorkspacesLoaded();
   const campaigns4 = loadCampaigns();
-  const campaign = campaigns4.find((c) => c.id === campaignId);
-  if (!campaign) {
+  const campaign = campaigns4.find((c) => Number(c.id) === campaignId);
+  const workspace = getWorkspaceById(campaignId);
+  if (!campaign && !workspace) {
     return res.status(404).json({ error: "Campaign not found" });
   }
-  const capPrice = parseFloat(campaign.priceCapPer1k || campaign.fixedPrice || "100");
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (ownerId !== void 0 && Number(ownerId) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: You do not own this campaign's shortlist" });
+  }
+  const capPrice = parseFloat(campaign?.priceCapPer1k || campaign?.fixedPrice || String(workspace?.payAmount || 100));
   const shortlist = await getCampaignShortlist(campaignId, capPrice, registeredUsers);
   res.json(shortlist);
 });
@@ -11256,6 +12162,13 @@ app.post("/api/campaigns/:id/offers/bulk-approve", requireAuth, requireRole("spo
   const { offerIds } = req.body;
   if (!Array.isArray(offerIds) || offerIds.length === 0) {
     return res.status(400).json({ error: "Please select at least one offer to approve" });
+  }
+  await ensureWorkspacesLoaded();
+  const workspace = getWorkspaceById(campaignId);
+  const campaign = loadCampaigns().find((c) => Number(c.id) === campaignId);
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (ownerId !== void 0 && Number(ownerId) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign owner can bulk approve offers" });
   }
   try {
     const result = await bulkApproveOffers(req.user.id, campaignId, offerIds);
@@ -11274,10 +12187,21 @@ app.post("/api/offers/direct", requireAuth, requireRole("sponsor", "admin"), asy
   if (!campaignId || !creatorId || isNaN(numPrice) || numPrice <= 0) {
     return res.status(400).json({ error: "Valid campaignId, creatorId, and positive price are required" });
   }
+  await ensureWorkspacesLoaded();
+  const numCampaignId = Number(campaignId);
+  const workspace = getWorkspaceById(numCampaignId);
+  const campaign = loadCampaigns().find((c) => Number(c.id) === numCampaignId);
+  if (!workspace && !campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (ownerId !== void 0 && Number(ownerId) !== Number(req.user.id) && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign owner can send direct offers" });
+  }
   try {
     const result = await createDirectBooking({
       artistId: req.user.id,
-      campaignId: Number(campaignId),
+      campaignId: numCampaignId,
       creatorId: Number(creatorId),
       price: numPrice
     });
@@ -11380,6 +12304,12 @@ app.get("/api/rejection-reasons", (req, res) => {
   res.json(REJECTION_REASONS);
 });
 app.post("/api/cron/process-releases", requireAuth, async (req, res) => {
+  const cronSecret = (process.env.CRON_SECRET || "").trim();
+  const providedSecret = String(req.headers["x-cron-secret"] || "").trim();
+  const hasValidCronSecret = Boolean(cronSecret && providedSecret) && Buffer.byteLength(cronSecret) === Buffer.byteLength(providedSecret) && crypto6.timingSafeEqual(Buffer.from(cronSecret), Buffer.from(providedSecret));
+  if (!hasValidCronSecret && req.user.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Admin or cron authorization required" });
+  }
   const autoApproveRes = await runAutoApproveEngine2();
   const finalReleaseRes = await runFinalReleaseEngine2();
   const expiredRes = await checkExpiredDeals();
@@ -11659,7 +12589,7 @@ app.get("/api/instagram/login", requireAuth, (req, res) => {
         <body>
           <div class="card">
             <h2>\u26A0\uFE0F Security Notice</h2>
-            <p>${rateCheck.reason}</p>
+            <p>${escapeHtml(rateCheck.reason)}</p>
             <button onclick="window.close()">Close Window</button>
           </div>
         </body>
@@ -11668,9 +12598,10 @@ app.get("/api/instagram/login", requireAuth, (req, res) => {
   }
   const targetUser = registeredUsers.find((u) => u.id === userId) || registeredUsers[0];
   const queryUsername = (typeof req.query.username === "string" ? req.query.username : "").trim().replace(/^@+/, "");
-  const defaultUsername = queryUsername || targetUser?.instagramUsername || (targetUser?.handle ? targetUser.handle.replace(/^@/, "") : "");
-  const defaultFollowers = targetUser?.isInstagramVerified && targetUser?.instagramUsername ? targetUser.instagramFollowers || targetUser.followers || 0 : 0;
-  const userAvatar = targetUser?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+  const defaultUsername = escapeHtml(queryUsername || targetUser?.instagramUsername || (targetUser?.handle ? targetUser.handle.replace(/^@/, "") : ""));
+  const defaultFollowers = Number(targetUser?.isInstagramVerified && targetUser?.instagramUsername ? targetUser.instagramFollowers || targetUser.followers || 0 : 0) || 0;
+  const rawAvatar = targetUser?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+  const userAvatar = escapeHtml(isSafeAssetUrl(rawAvatar) ? rawAvatar : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150");
   if (wantsJson) {
     return res.json({
       configured: true,
@@ -12153,10 +13084,10 @@ app.get("/api/instagram/auth-url", async (req, res) => {
       error: "Instagram Meta App ID or App Secret is not configured."
     });
   }
-  const returnTo = typeof req.query.return_to === "string" ? req.query.return_to : "/profile";
-  const state = createSignedOAuthState(userId, returnTo, appSecret, redirectUri);
-  const browserToken = crypto5.randomBytes(32).toString("hex");
-  const browserTokenHash = crypto5.createHash("sha256").update(browserToken).digest("hex");
+  const returnTo = isSafeRelativeRedirect(req.query.return_to, "/profile");
+  const browserToken = crypto6.randomBytes(32).toString("hex");
+  const browserTokenHash = crypto6.createHash("sha256").update(browserToken).digest("hex");
+  const state = createSignedOAuthState(userId, returnTo, appSecret, redirectUri, browserTokenHash);
   res.cookie("mingree_ig_oauth_bind", browserToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -12230,7 +13161,7 @@ app.get([
   console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(callbackDebugPayload));
   const finishOAuthCallback = (result) => {
     const isSuccess = result.success;
-    const destPath = result.returnTo || "/profile";
+    const destPath = isSafeRelativeRedirect(result.returnTo, "/profile");
     const destUrl = isSuccess ? `${destPath}${destPath.includes("?") ? "&" : "?"}instagram_connected=true&username=${encodeURIComponent(result.username || "")}` : `${destPath}${destPath.includes("?") ? "&" : "?"}instagram_error=${encodeURIComponent(result.error || "Connection failed")}`;
     return res.redirect(302, destUrl);
   };
@@ -12259,8 +13190,9 @@ app.get([
       if (verified && verified.userId) {
         stateRecord = {
           userId: Number(verified.userId),
-          returnTo: verified.returnTo || "/profile",
-          redirectUri: verified.redirectUri || redirectUri
+          returnTo: isSafeRelativeRedirect(verified.returnTo, "/profile"),
+          redirectUri: verified.redirectUri || redirectUri,
+          browserTokenHash: verified.browserTokenHash
         };
       }
     }
@@ -12269,8 +13201,9 @@ app.get([
       instagramOAuthStates.delete(cleanState);
       stateRecord = {
         userId: memRecord.userId,
-        returnTo: memRecord.returnTo,
-        redirectUri: memRecord.redirectUri
+        returnTo: isSafeRelativeRedirect(memRecord.returnTo, "/profile"),
+        redirectUri: memRecord.redirectUri,
+        browserTokenHash: memRecord.browserTokenHash
       };
     }
     if (!stateRecord && isDatabaseConfigured) {
@@ -12285,21 +13218,15 @@ app.get([
           const row = dbState.rows[0];
           stateRecord = {
             userId: Number(row.user_id),
-            returnTo: row.return_to,
-            redirectUri: row.redirect_uri
+            returnTo: isSafeRelativeRedirect(row.return_to, "/profile"),
+            redirectUri: row.redirect_uri,
+            browserTokenHash: row.browser_token_hash || void 0
           };
         }
       } catch (pgErr) {
         console.error("[PG OAUTH STATE ATOMIC CONSUME ERROR]", pgErr.message);
       }
     }
-  }
-  if (!stateRecord && sessionUserId) {
-    stateRecord = {
-      userId: sessionUserId,
-      returnTo: "/profile",
-      redirectUri
-    };
   }
   if (!stateRecord || sessionUserId && stateRecord.userId !== sessionUserId) {
     return finishOAuthCallback({
@@ -12308,7 +13235,19 @@ app.get([
       returnTo: "/profile"
     });
   }
-  const clientReturnTo = stateRecord.returnTo || "/profile";
+  if (stateRecord.browserTokenHash) {
+    const cookieHash = browserToken ? crypto6.createHash("sha256").update(String(browserToken)).digest("hex") : "";
+    const expectedBuf = Buffer.from(stateRecord.browserTokenHash);
+    const cookieBuf = Buffer.from(cookieHash);
+    if (!cookieHash || cookieBuf.length !== expectedBuf.length || !crypto6.timingSafeEqual(cookieBuf, expectedBuf)) {
+      return finishOAuthCallback({
+        success: false,
+        error: "OAuth session verification failed. Please retry Instagram connection from the same browser.",
+        returnTo: "/profile"
+      });
+    }
+  }
+  const clientReturnTo = isSafeRelativeRedirect(stateRecord.returnTo, "/profile");
   const effectiveRedirectUri = stateRecord.redirectUri || redirectUri;
   if (!code || typeof code !== "string" || !code.trim()) {
     return finishOAuthCallback({
@@ -12330,7 +13269,7 @@ app.get([
       returnTo: clientReturnTo
     });
   }
-  const codeHash = crypto5.createHash("sha256").update(cleanCode).digest("hex");
+  const codeHash = crypto6.createHash("sha256").update(cleanCode).digest("hex");
   if (consumedOAuthCodes.has(codeHash)) {
     console.warn(`[INSTAGRAM OAUTH] Duplicate callback: code ${codeHash.slice(0, 8)} already processed in this isolate.`);
     if (isDatabaseConfigured && stateRecord.userId) {
@@ -12919,14 +13858,32 @@ app.get("/api/creator/insights", requireAuth, (req, res) => {
   });
 });
 app.post("/api/instagram/deauthorize", (req, res) => {
-  console.log(`[INSTAGRAM WEBHOOK] Deauthorize callback received from Meta:`, req.body);
+  const { appSecret } = getInstagramCredentials();
+  const signedRequest = String(req.body?.signed_request || req.query?.signed_request || "").trim();
+  if (appSecret) {
+    const parsed = verifyMetaSignedRequest(signedRequest, appSecret);
+    if (!parsed) {
+      return res.status(400).json({ error: "Invalid or missing Meta signed_request signature" });
+    }
+  } else if (!signedRequest) {
+    return res.status(400).json({ error: "Missing signed_request payload" });
+  }
   res.status(200).json({ success: true, message: "Deauthorized successfully" });
 });
 app.all("/api/instagram/data-deletion", (req, res) => {
-  const confirmationCode = `DEL_${Date.now()}_${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-  const origin = `${req.protocol}://${req.get("host")}`;
+  const { appSecret } = getInstagramCredentials();
+  const signedRequest = String(req.body?.signed_request || req.query?.signed_request || "").trim();
+  if (appSecret) {
+    const parsed = verifyMetaSignedRequest(signedRequest, appSecret);
+    if (!parsed) {
+      return res.status(400).json({ error: "Invalid or missing Meta signed_request signature" });
+    }
+  } else if (req.method === "POST" && !signedRequest) {
+    return res.status(400).json({ error: "Missing signed_request payload" });
+  }
+  const confirmationCode = `DEL_${Date.now()}_${crypto6.randomBytes(4).toString("hex").toUpperCase()}`;
+  const origin = getCanonicalAppUrl(req);
   const statusUrl = `${origin}/data-deletion?code=${confirmationCode}`;
-  console.log(`[INSTAGRAM WEBHOOK] Data deletion request received, confirmation: ${confirmationCode}`);
   res.status(200).json({
     url: statusUrl,
     confirmation_code: confirmationCode
@@ -13034,8 +13991,15 @@ app.post("/api/users/:id/notifications/mark-all-read", requireAuth, async (req, 
 });
 app.all(["/api/notifications/:id/read", "/api/notifications/:id/mark-read"], requireAuth, async (req, res) => {
   const notifId = Number(req.params.id);
+  if (!Number.isFinite(notifId) || notifId <= 0) {
+    return res.status(400).json({ error: "Invalid notification ID" });
+  }
   try {
-    await db.update(notifications).set({ isRead: true }).where(eq7(notifications.id, notifId));
+    const condition = req.user.role === "admin" ? eq7(notifications.id, notifId) : and5(eq7(notifications.id, notifId), eq7(notifications.userId, req.user.id));
+    const updated = await db.update(notifications).set({ isRead: true }).where(condition).returning({ id: notifications.id });
+    if (!updated || updated.length === 0) {
+      return res.status(404).json({ error: "Notification not found or access denied" });
+    }
     res.json({ success: true });
   } catch (err) {
     if (!isLocalFallbackAllowed) {
@@ -13591,7 +14555,7 @@ app.post("/api/cashfree/create-order", requireAuth, async (req, res) => {
   if (req.user.id !== targetUserId && req.user.role !== "admin") {
     return res.status(403).json({ error: "Access denied" });
   }
-  const orderId = req.body.orderId || `order_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const orderId = `order_${Date.now()}_${crypto6.randomBytes(6).toString("hex")}`;
   const targetPurpose = purpose || "wallet_deposit";
   try {
     await createPaymentOrder({
@@ -13603,7 +14567,7 @@ app.post("/api/cashfree/create-order", requireAuth, async (req, res) => {
     const { appId, secretKey, isProd } = getCashfreeCredentials();
     if (appId && secretKey) {
       const baseUrl = isProd ? "https://api.cashfree.com/pg/orders" : "https://sandbox.cashfree.com/pg/orders";
-      const origin = `${req.protocol}://${req.get("host")}`;
+      const origin = getCanonicalAppUrl(req);
       const cfResponse = await fetch(baseUrl, {
         method: "POST",
         headers: {
@@ -13759,11 +14723,22 @@ app.post("/api/cashfree/verify", requireAuth, async (req, res) => {
 });
 app.post("/api/cashfree/webhook", async (req, res) => {
   const { secretKey } = getCashfreeCredentials();
-  const rawBodyBuffer = req.rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  const rawBodyBuffer = req.rawBody;
   const signature = String(req.headers["x-webhook-signature"] || req.headers["x-cashfree-signature"] || "");
   const timestamp2 = String(req.headers["x-webhook-timestamp"] || req.headers["x-cashfree-timestamp"] || "");
   if (!secretKey || !signature || !timestamp2) {
     return res.status(401).json({ error: "Missing webhook signature, timestamp, or gateway configuration" });
+  }
+  if (!Buffer.isBuffer(rawBodyBuffer) || rawBodyBuffer.length === 0) {
+    return res.status(400).json({ error: "Missing raw webhook payload" });
+  }
+  const rawTs = Number(timestamp2);
+  if (!Number.isFinite(rawTs) || rawTs <= 0) {
+    return res.status(401).json({ error: "Invalid webhook timestamp" });
+  }
+  const tsMs = rawTs < 1e12 ? rawTs * 1e3 : rawTs;
+  if (Math.abs(Date.now() - tsMs) > 15 * 60 * 1e3) {
+    return res.status(401).json({ error: "Stale or replayed webhook timestamp" });
   }
   const isValidSig = verifyCashfreeSignature(rawBodyBuffer, timestamp2, signature, secretKey);
   if (!isValidSig) {
@@ -14360,18 +15335,20 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
     const wallet = await getOrCreateWallet(sponsorId);
     const walletBalance = wallet.balance;
     const shortfall = Math.max(0, Math.round((total - walletBalance) * 100) / 100);
-    const billTokenData = {
-      sponsorId,
-      creatorIds,
-      customRates: customRates || null,
-      creatorDeliverables: creatorDeliverables || null,
-      deliverable: defaultDeliv,
-      subtotal,
-      total,
-      nonce: crypto5.randomBytes(8).toString("hex"),
-      exp: Date.now() + 15 * 60 * 1e3
-    };
-    const billId = Buffer.from(JSON.stringify(billTokenData)).toString("base64");
+    const billId = createSignedBillToken(
+      {
+        sponsorId,
+        selectedCreatorIds: creatorIds.map((cid) => Number(cid)),
+        deliverable: defaultDeliv,
+        creatorDeliverables: creatorDeliverables || null,
+        customRates: customRates || null,
+        subtotal,
+        platformFee: feeTotal,
+        gstAmount: gstInFee,
+        total
+      },
+      getJwtSecret()
+    );
     res.json({
       lines,
       subtotal,
@@ -14389,28 +15366,38 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
 app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "admin"), async (req, res) => {
   const sponsorId = req.user.id;
   try {
-    const { details, creatorIds, customRates, creatorDeliverables, billId } = req.body;
-    if (!billId || !Array.isArray(creatorIds) || creatorIds.length === 0) {
-      return res.status(400).json({ error: "Invalid submission data" });
+    const { details, billId } = req.body;
+    if (!billId || typeof billId !== "string") {
+      return res.status(400).json({ error: "Signed bill token is required" });
     }
     let billData;
     try {
-      billData = JSON.parse(Buffer.from(billId, "base64").toString("utf-8"));
-    } catch {
-      return res.status(400).json({ error: "Invalid bill token" });
+      billData = await verifyAndConsumeBillToken(billId, sponsorId, getJwtSecret());
+    } catch (billErr) {
+      const msg = billErr?.message || "Invalid bill token";
+      if (msg.includes("expired") || msg.includes("already been used")) {
+        return res.status(409).json({ error: msg, bill: null });
+      }
+      if (msg.includes("does not belong")) {
+        return res.status(403).json({ error: msg });
+      }
+      return res.status(400).json({ error: msg });
     }
-    if (Date.now() > billData.exp) {
-      return res.status(409).json({ error: "Bill expired", bill: null });
+    const creatorIds = billData.selectedCreatorIds;
+    if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
+      return res.status(400).json({ error: "Invalid creator list in signed bill" });
     }
     const totalPayable = billData.total;
+    const customRates = billData.customRates || null;
+    const creatorDeliverables = billData.creatorDeliverables || null;
     const wallet = await getOrCreateWallet(sponsorId);
     if (wallet.balance < totalPayable) {
       return res.status(402).json({
         error: "Insufficient funds",
         bill: {
           subtotal: billData.subtotal,
-          feeTotal: billData.subtotal * 0.075,
-          gstInFee: billData.subtotal * 0.075 * 0.18,
+          feeTotal: billData.platformFee ?? billData.subtotal * 0.075,
+          gstInFee: billData.gstAmount ?? billData.subtotal * 0.075 * 0.18,
           total: totalPayable,
           walletBalance: wallet.balance,
           shortfall: totalPayable - wallet.balance,
@@ -14423,8 +15410,8 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     await ensureWorkspacesLoaded();
     const allWorkspaces = loadAllWorkspaces();
     const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map((w) => w.id || 0)) + 1 : 1;
-    const defaultDeliv = normalizeDeliverableKey(details?.deliverable || details?.deliverableType || "reel");
-    const effectiveCreatorDeliverables = creatorDeliverables || billData.creatorDeliverables || {};
+    const defaultDeliv = normalizeDeliverableKey(billData.deliverable || details?.deliverable || details?.deliverableType || "reel");
+    const effectiveCreatorDeliverables = creatorDeliverables || {};
     const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIds.map(Number));
     const offerMessages = [];
     const chosenDeliverableLabels = /* @__PURE__ */ new Set();
@@ -14738,6 +15725,12 @@ app.all("/api/*", (req, res) => {
 app.use((err, req, res, _next) => {
   console.error("[SERVER ERROR]", err?.message || err);
   if (res.headersSent) return;
+  if (err?.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ error: "File exceeds maximum allowed upload size (25 MB)" });
+  }
+  if (err?.type === "entity.parse.failed" || err instanceof SyntaxError && "body" in err) {
+    return res.status(400).json({ error: "Malformed JSON request body" });
+  }
   const statusCode = err.statusCode || err.status || 500;
   const isProd = process.env.NODE_ENV === "production";
   return res.status(statusCode).json({
@@ -14782,7 +15775,7 @@ async function startServer() {
       if (req.originalUrl.startsWith("/api")) return next();
       try {
         const url = req.originalUrl;
-        let template = fs2.readFileSync(path2.resolve(process.cwd(), "index.html"), "utf-8");
+        let template = fs2.readFileSync(path3.resolve(process.cwd(), "index.html"), "utf-8");
         template = await vite.transformIndexHtml(url, template);
         res.status(200).set({ "Content-Type": "text/html" }).end(template);
       } catch (e) {
@@ -14791,12 +15784,12 @@ async function startServer() {
       }
     });
   } else {
-    const distPath = path2.join(process.cwd(), "dist");
+    const distPath = path3.join(process.cwd(), "dist");
     if (fs2.existsSync(distPath)) {
       app.use(express.static(distPath));
       app.get("*", (req, res, next) => {
         if (req.path.startsWith("/api")) return next();
-        res.sendFile(path2.join(distPath, "index.html"));
+        res.sendFile(path3.join(distPath, "index.html"));
       });
     }
   }
@@ -14824,4 +15817,3 @@ export {
   saveCreatorProfilePicture,
   verifySignedOtpToken
 };
-//# sourceMappingURL=server.js.map

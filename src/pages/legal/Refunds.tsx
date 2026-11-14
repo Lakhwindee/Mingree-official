@@ -24,7 +24,7 @@ export default function Refunds() {
         <div className="prose prose-neutral dark:prose-invert max-w-none space-y-6">
           <section>
             <p className="text-muted-foreground leading-relaxed">
-              This Refund and Cancellation Policy is published by <strong>LAKHWINDER Singh / MusicLand Studios</strong> (Brand: <strong>Mingree</strong>) and applies to all transactions made on mingree.com.
+              This Refund and Cancellation Policy is published by <strong>MINGREE</strong> (<strong>Organisation Type:</strong> Proprietary / Sole Proprietorship; <strong>Proprietor:</strong> <strong>Shri Lakhwinder Singh</strong>; <strong>Udyam Registration No.:</strong> <strong>UDYAM-PB-20-0059364</strong>; <strong>Business Activity:</strong> Services – NIC Code 73100 Advertising Services) and applies to all transactions made on <strong>mingree.com</strong>.
             </p>
           </section>
 

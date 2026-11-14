@@ -18,15 +18,29 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    function hasRestrictedUserFields() {
+      return request.resource.data.keys().hasAny([
+        'role', 'isAdmin', 'balance', 'escrowHeld', 'isInstagramVerified', 'tier', 'status'
+      ]);
+    }
+
+    function isRestrictedFieldModified() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'role', 'isAdmin', 'balance', 'escrowHeld', 'isInstagramVerified', 'tier', 'status'
+      ]);
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId);
       allow list: if false;
-      allow create, update: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && !hasRestrictedUserFields();
+      allow update: if isOwner(userId) && isValidId(userId) && !isRestrictedFieldModified();
       allow delete: if false;
     }
 
     match /test/{docId} {
-      allow get: if true;
+      allow get: if docId == 'connection';
+      allow list, write: if false;
     }
   }
 }

@@ -162,6 +162,8 @@ export interface TaxInvoiceData {
   totalAmount: number;
 }
 
+import { escapeHtml } from "./security";
+
 export function generateTaxInvoiceHtml(data: TaxInvoiceData): string {
   const cgst = (data.gstAmount / 2).toFixed(2);
   const sgst = (data.gstAmount / 2).toFixed(2);
@@ -171,7 +173,7 @@ export function generateTaxInvoiceHtml(data: TaxInvoiceData): string {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Tax Invoice - ${data.invoiceNumber}</title>
+  <title>Tax Invoice - ${escapeHtml(data.invoiceNumber)}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 30px; color: #1e293b; background-color: #f8fafc; }
     .invoice-card { max-width: 750px; margin: 0 auto; background: #ffffff; padding: 40px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
@@ -194,30 +196,30 @@ export function generateTaxInvoiceHtml(data: TaxInvoiceData): string {
     <div class="header">
       <div>
         <h1 class="brand-title">Mingree</h1>
-        <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b;">Creator & Sponsor Platform</p>
+        <p style="margin: 4px 0 0 0; font-size: 12px; color: #64748b;">Creator &amp; Sponsor Platform</p>
       </div>
       <div>
         <h2 class="invoice-title">Tax Invoice</h2>
-        <p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;"># ${data.invoiceNumber}</p>
-        <p style="margin: 2px 0 0 0; font-size: 13px; color: #64748b;">Date: ${data.invoiceDate}</p>
+        <p style="margin: 4px 0 0 0; font-size: 13px; color: #475569;"># ${escapeHtml(data.invoiceNumber)}</p>
+        <p style="margin: 2px 0 0 0; font-size: 13px; color: #64748b;">Date: ${escapeHtml(data.invoiceDate)}</p>
       </div>
     </div>
 
     <div class="grid">
       <div class="info-block">
         <div class="info-title">Billed By:</div>
-        <strong>Mingree Technologies Pvt Ltd</strong><br>
+        <strong>MINGREE</strong> (Proprietary Enterprise)<br>
         GSTIN: 27AABCM1234F1Z1<br>
         PAN: AABCM1234F<br>
-        Mumbai, Maharashtra, India
+        India
       </div>
       <div class="info-block">
         <div class="info-title">Billed To:</div>
-        <strong>${data.customerName}</strong><br>
-        ${data.customerEmail}<br>
-        ${data.customerGstin ? `GSTIN: ${data.customerGstin}<br>` : ""}
-        ${data.customerPan ? `PAN: ${data.customerPan}<br>` : ""}
-        ${data.billingAddress || "India"}
+        <strong>${escapeHtml(data.customerName)}</strong><br>
+        ${escapeHtml(data.customerEmail)}<br>
+        ${data.customerGstin ? `GSTIN: ${escapeHtml(data.customerGstin)}<br>` : ""}
+        ${data.customerPan ? `PAN: ${escapeHtml(data.customerPan)}<br>` : ""}
+        ${escapeHtml(data.billingAddress || "India")}
       </div>
     </div>
 
@@ -234,7 +236,7 @@ export function generateTaxInvoiceHtml(data: TaxInvoiceData): string {
       </thead>
       <tbody>
         <tr>
-          <td>${data.description}</td>
+          <td>${escapeHtml(data.description)}</td>
           <td class="text-right">${data.baseAmount.toFixed(2)}</td>
           <td class="text-right">${data.platformFee.toFixed(2)}</td>
           <td class="text-right">${cgst}</td>
@@ -250,7 +252,7 @@ export function generateTaxInvoiceHtml(data: TaxInvoiceData): string {
 
     <div class="footer">
       <p>This is a computer-generated tax invoice and requires no physical signature.</p>
-      <p>&copy; ${new Date().getFullYear()} Mingree Platform. Statutory GST Compliance ID: MINGREE-INV-${Date.now()}</p>
+      <p>&copy; ${new Date().getFullYear()} MINGREE. Statutory GST Compliance ID: MINGREE-INV-${Date.now()}</p>
     </div>
   </div>
 </body>

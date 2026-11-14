@@ -936,26 +936,36 @@ export async function getDisputesAdmin(params: {
   const offset = (page - 1) * limit;
 
   try {
-    let whereClause = "1=1";
-    if (params.status && params.status !== "all") {
-      whereClause = `disp.status = '${params.status}'`;
-    }
-
-    const countRes = await pool.query(`SELECT COUNT(*) FROM disputes disp WHERE ${whereClause}`);
+    const hasStatusFilter = Boolean(params.status && params.status !== "all");
+    const countRes = hasStatusFilter
+      ? await pool.query(`SELECT COUNT(*) FROM disputes disp WHERE disp.status = $1`, [params.status])
+      : await pool.query(`SELECT COUNT(*) FROM disputes disp`);
     const total = Number(countRes.rows[0]?.count || 0);
 
-    const itemsRes = await pool.query(
-      `SELECT disp.*, d.price, d.post_url, u_r.name as raised_by_name, u_a.name as artist_name, u_c.name as creator_name
-       FROM disputes disp
-       JOIN deals d ON d.id = disp.deal_id
-       JOIN users u_r ON u_r.id = disp.raised_by_user_id
-       JOIN users u_a ON u_a.id = d.artist_id
-       JOIN users u_c ON u_c.id = d.creator_id
-       WHERE ${whereClause}
-       ORDER BY disp.id DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    const itemsRes = hasStatusFilter
+      ? await pool.query(
+          `SELECT disp.*, d.price, d.post_url, u_r.name as raised_by_name, u_a.name as artist_name, u_c.name as creator_name
+           FROM disputes disp
+           JOIN deals d ON d.id = disp.deal_id
+           JOIN users u_r ON u_r.id = disp.raised_by_user_id
+           JOIN users u_a ON u_a.id = d.artist_id
+           JOIN users u_c ON u_c.id = d.creator_id
+           WHERE disp.status = $1
+           ORDER BY disp.id DESC
+           LIMIT $2 OFFSET $3`,
+          [params.status, limit, offset]
+        )
+      : await pool.query(
+          `SELECT disp.*, d.price, d.post_url, u_r.name as raised_by_name, u_a.name as artist_name, u_c.name as creator_name
+           FROM disputes disp
+           JOIN deals d ON d.id = disp.deal_id
+           JOIN users u_r ON u_r.id = disp.raised_by_user_id
+           JOIN users u_a ON u_a.id = d.artist_id
+           JOIN users u_c ON u_c.id = d.creator_id
+           ORDER BY disp.id DESC
+           LIMIT $1 OFFSET $2`,
+          [limit, offset]
+        );
 
     const disputeList = itemsRes.rows.map((disp) => ({
       id: Number(disp.id),
@@ -1094,28 +1104,40 @@ export async function getWithdrawalsAdmin(params: {
   const offset = (page - 1) * limit;
 
   try {
-    let whereClause = "1=1";
-    if (params.status && params.status !== "all") {
-      whereClause = `w.status = '${params.status}'`;
-    }
-
-    const countRes = await pool.query(`SELECT COUNT(*) FROM withdrawals w WHERE ${whereClause}`);
+    const hasStatusFilter = Boolean(params.status && params.status !== "all");
+    const countRes = hasStatusFilter
+      ? await pool.query(`SELECT COUNT(*) FROM withdrawals w WHERE w.status = $1`, [params.status])
+      : await pool.query(`SELECT COUNT(*) FROM withdrawals w`);
     const total = Number(countRes.rows[0]?.count || 0);
 
-    const itemsRes = await pool.query(
-      `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
-              pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
-              cp.status as creator_status
-       FROM withdrawals w
-       LEFT JOIN users u ON u.id = w.user_id
-       LEFT JOIN payout_methods pm ON pm.id = w.payout_method_id
-       LEFT JOIN kyc k ON k.user_id = w.user_id
-       LEFT JOIN creator_profiles cp ON cp.user_id = w.user_id
-       WHERE ${whereClause}
-       ORDER BY w.id DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    const itemsRes = hasStatusFilter
+      ? await pool.query(
+          `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
+                  pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
+                  cp.status as creator_status
+           FROM withdrawals w
+           LEFT JOIN users u ON u.id = w.user_id
+           LEFT JOIN payout_methods pm ON pm.id = w.payout_method_id
+           LEFT JOIN kyc k ON k.user_id = w.user_id
+           LEFT JOIN creator_profiles cp ON cp.user_id = w.user_id
+           WHERE w.status = $1
+           ORDER BY w.id DESC
+           LIMIT $2 OFFSET $3`,
+          [params.status, limit, offset]
+        )
+      : await pool.query(
+          `SELECT w.*, u.name as user_name, u.email as user_email, k.pan_masked as pan,
+                  pm.type as payout_type, pm.account_details, pm.masked_account, k.status as kyc_status,
+                  cp.status as creator_status
+           FROM withdrawals w
+           LEFT JOIN users u ON u.id = w.user_id
+           LEFT JOIN payout_methods pm ON pm.id = w.payout_method_id
+           LEFT JOIN kyc k ON k.user_id = w.user_id
+           LEFT JOIN creator_profiles cp ON cp.user_id = w.user_id
+           ORDER BY w.id DESC
+           LIMIT $1 OFFSET $2`,
+          [limit, offset]
+        );
 
     const withdrawalList = itemsRes.rows.map((w) => {
       const details = w.account_details || {};
@@ -1129,7 +1151,7 @@ export async function getWithdrawalsAdmin(params: {
         amount: parseFloat(w.amount || "0"),
         tdsAmount: parseFloat(w.tds_amount || "0"),
         netAmount: parseFloat((parseFloat(w.amount || "0") - parseFloat(w.tds_amount || "0")).toFixed(2)),
-        status: w.status, // pending | paid | failed | reversed
+        status: w.status,
         maskedPayoutMethod: `${w.payout_type || "UPI/Bank"} (${maskedPayout})`,
         kycStatus: w.kyc_status || "verified",
         creatorStrikes: w.creator_status === "blocked" ? 1 : 0,
@@ -1156,36 +1178,49 @@ export async function approveWithdrawalAdmin(
     throw new Error("UTR reference transfer number is strictly required to approve a withdrawal.");
   }
 
-  const wRes = await pool.query(`SELECT * FROM withdrawals WHERE id = $1`, [withdrawalId]);
-  if (wRes.rows.length === 0) throw new Error("Withdrawal record not found");
-  const withdrawal = wRes.rows[0];
-
-  if (withdrawal.status !== "pending") {
-    throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
-  }
-
+  const cleanUtr = utrRef.trim();
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query("BEGIN");
+    const wRes = await client.query(`SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE`, [withdrawalId]);
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal record not found");
+    }
+    const withdrawal = wRes.rows[0];
+    if (withdrawal.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
+    }
+
+    await client.query(
       `UPDATE withdrawals SET status = 'paid', utr_ref = $1 WHERE id = $2`,
-      [utrRef.trim(), withdrawalId]
+      [cleanUtr, withdrawalId]
     );
 
-    // Record ledger entry
-    const userWallet = await getOrCreateWallet(withdrawal.user_id);
-    await pool.query(
+    const wRow = await client.query(`SELECT balance, escrow_held FROM wallets WHERE user_id = $1 FOR UPDATE`, [withdrawal.user_id]);
+    const bal = Number(wRow.rows[0]?.balance || 0);
+    const esc = Number(wRow.rows[0]?.escrow_held || 0);
+
+    await client.query(
       `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
        VALUES ($1, 'withdrawal_paid', $2, $3, $4, 'withdrawal', $5, $6)`,
       [
         withdrawal.user_id,
         (-parseFloat(withdrawal.amount)).toFixed(2),
-        userWallet.balance.toFixed(2),
-        userWallet.escrowHeld.toFixed(2),
+        bal.toFixed(2),
+        esc.toFixed(2),
         String(withdrawalId),
-        `Withdrawal paid via UTR ${utrRef.trim()}`,
+        `Withdrawal paid via UTR ${cleanUtr}`,
       ]
     );
-  } catch (err) {
-    console.error("[APPROVE WITHDRAWAL ERROR]", err);
+
+    await client.query("COMMIT");
+  } catch (err: any) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 
   await recordAdminAuditLog(
@@ -1194,12 +1229,12 @@ export async function approveWithdrawalAdmin(
     "withdrawal",
     withdrawalId,
     { status: "pending" },
-    { status: "paid", utrRef: utrRef.trim() },
-    `Approved payout with UTR ${utrRef.trim()}`,
+    { status: "paid", utrRef: cleanUtr },
+    `Approved payout with UTR ${cleanUtr}`,
     ipAddress
   );
 
-  return { success: true, withdrawalId, utrRef: utrRef.trim(), message: `Withdrawal #${withdrawalId} approved and paid.` };
+  return { success: true, withdrawalId, utrRef: cleanUtr, message: `Withdrawal #${withdrawalId} approved and paid.` };
 }
 
 export async function rejectWithdrawalAdmin(
@@ -1212,42 +1247,60 @@ export async function rejectWithdrawalAdmin(
     throw new Error("A typed reason is strictly required to reject a withdrawal.");
   }
 
-  const wRes = await pool.query(`SELECT * FROM withdrawals WHERE id = $1`, [withdrawalId]);
-  if (wRes.rows.length === 0) throw new Error("Withdrawal record not found");
-  const withdrawal = wRes.rows[0];
+  const cleanReason = reason.trim();
+  let amountToReturn = 0;
 
-  if (withdrawal.status !== "pending") {
-    throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
-  }
-
-  const amountToReturn = parseFloat(withdrawal.amount);
-
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query("BEGIN");
+    const wRes = await client.query(`SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE`, [withdrawalId]);
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal record not found");
+    }
+    const withdrawal = wRes.rows[0];
+    if (withdrawal.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal #${withdrawalId} is already ${withdrawal.status}.`);
+    }
+
+    amountToReturn = parseFloat(withdrawal.amount);
+
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [withdrawal.user_id]
+    );
+    const wRow = await client.query(`SELECT balance, escrow_held FROM wallets WHERE user_id = $1 FOR UPDATE`, [withdrawal.user_id]);
+    const currentBal = Number(wRow.rows[0]?.balance || 0);
+    const currentEsc = Number(wRow.rows[0]?.escrow_held || 0);
+    const newBalance = Math.round((currentBal + amountToReturn) * 100) / 100;
+
+    await client.query(
       `UPDATE withdrawals SET status = 'rejected', rejection_reason = $1 WHERE id = $2`,
-      [reason.trim(), withdrawalId]
+      [cleanReason, withdrawalId]
     );
 
-    // Return held amount to creator balance
-    const userWallet = await getOrCreateWallet(withdrawal.user_id);
-    const newBalance = userWallet.balance + amountToReturn;
+    await client.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance.toFixed(2), withdrawal.user_id]);
 
-    await pool.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance.toFixed(2), withdrawal.user_id]);
-
-    await pool.query(
+    await client.query(
       `INSERT INTO wallet_transactions (user_id, type, amount, balance_after, escrow_after, reference_type, reference_id, description)
        VALUES ($1, 'withdrawal_refund', $2, $3, $4, 'withdrawal', $5, $6)`,
       [
         withdrawal.user_id,
         amountToReturn.toFixed(2),
         newBalance.toFixed(2),
-        userWallet.escrowHeld.toFixed(2),
+        currentEsc.toFixed(2),
         String(withdrawalId),
-        `Withdrawal rejected refund: ${reason.trim()}`,
+        `Withdrawal rejected refund: ${cleanReason}`,
       ]
     );
-  } catch (err) {
-    console.error("[REJECT WITHDRAWAL ERROR]", err);
+
+    await client.query("COMMIT");
+  } catch (err: any) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 
   await recordAdminAuditLog(
@@ -1256,8 +1309,8 @@ export async function rejectWithdrawalAdmin(
     "withdrawal",
     withdrawalId,
     { status: "pending" },
-    { status: "rejected", reason: reason.trim() },
-    reason.trim(),
+    { status: "rejected", reason: cleanReason },
+    cleanReason,
     ipAddress
   );
 

@@ -318,6 +318,11 @@ export async function raiseDispute(params: {
   }
 
   if (!deal) throw new Error("Deal not found");
+  if (Number(deal.artistId) !== Number(raisedByUserId) && Number(deal.creatorId) !== Number(raisedByUserId)) {
+    const err: any = new Error("Forbidden: Only the campaign sponsor or assigned creator can dispute this deal");
+    err.status = 403;
+    throw err;
+  }
   if (deal.status === "released" || deal.status === "refunded") {
     throw new Error("Cannot open dispute on a completed or fully refunded deal.");
   }

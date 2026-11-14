@@ -423,6 +423,11 @@ export async function respondToDirectOffer(params: {
   }
 
   if (!offer) throw new Error("Offer not found");
+  if (Number(offer.creatorId) !== Number(params.creatorId)) {
+    const err: any = new Error("Forbidden: You are not the invited creator for this direct offer");
+    err.status = 403;
+    throw err;
+  }
 
   if (action === "decline") {
     offer.status = "declined";

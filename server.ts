@@ -12,10 +12,32 @@ import multer from "multer";
 import { CONFIG } from "./shared/config";
 import { PROMOTION_CATEGORIES, notifications } from "./shared/schema";
 import { db, pool, verifyDbConnection, isLocalFallbackAllowed, isDatabaseConfigured, ensureDatabaseSchema } from "./server/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getTierNameByFollowers, getTierBannerText, TIERS } from "./shared/tiers";
 import { uploadToStorage } from "./server/storage";
 import { enforceProductionEnvironment } from "./server/envValidation";
+import {
+  escapeHtml,
+  isSafeRelativeRedirect,
+  isSafeAssetUrl,
+  getCanonicalAppUrl,
+  isCorsOriginAllowed,
+  stripDangerousKeysMiddleware,
+  normalizePhoneE164,
+  verifyFirebasePhoneIdToken,
+  consumeSingleUseJti,
+  revokeSessionJti,
+  isSessionJtiRevoked,
+  getUserTokenVersion,
+  bumpUserTokenVersion,
+  checkOtpAttemptLock,
+  recordOtpFailedAttempt,
+  clearOtpAttempts,
+  createSignedBillToken,
+  verifyAndConsumeBillToken,
+  validateUploadedFileMagicBytes,
+  verifyMetaSignedRequest,
+} from "./server/security";
 
 // Prevent container crashes from unhandled rejections or exceptions
 process.on('unhandledRejection', (reason) => {
@@ -202,25 +224,24 @@ app.use(
     frameguard: false,
     crossOriginOpenerPolicy: false,
     crossOriginResourcePolicy: false,
+    xContentTypeOptions: true,
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    hsts: process.env.NODE_ENV === "production" ? { maxAge: 31536000, includeSubDomains: true } : false,
   })
 );
-
-const allowedOrigins = [
-  process.env.APP_URL,
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.some((o) => o && origin.startsWith(o)) || process.env.NODE_ENV !== "production") {
+      if (!origin || isCorsOriginAllowed(origin)) {
         callback(null, true);
       } else {
-        callback(null, true);
+        callback(null, false);
       }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
   })
 );
 
@@ -271,7 +292,14 @@ app.use(
     },
   })
 );
-app.use(express.urlencoded({ extended: true, limit: "100kb" }));
+app.use(express.urlencoded({
+  extended: true,
+  limit: "100kb",
+  verify: (req: any, _res, buf) => {
+    if (!req.rawBody) req.rawBody = buf;
+  },
+}));
+app.use(stripDangerousKeysMiddleware);
 
 // Robust URL normalizer for Vercel Serverless Function rewrites
 app.use((req, res, next) => {
@@ -315,27 +343,39 @@ app.get(["/api/health", "/api/system/db-sync"], async (req, res) => {
     res.status(200).json({
       status: "ok",
       database: "warning",
-      schemaError: err?.message,
+      ...(process.env.NODE_ENV !== "production" ? { schemaError: err?.message } : {}),
       timestamp: new Date().toISOString()
     });
   }
 });
 
 // File Upload Configuration & Endpoint (No startup disk writes; safe for read-only Vercel file system)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+const uploadRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many file uploads. Please try again in 15 minutes." },
 });
 
-app.post("/api/upload", upload.single("file"), async (req, res) => {
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
+
+app.post("/api/upload", requireAuth, uploadRateLimiter, upload.single("file"), async (req: AuthRequest, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
+  }
+  const validation = validateUploadedFileMagicBytes(req.file.buffer, req.file.mimetype, req.file.originalname);
+  if (!validation.valid) {
+    return res.status(400).json({ error: validation.reason || "Invalid or unsafe file content" });
   }
   try {
     const result = await uploadToStorage({
       buffer: req.file.buffer,
-      originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
+      originalName: validation.safeFilename,
+      mimeType: validation.detectedMime,
       folder: "uploads",
     });
     return res.json({
@@ -347,13 +387,21 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({
-      error: err?.message || "File upload failed",
+      error: process.env.NODE_ENV === "production" ? "File upload failed" : (err?.message || "File upload failed"),
     });
   }
 });
 
-// Serve uploaded assets statically from public/uploads
-app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
+// Serve uploaded assets statically from public/uploads with nosniff header
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "public", "uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Disposition", "inline");
+    },
+  })
+);
 
 // GET /api/creators/:id/avatar - Securely streams creator's profile picture
 app.get("/api/creators/:id/avatar", (req, res) => {
@@ -364,12 +412,20 @@ app.get("/api/creators/:id/avatar", (req, res) => {
     return res.status(404).json({ error: "Avatar not found" });
   }
   if (avatar.startsWith("/uploads/")) {
-    const filePath = path.join(process.cwd(), "public", avatar);
+    const uploadsRoot = path.resolve(process.cwd(), "public", "uploads");
+    const filePath = path.resolve(process.cwd(), "public", avatar.replace(/^\/+/, ""));
+    if (!filePath.startsWith(uploadsRoot + path.sep)) {
+      return res.status(403).json({ error: "Invalid avatar path" });
+    }
     if (fs.existsSync(filePath)) {
-      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "public, max-age=86400");
       return res.sendFile(filePath);
     }
+    return res.status(404).json({ error: "Avatar file not found" });
+  }
+  if (!isSafeAssetUrl(avatar, false)) {
+    return res.status(404).json({ error: "Avatar not available" });
   }
   return res.redirect(avatar);
 });
@@ -563,10 +619,10 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
           <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator & Sponsor Collaboration Platform</p>
         </div>
         <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
-          <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${userName || "there"}</strong>,</p>
+          <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${escapeHtml(userName || "there")}</strong>,</p>
           <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">Use the 6-digit verification code below to complete your email verification on Mingree:</p>
           <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${otp}</span>
+            <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${escapeHtml(otp)}</span>
           </div>
           <p style="color: #64748b; font-size: 13px; margin: 16px 0 0 0; text-align: center;">⏱️ This OTP is valid for <strong>10 minutes</strong>. Please do not share it with anyone.</p>
         </div>
@@ -592,12 +648,11 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
 // ================= API ROUTES =================
 
 
-// Check Email Service Status
+// Check Email Service Status (never leak configured email address publicly)
 app.get("/api/auth/email-status", (req, res) => {
   const creds = getEmailCredentials();
   res.json({
     configured: Boolean(creds),
-    user: creds ? creds.user : null,
   });
 });
 
@@ -613,29 +668,44 @@ function getEphemeralDevSigningSecret(): string {
 function getOtpSigningSecret(): string {
   const secret = (process.env.OTP_SIGNING_SECRET || process.env.JWT_SECRET || "").trim();
   if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("FATAL: OTP_SIGNING_SECRET or JWT_SECRET must be configured in production.");
+    }
     return getEphemeralDevSigningSecret();
   }
   return secret;
 }
 
 export function createSignedOtpToken(email: string, otpHash: string, expiresAt: number): string {
-  const payload = Buffer.from(JSON.stringify({ email, otpHash, expiresAt })).toString("base64url");
+  const jti = crypto.randomBytes(12).toString("hex");
+  const payload = Buffer.from(JSON.stringify({ email, otpHash, expiresAt, jti })).toString("base64url");
   const sig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
-export function verifySignedOtpToken(token: string | undefined, email: string, otp: string): { valid: boolean; expired?: boolean } {
+export function verifySignedOtpToken(
+  token: string | undefined,
+  email: string,
+  otp: string
+): { valid: boolean; expired?: boolean; jti?: string } {
   if (!token || typeof token !== "string" || !token.includes(".")) return { valid: false };
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return { valid: false };
   const expectedSig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
-  if (sig !== expectedSig) return { valid: false };
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return { valid: false };
+  }
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     if (decoded.email !== email) return { valid: false };
     if (Date.now() > Number(decoded.expiresAt)) return { valid: false, expired: true };
     const submittedHash = crypto.createHash("sha256").update(otp).digest("hex");
-    return { valid: submittedHash === decoded.otpHash };
+    return {
+      valid: submittedHash === decoded.otpHash,
+      jti: typeof decoded.jti === "string" ? decoded.jti : undefined,
+    };
   } catch {
     return { valid: false };
   }
@@ -643,20 +713,31 @@ export function verifySignedOtpToken(token: string | undefined, email: string, o
 
 function createVerifiedEmailToken(email: string): string {
   const expiresAt = Date.now() + 30 * 60 * 1000; // 30 mins
-  const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt })).toString("base64url");
+  const jti = crypto.randomBytes(12).toString("hex");
+  const payload = Buffer.from(JSON.stringify({ email, verified: true, expiresAt, jti })).toString("base64url");
   const sig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
   return `${payload}.${sig}`;
 }
 
-function isEmailVerifiedByToken(token: string | undefined, email: string): boolean {
+async function consumeVerifiedEmailToken(token: string | undefined, expectedEmails: string | string[]): Promise<boolean> {
   if (!token || typeof token !== "string" || !token.includes(".")) return false;
   const [payload, sig] = token.split(".");
   if (!payload || !sig) return false;
   const expectedSig = crypto.createHmac("sha256", getOtpSigningSecret()).update(payload).digest("hex");
-  if (sig !== expectedSig) return false;
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+    return false;
+  }
   try {
     const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
-    return decoded.email === email && decoded.verified === true && Date.now() <= Number(decoded.expiresAt);
+    const candidates = Array.isArray(expectedEmails) ? expectedEmails : [expectedEmails];
+    const matchesEmail = candidates.some((e) => e && decoded.email === e.toLowerCase().trim());
+    if (!matchesEmail || decoded.verified !== true || Date.now() > Number(decoded.expiresAt)) {
+      return false;
+    }
+    const tokenJti = typeof decoded.jti === "string" ? decoded.jti : crypto.createHash("sha256").update(token).digest("hex");
+    return await consumeSingleUseJti(tokenJti, "verified_email", 35 * 60 * 1000);
   } catch {
     return false;
   }
@@ -872,7 +953,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
   });
 });
 
-// Verify OTP
+// Verify OTP (single-use + brute-force lockout protection)
 app.post("/api/auth/verify-otp", async (req, res) => {
   const { email, phone, otp, otpToken } = req.body || {};
   if (!email || !otp) {
@@ -882,6 +963,14 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   const cleanEmail = String(email).toLowerCase().trim();
   const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
   const cleanOtp = String(otp).trim();
+
+  const tokenLockKey = otpToken ? `verify:token:${crypto.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;
+  const lockCheck = checkOtpAttemptLock(tokenLockKey);
+  if (!lockCheck.allowed) {
+    return res.status(429).json({
+      error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request a new OTP.`,
+    });
+  }
 
   const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
   if (tokenCheck.expired) {
@@ -903,11 +992,18 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     if (record.attempts >= 5) {
       deleteOtpRecord(cleanEmail);
       if (cleanPhone) deleteOtpRecord(cleanPhone);
-      return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
     }
   }
 
   let isOtpValid = tokenCheck.valid;
+  if (isOtpValid && tokenCheck.jti) {
+    const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_token", 15 * 60 * 1000);
+    if (!firstUse) {
+      return res.status(400).json({ error: "OTP has already been used. Please request a new one." });
+    }
+  }
+
   if (!isOtpValid && record) {
     const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
     if (submittedHash === record.otpHash) {
@@ -916,14 +1012,25 @@ app.post("/api/auth/verify-otp", async (req, res) => {
       record.attempts += 1;
       setOtpRecord(cleanEmail, record);
       if (cleanPhone) setOtpRecord(cleanPhone, record);
+      const failState = recordOtpFailedAttempt(tokenLockKey, 5);
+      if (failState.locked || record.attempts >= 5) {
+        deleteOtpRecord(cleanEmail);
+        if (cleanPhone) deleteOtpRecord(cleanPhone);
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+      }
       return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
     }
   }
 
   if (!isOtpValid) {
+    const failState = recordOtpFailedAttempt(tokenLockKey, 5);
+    if (failState.locked) {
+      return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
+    }
     return res.status(400).json({ error: "Invalid verification code. Please check and try again." });
   }
 
+  clearOtpAttempts(tokenLockKey);
   deleteOtpRecord(cleanEmail);
   if (cleanPhone) deleteOtpRecord(cleanPhone);
   verifiedSignupEmails.add(cleanEmail);
@@ -1064,21 +1171,32 @@ app.post("/api/auth/reset-password", async (req, res) => {
   deleteOtpRecord(cleanEmail);
 
   const newHash = bcrypt.hashSync(String(targetPassword), 10);
+  let targetUserId: number | null = null;
 
-  // Update in DB
+  // Update in DB & bump token_version to revoke existing sessions
   try {
-    await pool.query("UPDATE users SET password_hash = $1 WHERE LOWER(email) = LOWER($2)", [newHash, cleanEmail]);
+    const dbRes = await pool.query(
+      "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
+      [newHash, cleanEmail]
+    );
+    if (dbRes.rows.length > 0) {
+      targetUserId = Number(dbRes.rows[0].id);
+    }
   } catch (err: any) {
     if (err.code !== 'ECONNREFUSED') {
       console.error("[RESET DB UPDATE ERROR]", err.message);
     }
   }
 
-  // Update in memory
+  // Update in memory & bump tokenVersion
   const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (user) {
     user.passwordHash = newHash;
+    if (!targetUserId) targetUserId = Number(user.id);
+    user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
     await saveRegisteredUsers(user);
+  } else if (targetUserId) {
+    await bumpUserTokenVersion(targetUserId);
   }
 
   return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
@@ -1100,6 +1218,12 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
     }
 
     const cleanOtp = String(otp).trim();
+    const lockKey = `phone_acc:${cleanPhone}`;
+    const lockCheck = checkOtpAttemptLock(lockKey);
+    if (!lockCheck.allowed) {
+      return res.status(429).json({ error: "Too many failed OTP attempts. Please try again later." });
+    }
+
     const tokenCheck = otpToken ? verifySignedOtpToken(otpToken, `${cleanPhone}@phone.mingree.com`, cleanOtp) : { valid: false };
     if (tokenCheck.expired) {
       return res.status(400).json({ error: "Verification code has expired. Please request a new one." });
@@ -1107,6 +1231,12 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
 
     const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
     let isOtpValid = tokenCheck.valid;
+    if (isOtpValid && tokenCheck.jti) {
+      const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_phone_acc", 15 * 60 * 1000);
+      if (!firstUse) {
+        return res.status(400).json({ error: "Verification code has already been used. Please request a new one." });
+      }
+    }
 
     if (!isOtpValid && record) {
       if (Date.now() > record.expiresAt) {
@@ -1117,7 +1247,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       if (record.attempts >= 5) {
         deleteOtpRecord(cleanPhone);
         deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
-        return res.status(400).json({ error: "Too many failed attempts. Please request a new OTP." });
+        return res.status(429).json({ error: "Too many failed attempts. Please request a new OTP." });
       }
       const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
       if (submittedHash === record.otpHash) {
@@ -1125,12 +1255,18 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       } else {
         record.attempts += 1;
         setOtpRecord(cleanPhone, record);
+        recordOtpFailedAttempt(lockKey, 5);
       }
     }
 
     if (!isOtpValid) {
+      recordOtpFailedAttempt(lockKey, 5);
       return res.status(400).json({ error: "Invalid or expired verification code. Please check and try again." });
     }
+
+    clearOtpAttempts(lockKey);
+    deleteOtpRecord(cleanPhone);
+    deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
 
     const formattedPhone = `+91${cleanPhone}`;
     const matchedAccountsMap = new Map<number | string, any>();
@@ -1198,9 +1334,10 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
 
     const accounts = Array.from(matchedAccountsMap.values());
 
-    // Generate signed reset verification token valid for 15 mins
+    // Generate single-use signed reset verification token valid for 15 mins
     const resetVerificationToken = jwt.sign(
       {
+        jti: crypto.randomBytes(12).toString("hex"),
         phone: cleanPhone,
         accountIds: accounts.map((a) => a.id),
         purpose: "phone_password_reset",
@@ -1238,27 +1375,41 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       return res.status(400).json({ error: "Valid 10-digit mobile number is required." });
     }
 
-    // Verify Authorization: either valid resetVerificationToken OR valid unexpired OTP
+    // Verify Authorization: either single-use resetVerificationToken OR single-use unexpired OTP
     let isAuthorized = false;
     if (resetVerificationToken) {
       try {
         const decoded = jwt.verify(resetVerificationToken, getJwtSecret()) as any;
         if (decoded && decoded.phone === cleanPhone && decoded.purpose === "phone_password_reset") {
-          isAuthorized = true;
+          const jtiKey = typeof decoded.jti === "string"
+            ? decoded.jti
+            : crypto.createHash("sha256").update(String(resetVerificationToken)).digest("hex");
+          isAuthorized = await consumeSingleUseJti(jtiKey, "phone_pw_reset", 20 * 60 * 1000);
         }
       } catch {}
     }
 
     if (!isAuthorized && otp) {
+      const resetLockKey = `phone_reset:${cleanPhone}`;
+      const lockCheck = checkOtpAttemptLock(resetLockKey);
+      if (!lockCheck.allowed) {
+        return res.status(429).json({
+          error: `Too many failed attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`,
+        });
+      }
       const cleanOtp = String(otp).trim();
       const record = getOtpRecord(cleanPhone) || getOtpRecord(`${cleanPhone}@phone.mingree.com`);
       if (record && Date.now() <= record.expiresAt && record.attempts < 5) {
         const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
         if (submittedHash === record.otpHash) {
           isAuthorized = true;
+          clearOtpAttempts(resetLockKey);
+          deleteOtpRecord(cleanPhone);
+          deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
         } else {
           record.attempts += 1;
           setOtpRecord(cleanPhone, record);
+          recordOtpFailedAttempt(resetLockKey, 5);
         }
       }
     }
@@ -1274,7 +1425,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
 
     let updatedAccount: any = null;
 
-    // 1. Update in PostgreSQL Database
+    // 1. Update in PostgreSQL Database and bump token_version
     try {
       let query = "";
       let params: any[] = [];
@@ -1282,7 +1433,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       if (targetId) {
         query = `
           UPDATE users 
-          SET password_hash = $1 
+          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
           WHERE id = $2 
             AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
           RETURNING id, email, name, role, company_name
@@ -1291,17 +1442,16 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       } else if (targetEmailClean) {
         query = `
           UPDATE users 
-          SET password_hash = $1 
+          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
           WHERE LOWER(email) = LOWER($2) 
             AND (phone = $3 OR phone = $4 OR phone LIKE $5 OR email LIKE $6)
           RETURNING id, email, name, role, company_name
         `;
         params = [newHash, targetEmailClean, formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`];
       } else {
-        // Fallback if single account exists
         query = `
           UPDATE users 
-          SET password_hash = $1 
+          SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1
           WHERE (phone = $2 OR phone = $3 OR phone LIKE $4 OR email LIKE $5)
             AND status != 'blocked'
           RETURNING id, email, name, role, company_name
@@ -1319,7 +1469,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       }
     }
 
-    // 2. Update in Memory Store (registeredUsers)
+    // 2. Update in Memory Store (registeredUsers) and bump tokenVersion
     const memoryUser = registeredUsers.find((u) => {
       const matchIdentity = (targetId && u.id === targetId) || (targetEmailClean && u.email?.toLowerCase() === targetEmailClean);
       const matchPhone = (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone))) ||
@@ -1332,10 +1482,13 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
 
     if (memoryUser) {
       memoryUser.passwordHash = newHash;
+      memoryUser.tokenVersion = await bumpUserTokenVersion(Number(memoryUser.id));
       await saveRegisteredUsers(memoryUser);
       if (!updatedAccount) {
         updatedAccount = memoryUser;
       }
+    } else if (updatedAccount?.id) {
+      await bumpUserTokenVersion(Number(updatedAccount.id));
     }
 
     if (!updatedAccount) {
@@ -1363,11 +1516,10 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
   }
 });
 
-// Helper to get Instagram Meta OAuth credentials securely with verified values
+// Helper to get Instagram Meta OAuth credentials securely from environment / non-secret config (zero hardcoded secrets)
 function getInstagramCredentials(): { appId: string; appSecret: string } {
-  // Always use the verified credentials for Meta App ID 3167123270152518 from Meta Developer Dashboard
-  const appId = "3167123270152518";
-  const appSecret = "a80adcabcc62abb2e66c3d1048a50e76";
+  const appId = (process.env.INSTAGRAM_APP_ID || inMemorySettings.instagram_app_id || "").trim();
+  const appSecret = (process.env.INSTAGRAM_APP_SECRET || "").trim();
   return { appId, appSecret };
 }
 
@@ -1394,30 +1546,34 @@ function getInternalSessionSecret(): string {
 }
 
 // Cryptographically signed state token generator to protect against CSRF and survive server restarts
-function createSignedOAuthState(userId: number, returnTo: string, appSecret: string, redirectUri?: string): string {
+function createSignedOAuthState(userId: number, returnTo: string, appSecret: string, redirectUri?: string, browserTokenHash?: string): string {
   const nonce = crypto.randomBytes(12).toString("hex");
-  const payload = Buffer.from(JSON.stringify({ userId, returnTo, redirectUri, ts: Date.now() })).toString("base64url");
+  const safeReturnTo = isSafeRelativeRedirect(returnTo, "/profile");
+  const payload = Buffer.from(JSON.stringify({ userId, returnTo: safeReturnTo, redirectUri, browserTokenHash, ts: Date.now() })).toString("base64url");
   const secretKey = appSecret || getInternalSessionSecret();
   const signature = crypto.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
   return `${nonce}.${payload}.${signature}`;
 }
 
 // Cryptographically verify signed state token
-function verifySignedOAuthState(stateStr: string, appSecret: string): { userId: number; returnTo: string; redirectUri?: string } | null {
+function verifySignedOAuthState(stateStr: string, appSecret: string): { userId: number; returnTo: string; redirectUri?: string; browserTokenHash?: string } | null {
   if (!stateStr || typeof stateStr !== "string") return null;
   const parts = stateStr.split(".");
   if (parts.length !== 3) return null;
   const [nonce, payload, signature] = parts;
   const secretKey = appSecret || getInternalSessionSecret();
   const expectedSig = crypto.createHmac("sha256", secretKey).update(`${nonce}.${payload}`).digest("hex").slice(0, 16);
-  if (signature !== expectedSig) return null;
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
   try {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     if (Date.now() - data.ts > 3600000) return null; // 1 hour expiration
     return {
-      userId: Number(data.userId) || 1,
-      returnTo: typeof data.returnTo === "string" ? data.returnTo : "/dashboard",
+      userId: Number(data.userId) || 0,
+      returnTo: isSafeRelativeRedirect(data.returnTo, "/profile"),
       redirectUri: typeof data.redirectUri === "string" ? data.redirectUri : undefined,
+      browserTokenHash: typeof data.browserTokenHash === "string" ? data.browserTokenHash : undefined,
     };
   } catch {
     return null;
@@ -1454,7 +1610,7 @@ app.get("/api/instagram/requirements", (req, res) => {
 // Auth Rate Limiting Middleware
 const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many authentication requests. Please try again in 15 minutes." },
@@ -1465,7 +1621,13 @@ app.use("/api/auth", authRateLimiter);
 export function getJwtSecret(): string {
   const secret = (process.env.JWT_SECRET || "").trim();
   if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("FATAL: JWT_SECRET must be set in production");
+    }
     return getEphemeralDevSigningSecret();
+  }
+  if (process.env.NODE_ENV === "production" && secret.length < 32) {
+    throw new Error("FATAL: JWT_SECRET must be at least 32 characters in production");
   }
   return secret;
 }
@@ -1478,6 +1640,8 @@ function setAuthTokenCookie(res: express.Response, user: any) {
       id: user.id,
       email: user.email,
       role: user.role,
+      jti: crypto.randomBytes(16).toString("hex"),
+      tv: Number(user.tokenVersion || 1),
       instagramUsername: user.instagramUsername || null,
       isInstagramVerified: Boolean(user.isInstagramVerified),
       instagramFollowers: user.instagramFollowers || user.followers || 0,
@@ -1493,6 +1657,7 @@ function setAuthTokenCookie(res: express.Response, user: any) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: "/",
   });
   return token;
 }
@@ -1502,6 +1667,7 @@ function clearAuthTokenCookie(res: express.Response) {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
+    path: "/",
   });
 }
 
@@ -1521,15 +1687,21 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     return res.status(401).json({ error: "Unauthorized: Authentication token required" });
   }
 
-  let decoded: { id: number; email: string; role: string; [key: string]: any };
+  let decoded: { id: number; email: string; role: string; jti?: string; tv?: number; [key: string]: any };
   try {
     decoded = jwt.verify(token, getJwtSecret()) as {
       id: number;
       email: string;
       role: string;
+      jti?: string;
+      tv?: number;
     };
   } catch {
     return res.status(401).json({ error: "Unauthorized: Invalid or expired authentication token" });
+  }
+
+  if (decoded?.jti && (await isSessionJtiRevoked(decoded.jti))) {
+    return res.status(401).json({ error: "Unauthorized: Session has been logged out or revoked" });
   }
 
   const targetUserId = decoded?.id ? Number(decoded.id) : null;
@@ -1554,6 +1726,7 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     try {
       const dbRes = await pool.query(
         `SELECT u.id, u.email, u.password_hash, u.name, u.role, u.email_verified, u.status, u.company_name, u.created_at,
+                u.token_version AS token_version,
                 cp.username AS cp_username, cp.followers AS cp_followers, cp.median_views AS cp_median_views,
                 cp.access_token_enc AS cp_access_token_enc, cp.instagram_user_id AS cp_instagram_user_id,
                 cp.tier_label AS cp_tier_label, cp.status AS cp_status
@@ -1598,6 +1771,7 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
           passwordHash: row.password_hash,
           name: row.name,
           role: row.role,
+          tokenVersion: Number(row.token_version || 1),
           handle: `@${row.email.split("@")[0]}`,
           avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150",
           tier: isVerifiedConnection ? tierLabel : "Unlinked",
@@ -1626,23 +1800,6 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     );
   }
 
-  if (!user && targetUserId && targetUserEmail) {
-    user = {
-      id: targetUserId,
-      email: targetUserEmail,
-      name: decoded.name || targetUserEmail.split("@")[0],
-      role: decoded.role || "creator",
-      handle: `@${targetUserEmail.split("@")[0]}`,
-      tier: decoded.role === "admin" ? "Admin" : (decoded.isInstagramVerified ? "Nano" : "Unlinked"),
-      status: "active",
-      isEmailVerified: true,
-      instagramUsername: decoded.instagramUsername || null,
-      isInstagramVerified: Boolean(decoded.isInstagramVerified),
-      instagramFollowers: Number(decoded.instagramFollowers || 0),
-      followers: Number(decoded.instagramFollowers || 0),
-    };
-  }
-
   if (!user) {
     return res.status(401).json({ error: "Unauthorized: User account not found" });
   }
@@ -1651,9 +1808,14 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
     return res.status(403).json({ error: "Forbidden: Account is blocked" });
   }
 
-  // Elevate dedicated admin email automatically if needed
+  const currentTokenVersion = await getUserTokenVersion(Number(user.id), Number(user.tokenVersion || 1));
+  if (Number(decoded.tv || 1) < currentTokenVersion) {
+    return res.status(401).json({ error: "Unauthorized: Session has been invalidated after a password change" });
+  }
+
+  // Elevate configured admin email only when it matches ADMIN_EMAIL
   const cleanEmail = (user.email || "").toLowerCase().trim();
-  if (cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com") {
+  if (ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL) {
     user.role = "admin";
     user.tier = "Admin";
     user.isEmailVerified = true;
@@ -1669,7 +1831,7 @@ export function requireRole(...allowedRoles: string[]) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const cleanEmail = (req.user.email || "").toLowerCase().trim();
-    const isAdminEmail = cleanEmail === ADMIN_EMAIL || cleanEmail === "admin@mingree.com";
+    const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
     if (allowedRoles.includes("admin") && isAdminEmail) {
       req.user.role = "admin";
       return next();
@@ -1919,30 +2081,21 @@ app.post("/api/auth/signup", async (req, res) => {
 
   const existingUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
   if (existingUser) {
-    const isVerified =
-      verifiedSignupEmails.has(cleanEmail) ||
-      isEmailVerifiedByToken(verifiedToken, cleanEmail) ||
-      otpVerified === true;
-
-    if (isVerified) {
-      existingUser.isEmailVerified = true;
-      if (formattedPhone) existingUser.phone = formattedPhone;
-      setAuthTokenCookie(res, existingUser);
-      return res.json(sanitizeUser(existingUser));
-    }
     return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
   }
 
-  // Check email/phone verification via in-memory set, stateless token, or verified flag
-  const isVerified =
-    verifiedSignupEmails.has(cleanEmail) ||
-    isEmailVerifiedByToken(verifiedToken, cleanEmail) ||
-    otpVerified === true;
+  // Strictly enforce server-side OTP verification (never trust client-supplied otpVerified flag)
+  let isVerified = false;
+  if (verifiedSignupEmails.has(cleanEmail)) {
+    verifiedSignupEmails.delete(cleanEmail);
+    isVerified = true;
+  } else if (verifiedToken) {
+    isVerified = await consumeVerifiedEmailToken(verifiedToken, cleanEmail);
+  }
 
   if (!isVerified) {
     return res.status(403).json({ error: "Mobile number and email must be verified via OTP before registration." });
   }
-  verifiedSignupEmails.delete(cleanEmail);
 
   const passwordHash = bcrypt.hashSync(String(password), 10);
   const userName = name?.trim() || cleanEmail.split("@")[0];
@@ -2132,13 +2285,47 @@ app.post("/api/auth/login", async (req, res) => {
 
 app.post("/api/auth/phone-login", async (req, res) => {
   try {
-    const { phoneNumber, role, name, idToken } = req.body;
-    if (!phoneNumber) {
-      return res.status(400).json({ error: "Phone number is required" });
+    const { phoneNumber, role, name, idToken, verifiedPhoneToken } = req.body || {};
+
+    let verifiedPhone = "";
+    if (idToken) {
+      try {
+        const fbToken = await verifyFirebasePhoneIdToken(String(idToken), "gen-lang-client-0314158911");
+        verifiedPhone = fbToken.phoneNumber;
+      } catch (fbErr: any) {
+        return res.status(401).json({
+          error: fbErr?.message || "Unauthorized: Invalid or expired Firebase authentication token",
+        });
+      }
+
+      if (phoneNumber) {
+        const requestedNormalized = normalizePhoneE164(String(phoneNumber));
+        if (requestedNormalized && requestedNormalized !== verifiedPhone) {
+          return res.status(403).json({
+            error: "Forbidden: Verified phone number does not match requested account phone number",
+          });
+        }
+      }
+    } else if (verifiedPhoneToken && phoneNumber) {
+      const normalized = normalizePhoneE164(String(phoneNumber));
+      const clean10 = normalized.replace(/[^0-9]/g, "").slice(-10);
+      const tokenEmails = [
+        `${clean10}@phone.mingree.com`,
+        `${normalized.replace(/\+/g, "")}@phone.mingree.com`,
+      ];
+      const consumed = await consumeVerifiedEmailToken(String(verifiedPhoneToken), tokenEmails);
+      if (!consumed) {
+        return res.status(401).json({ error: "Unauthorized: Invalid, expired, or already-used phone verification proof" });
+      }
+      verifiedPhone = normalized;
+    } else {
+      return res.status(401).json({
+        error: "Unauthorized: Valid Firebase ID token or verified SMS OTP proof is required for phone login",
+      });
     }
 
-    const cleanPhone = phoneNumber.replace(/[^0-9+]/g, "");
-    const formattedPhone = cleanPhone.startsWith("+") ? cleanPhone : `+91${cleanPhone.replace(/^0+/, "")}`;
+    const formattedPhone = verifiedPhone;
+    const clean10Digits = formattedPhone.replace(/[^0-9]/g, "").slice(-10);
     const userEmail = `${formattedPhone.replace(/\+/g, "")}@phone.mingree.com`;
     const requestedRole = (role === "sponsor" || role === "creator" || role === "brand") ? (role === "brand" ? "sponsor" : role) : "creator";
     const userName = name?.trim() || `User ${formattedPhone.slice(-4)}`;
@@ -2146,8 +2333,8 @@ app.post("/api/auth/phone-login", async (req, res) => {
     let foundUser: any = null;
     try {
       const dbRes = await pool.query(
-        "SELECT * FROM users WHERE email = $1 OR email LIKE $2",
-        [userEmail, `%${formattedPhone.slice(-10)}%`]
+        "SELECT * FROM users WHERE phone = $1 OR phone = $2 OR LOWER(email) = LOWER($3) OR LOWER(email) = LOWER($4) LIMIT 1",
+        [formattedPhone, clean10Digits, userEmail, `${clean10Digits}@phone.mingree.com`]
       );
       if (dbRes.rows.length > 0) {
         const row = dbRes.rows[0];
@@ -2156,6 +2343,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           email: row.email,
           name: row.name,
           role: row.role,
+          tokenVersion: Number(row.token_version || 1),
           handle: row.handle || `@user${row.id}`,
           avatar: row.avatar,
           tier: row.tier || "Nano",
@@ -2174,19 +2362,25 @@ app.post("/api/auth/phone-login", async (req, res) => {
 
     if (!foundUser) {
       foundUser = registeredUsers.find(
-        (u) => (u.phone && u.phone === formattedPhone) || (u.email && u.email === userEmail)
+        (u) =>
+          (u.phone && (u.phone === formattedPhone || u.phone === clean10Digits)) ||
+          (u.email && (u.email.toLowerCase() === userEmail || u.email.toLowerCase() === `${clean10Digits}@phone.mingree.com`))
       );
     }
 
+    if (foundUser && foundUser.status === "blocked") {
+      return res.status(403).json({ error: "Forbidden: Account is blocked" });
+    }
+
     if (!foundUser) {
-      // Create new user for phone login
-      const defaultPasswordHash = bcrypt.hashSync(`Phone_${formattedPhone}_${Date.now()}`, 10);
+      // Create new user strictly for verified phone number
+      const defaultPasswordHash = bcrypt.hashSync(`Phone_${crypto.randomBytes(16).toString("hex")}`, 10);
       try {
         const insertRes = await pool.query(
-          `INSERT INTO users (email, password_hash, name, role, email_verified, status)
-           VALUES ($1, $2, $3, $4, true, 'active')
+          `INSERT INTO users (email, password_hash, name, role, email_verified, status, phone)
+           VALUES ($1, $2, $3, $4, true, 'active', $5)
            RETURNING *`,
-          [userEmail, defaultPasswordHash, userName, requestedRole]
+          [userEmail, defaultPasswordHash, userName, requestedRole, formattedPhone]
         );
         const dbRow = insertRes.rows[0];
         foundUser = {
@@ -2194,6 +2388,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           email: dbRow.email,
           name: dbRow.name,
           role: dbRow.role,
+          tokenVersion: Number(dbRow.token_version || 1),
           handle: `@user${dbRow.id}`,
           tier: "Nano",
           phone: formattedPhone,
@@ -2202,7 +2397,6 @@ app.post("/api/auth/phone-login", async (req, res) => {
           createdAt: dbRow.created_at,
         };
 
-        // Create wallet
         await pool.query(
           `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
           [foundUser.id]
@@ -2224,6 +2418,7 @@ app.post("/api/auth/phone-login", async (req, res) => {
           email: userEmail,
           name: userName,
           role: requestedRole,
+          tokenVersion: 1,
           handle: `@user${String(Date.now()).slice(-4)}`,
           tier: "Nano",
           phone: formattedPhone,
@@ -2248,7 +2443,20 @@ app.post("/api/auth/phone-login", async (req, res) => {
   }
 });
 
-app.post("/api/auth/logout", (req, res) => {
+app.post("/api/auth/logout", async (req, res) => {
+  const token =
+    req.cookies?.[COOKIE_NAME] ||
+    (req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7).trim()
+      : null);
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, getJwtSecret()) as { jti?: string; exp?: number };
+      if (decoded?.jti) {
+        await revokeSessionJti(decoded.jti, decoded.exp);
+      }
+    } catch {}
+  }
   clearAuthTokenCookie(res);
   return res.json({ success: true, message: "Logged out successfully" });
 });
@@ -2416,6 +2624,9 @@ app.put("/api/users/:id/profile", requireAuth, async (req: AuthRequest, res) => 
   }
   if (city !== undefined) user.city = city.trim();
   if (avatar !== undefined) {
+    if (avatar && !isSafeAssetUrl(avatar, true)) {
+      return res.status(400).json({ error: "Invalid avatar URL format" });
+    }
     user.avatar = avatar;
     user.avatarUrl = avatar;
     const existing = registeredUsers.find((u) => u.id === user.id);
@@ -2448,7 +2659,7 @@ app.put("/api/users/:id/city", requireAuth, async (req: AuthRequest, res) => {
   res.json(sanitizeUser(user));
 });
 
-// PUT /api/users/:id/instagram
+// PUT /api/users/:id/instagram (Non-admins may only unlink; linking/verification requires official Meta OAuth)
 app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) => {
   const targetId = Number(req.params.id);
   if (req.user!.id !== targetId && req.user!.role !== "admin") {
@@ -2457,7 +2668,7 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
   const user = req.user!;
   const { instagramUsername, instagramProfileUrl, instagramFollowers } = req.body || {};
 
-  // Unlinking
+  // Unlinking is permitted for account owners
   if (!instagramUsername || !String(instagramUsername).trim()) {
     user.instagramUsername = null;
     user.instagramProfileUrl = null;
@@ -2473,9 +2684,18 @@ app.put("/api/users/:id/instagram", requireAuth, async (req: AuthRequest, res) =
     return res.json(sanitizeUser(user));
   }
 
+  // Self-verification/follower spoofing via PUT is strictly prohibited for non-admin users
+  if (req.user!.role !== "admin") {
+    return res.status(403).json({
+      error: "Instagram account linking and follower verification require official Meta OAuth authorization.",
+    });
+  }
+
   const cleanHandle = String(instagramUsername).trim().replace(/^@+/, "");
   const followersCount = Math.max(500, Number(instagramFollowers) || 15000);
-  const profileUrl = instagramProfileUrl || `https://instagram.com/${cleanHandle}`;
+  const profileUrl = instagramProfileUrl && isSafeAssetUrl(instagramProfileUrl, false)
+    ? String(instagramProfileUrl)
+    : `https://instagram.com/${cleanHandle}`;
 
   // Determine tier
   let tierName = "Nano";
@@ -3419,14 +3639,6 @@ app.get("/api/campaigns/:id/workspace", requireAuth, async (req: AuthRequest, re
     workspace = getWorkspaceById(campaignId);
   }
   if (!workspace) {
-    const all = loadAllWorkspaces();
-    workspace =
-      all.find((w) => Number(w.sponsorId) === Number(req.user!.id)) ||
-      all.find((w) => (w.participants || []).some((p: any) => Number(p.creatorId) === Number(req.user!.id))) ||
-      all[0] ||
-      null;
-  }
-  if (!workspace) {
     return res.status(404).json({ error: "Campaign workspace not found" });
   }
 
@@ -3632,11 +3844,14 @@ app.post("/api/campaigns/:id/accept-invitation", requireAuth, async (req: AuthRe
     return false;
   });
 
-  if (!participant && workspace.participants.length > 0) {
-    participant = workspace.participants.find((p) => p.status === "pending" || p.status === "applied") || workspace.participants[0];
-  }
-
   if (!participant) {
+    if (workspace.bookingModel !== "instant") {
+      return res.status(403).json({ error: "Forbidden: You do not have an invitation to this campaign" });
+    }
+    const availableSlots = Number(workspace.remainingSlots ?? (workspace.totalSlots || 0) - (workspace.reservedSlots || 0));
+    if (availableSlots <= 0) {
+      return res.status(400).json({ error: "No campaign slots remaining" });
+    }
     participant = {
       id: creatorId,
       campaignId: workspace.id,
@@ -3948,16 +4163,22 @@ app.get("/api/campaigns/:id/negotiate", requireAuth, handleNegotiateCampaignPric
 
 // GET /api/sponsors/:id/campaign-cards - Real campaign cards for Brand Dashboard
 app.get(["/api/sponsors/:id/campaign-cards", "/api/sponsor/campaign-cards"], requireAuth, async (req: AuthRequest, res) => {
-  await ensureWorkspacesLoaded(true);
   const sponsorId = Number(req.params.id || req.user!.id);
+  if (sponsorId !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another brand's campaign cards" });
+  }
+  await ensureWorkspacesLoaded(true);
   const cards = getBrandCampaignCards(sponsorId);
   res.json(cards);
 });
 
 // GET /api/creators/:id/campaign-workspaces - Real My Campaigns list for Creator
 app.get(["/api/creators/:id/campaign-workspaces", "/api/creator/campaign-workspaces"], requireAuth, async (req: AuthRequest, res) => {
-  await ensureWorkspacesLoaded(true);
   const creatorId = Number(req.params.id || req.user!.id);
+  if (creatorId !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another creator's campaign workspaces" });
+  }
+  await ensureWorkspacesLoaded(true);
   let creatorHandle = req.user?.instagramUsername || req.user?.handle || null;
   if (isDatabaseConfigured && creatorId) {
     try {
@@ -3974,6 +4195,9 @@ app.get(["/api/creators/:id/campaign-workspaces", "/api/creator/campaign-workspa
 // GET /api/users/:userId/reservations & /api/reservations - Real user reservations for Creator My Campaigns
 app.get(["/api/users/:userId/reservations", "/api/reservations"], requireAuth, (req: AuthRequest, res) => {
   const userId = Number(req.params.userId || req.query.userId || req.user!.id);
+  if (userId !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another user's reservations" });
+  }
   
   const workspaces = loadAllWorkspaces();
   const resList: any[] = [];
@@ -4148,13 +4372,20 @@ app.post("/api/submissions", requireAuth, requireRole("creator"), async (req: Au
 // DELETE /api/reservations/:id - Cancel slot reservation
 app.delete("/api/reservations/:id", requireAuth, async (req: AuthRequest, res) => {
   const reservationId = Number(req.params.id);
-  const userId = req.user!.id;
+  const userId = Number(req.user!.id);
+  const isAdmin = req.user!.role === "admin";
 
   const workspaces = loadAllWorkspaces();
   let found = false;
+  let forbiddenHit = false;
   for (const w of workspaces) {
     const pIdx = w.participants.findIndex((p: any) => Number(p.id) === reservationId || (Number(p.creatorId) === userId && Number(w.id) === reservationId));
     if (pIdx !== -1) {
+      const targetP = w.participants[pIdx];
+      if (!isAdmin && Number(targetP.creatorId) !== userId && Number(w.sponsorId) !== userId) {
+        forbiddenHit = true;
+        break;
+      }
       w.participants.splice(pIdx, 1);
       w.remainingSlots = (w.remainingSlots || 0) + 1;
       await saveSingleWorkspace(w);
@@ -4163,9 +4394,16 @@ app.delete("/api/reservations/:id", requireAuth, async (req: AuthRequest, res) =
     }
   }
 
+  if (forbiddenHit) {
+    return res.status(403).json({ error: "Forbidden: Cannot cancel another user's reservation" });
+  }
+
   const reservations = loadReservations();
   const idx = reservations.findIndex((r: any) => Number(r.id) === reservationId || (Number(r.userId) === userId && Number(r.campaignId) === reservationId));
   if (idx !== -1) {
+    if (!isAdmin && Number(reservations[idx].userId) !== userId) {
+      return res.status(403).json({ error: "Forbidden: Cannot cancel another user's reservation" });
+    }
     reservations.splice(idx, 1);
     saveReservations(reservations);
     found = true;
@@ -4175,8 +4413,10 @@ app.delete("/api/reservations/:id", requireAuth, async (req: AuthRequest, res) =
     try {
       await pool.query(
         `UPDATE workspace_participants SET status = 'withdrawn', updated_at = now()
-         WHERE (id = $1 OR (creator_id = $2 AND campaign_id = $1)) AND status IN ('applied', 'reserved')`,
-        [reservationId, userId]
+         WHERE (id = $1 OR (creator_id = $2 AND campaign_id = $1))
+           AND ($3 = true OR creator_id = $2)
+           AND status IN ('applied', 'reserved')`,
+        [reservationId, userId, isAdmin]
       );
       await pool.query(
         `UPDATE campaigns SET spots_remaining = spots_remaining + 1 WHERE id = $1`,
@@ -4192,14 +4432,20 @@ app.delete("/api/reservations/:id", requireAuth, async (req: AuthRequest, res) =
 
 // GET /api/sponsors/:id/campaigns
 app.get("/api/sponsors/:id/campaigns", requireAuth, async (req: AuthRequest, res) => {
-  await ensureWorkspacesLoaded(true);
   const sponsorId = Number(req.params.id || req.user!.id);
+  if (sponsorId !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot access another brand's campaigns" });
+  }
+  await ensureWorkspacesLoaded(true);
   const cards = getBrandCampaignCards(sponsorId);
   res.json(cards);
 });
 
 // POST /api/sponsors/:id/campaigns & /api/campaigns - Create campaign with Escrow Lock and Workspace creation
 app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
+  if (req.params.id && Number(req.params.id) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot create campaign for another brand account" });
+  }
   const sponsorId = req.user!.id;
   const data = req.body;
 
@@ -4223,7 +4469,8 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
   const platformFee = Math.round(computedSubtotal * 0.075 * 100) / 100;
   const gstOnFee = Math.round(platformFee * 0.18 * 100) / 100;
   const calculatedTotalBudget = Math.round((computedSubtotal + platformFee + gstOnFee) * 100) / 100;
-  const totalBudget = parseFloat(data.budget || data.totalBudget || String(calculatedTotalBudget));
+  const requestedBudget = parseFloat(data.budget || data.totalBudget || "0") || 0;
+  const totalBudget = Math.max(calculatedTotalBudget, requestedBudget);
 
   if (isNaN(totalBudget) || totalBudget <= 0) {
     return res.status(400).json({ error: "Campaign budget must be greater than zero" });
@@ -4460,6 +4707,17 @@ app.post(["/api/sponsors/:id/campaigns", "/api/campaigns"], requireAuth, require
 // POST /api/campaigns/:id/match - Trigger creator matching & invitations
 app.post("/api/campaigns/:id/match", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.id);
+  await ensureWorkspacesLoaded();
+  const workspace = getWorkspaceById(campaignId);
+  const campaigns = loadCampaigns();
+  const campaign = campaigns.find((c: any) => Number(c.id) === campaignId);
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (!workspace && !campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+  if (ownerId !== undefined && Number(ownerId) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign owner can match creators" });
+  }
   const invitedCount = await matchAndInviteCreators(campaignId, registeredUsers);
   res.json({ success: true, invitedCount, message: `Matched and invited ${invitedCount} eligible creators.` });
 });
@@ -4572,13 +4830,17 @@ app.post("/api/campaign-workspaces/:id/apply-with-quote", requireAuth, requireRo
 });
 
 // POST /api/campaign-workspaces/:id/applicants/:participantId/review
-app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requireAuth, requireRole("sponsor", "admin"), (req: AuthRequest, res) => {
+app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.id);
   const participantId = Number(req.params.participantId);
   const { action, counterPrice } = req.body; // action: accept | reject | counter
 
+  await ensureWorkspacesLoaded();
   const workspace = getWorkspaceById(campaignId);
   if (!workspace) return res.status(404).json({ error: "Workspace not found" });
+  if (Number(workspace.sponsorId) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign sponsor can review applicants" });
+  }
 
   const participant = workspace.participants.find(p => p.id === participantId);
   if (!participant) return res.status(404).json({ error: "Participant not found" });
@@ -4595,7 +4857,7 @@ app.post("/api/campaign-workspaces/:id/applicants/:participantId/review", requir
   }
 
   workspace.updatedAt = new Date().toISOString();
-  saveSingleWorkspace(workspace);
+  await saveSingleWorkspace(workspace);
 
   res.json({ success: true, participant });
 });
@@ -4633,14 +4895,24 @@ app.post(["/api/campaigns/:id/quote", "/api/campaigns/:id/apply"], requireAuth, 
 // GET /api/sponsors/:id/campaigns/:campaignId/shortlist & /api/campaigns/:id/shortlist
 app.get(["/api/sponsors/:id/campaigns/:campaignId/shortlist", "/api/campaigns/:id/shortlist"], requireAuth, async (req: AuthRequest, res) => {
   const campaignId = Number(req.params.campaignId || req.params.id);
+  if (req.params.campaignId && req.params.id && Number(req.params.id) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Cannot view another brand's shortlist" });
+  }
+  await ensureWorkspacesLoaded();
   const campaigns = loadCampaigns();
-  const campaign = campaigns.find(c => c.id === campaignId);
+  const campaign = campaigns.find(c => Number(c.id) === campaignId);
+  const workspace = getWorkspaceById(campaignId);
 
-  if (!campaign) {
+  if (!campaign && !workspace) {
     return res.status(404).json({ error: "Campaign not found" });
   }
 
-  const capPrice = parseFloat(campaign.priceCapPer1k || campaign.fixedPrice || "100");
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (ownerId !== undefined && Number(ownerId) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: You do not own this campaign's shortlist" });
+  }
+
+  const capPrice = parseFloat(campaign?.priceCapPer1k || campaign?.fixedPrice || String(workspace?.payAmount || 100));
   const shortlist = await getCampaignShortlist(campaignId, capPrice, registeredUsers);
   res.json(shortlist);
 });
@@ -4652,6 +4924,14 @@ app.post("/api/campaigns/:id/offers/bulk-approve", requireAuth, requireRole("spo
 
   if (!Array.isArray(offerIds) || offerIds.length === 0) {
     return res.status(400).json({ error: "Please select at least one offer to approve" });
+  }
+
+  await ensureWorkspacesLoaded();
+  const workspace = getWorkspaceById(campaignId);
+  const campaign = loadCampaigns().find(c => Number(c.id) === campaignId);
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (ownerId !== undefined && Number(ownerId) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign owner can bulk approve offers" });
   }
 
   try {
@@ -4675,10 +4955,22 @@ app.post("/api/offers/direct", requireAuth, requireRole("sponsor", "admin"), asy
     return res.status(400).json({ error: "Valid campaignId, creatorId, and positive price are required" });
   }
 
+  await ensureWorkspacesLoaded();
+  const numCampaignId = Number(campaignId);
+  const workspace = getWorkspaceById(numCampaignId);
+  const campaign = loadCampaigns().find(c => Number(c.id) === numCampaignId);
+  if (!workspace && !campaign) {
+    return res.status(404).json({ error: "Campaign not found" });
+  }
+  const ownerId = workspace?.sponsorId ?? campaign?.sponsorId;
+  if (ownerId !== undefined && Number(ownerId) !== Number(req.user!.id) && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Only the campaign owner can send direct offers" });
+  }
+
   try {
     const result = await createDirectBooking({
       artistId: req.user!.id,
-      campaignId: Number(campaignId),
+      campaignId: numCampaignId,
       creatorId: Number(creatorId),
       price: numPrice,
     });
@@ -4803,6 +5095,17 @@ app.get("/api/rejection-reasons", (req, res) => {
 
 // POST /api/cron/process-releases - Automated background job for auto-approvals, final releases, & expirations
 app.post("/api/cron/process-releases", requireAuth, async (req: AuthRequest, res) => {
+  const cronSecret = (process.env.CRON_SECRET || "").trim();
+  const providedSecret = String(req.headers["x-cron-secret"] || "").trim();
+  const hasValidCronSecret =
+    Boolean(cronSecret && providedSecret) &&
+    Buffer.byteLength(cronSecret) === Buffer.byteLength(providedSecret) &&
+    crypto.timingSafeEqual(Buffer.from(cronSecret), Buffer.from(providedSecret));
+
+  if (!hasValidCronSecret && req.user!.role !== "admin") {
+    return res.status(403).json({ error: "Forbidden: Admin or cron authorization required" });
+  }
+
   const autoApproveRes = await runAutoApproveEngine();
   const finalReleaseRes = await runFinalReleaseEngine();
   const expiredRes = await checkExpiredDeals();
@@ -5139,7 +5442,7 @@ app.get("/api/instagram/login", requireAuth, (req: AuthRequest, res: express.Res
         <body>
           <div class="card">
             <h2>⚠️ Security Notice</h2>
-            <p>${rateCheck.reason}</p>
+            <p>${escapeHtml(rateCheck.reason)}</p>
             <button onclick="window.close()">Close Window</button>
           </div>
         </body>
@@ -5150,9 +5453,10 @@ app.get("/api/instagram/login", requireAuth, (req: AuthRequest, res: express.Res
   // Look up user details to pre-populate authentic account information
   const targetUser = registeredUsers.find((u) => u.id === userId) || registeredUsers[0];
   const queryUsername = (typeof req.query.username === "string" ? req.query.username : "").trim().replace(/^@+/, "");
-  const defaultUsername = queryUsername || targetUser?.instagramUsername || (targetUser?.handle ? targetUser.handle.replace(/^@/, "") : "");
-  const defaultFollowers = (targetUser?.isInstagramVerified && targetUser?.instagramUsername) ? (targetUser.instagramFollowers || targetUser.followers || 0) : 0;
-  const userAvatar = targetUser?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+  const defaultUsername = escapeHtml(queryUsername || targetUser?.instagramUsername || (targetUser?.handle ? targetUser.handle.replace(/^@/, "") : ""));
+  const defaultFollowers = Number((targetUser?.isInstagramVerified && targetUser?.instagramUsername) ? (targetUser.instagramFollowers || targetUser.followers || 0) : 0) || 0;
+  const rawAvatar = targetUser?.avatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
+  const userAvatar = escapeHtml(isSafeAssetUrl(rawAvatar) ? rawAvatar : "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150");
 
   if (wantsJson) {
     return res.json({
@@ -5668,10 +5972,10 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
     });
   }
 
-  const returnTo = typeof req.query.return_to === "string" ? req.query.return_to : "/profile";
-  const state = createSignedOAuthState(userId, returnTo, appSecret, redirectUri);
+  const returnTo = isSafeRelativeRedirect(req.query.return_to, "/profile");
   const browserToken = crypto.randomBytes(32).toString("hex");
   const browserTokenHash = crypto.createHash("sha256").update(browserToken).digest("hex");
+  const state = createSignedOAuthState(userId, returnTo, appSecret, redirectUri, browserTokenHash);
 
   // Set browser binding cookie (SameSite=Lax allows external redirect from Meta to send the cookie)
   res.cookie("mingree_ig_oauth_bind", browserToken, {
@@ -5768,7 +6072,7 @@ app.get([
     returnTo?: string;
   }) => {
     const isSuccess = result.success;
-    const destPath = result.returnTo || "/profile";
+    const destPath = isSafeRelativeRedirect(result.returnTo, "/profile");
     const destUrl = isSuccess
       ? `${destPath}${destPath.includes("?") ? "&" : "?"}instagram_connected=true&username=${encodeURIComponent(result.username || "")}`
       : `${destPath}${destPath.includes("?") ? "&" : "?"}instagram_error=${encodeURIComponent(result.error || "Connection failed")}`;
@@ -5784,7 +6088,7 @@ app.get([
 
   // 2. Validate state parameter (fast 0ms HMAC verification first, then in-memory / DB fallback)
   const { appId, appSecret } = getInstagramCredentials();
-  let stateRecord: { userId: number; returnTo?: string; redirectUri?: string } | undefined;
+  let stateRecord: { userId: number; returnTo?: string; redirectUri?: string; browserTokenHash?: string } | undefined;
 
   let sessionUserId: number | null = null;
   const token = req.cookies?.[COOKIE_NAME] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
@@ -5807,8 +6111,9 @@ app.get([
       if (verified && verified.userId) {
         stateRecord = {
           userId: Number(verified.userId),
-          returnTo: verified.returnTo || "/profile",
+          returnTo: isSafeRelativeRedirect(verified.returnTo, "/profile"),
           redirectUri: verified.redirectUri || redirectUri,
+          browserTokenHash: verified.browserTokenHash,
         };
       }
     }
@@ -5819,8 +6124,9 @@ app.get([
       instagramOAuthStates.delete(cleanState);
       stateRecord = {
         userId: memRecord.userId,
-        returnTo: memRecord.returnTo,
+        returnTo: isSafeRelativeRedirect(memRecord.returnTo, "/profile"),
         redirectUri: memRecord.redirectUri,
+        browserTokenHash: memRecord.browserTokenHash,
       };
     }
 
@@ -5837,8 +6143,9 @@ app.get([
           const row = dbState.rows[0];
           stateRecord = {
             userId: Number(row.user_id),
-            returnTo: row.return_to,
+            returnTo: isSafeRelativeRedirect(row.return_to, "/profile"),
             redirectUri: row.redirect_uri,
+            browserTokenHash: row.browser_token_hash || undefined,
           };
         }
       } catch (pgErr: any) {
@@ -5847,15 +6154,7 @@ app.get([
     }
   }
 
-  // Fallback to logged-in session user if state was missing/expired
-  if (!stateRecord && sessionUserId) {
-    stateRecord = {
-      userId: sessionUserId,
-      returnTo: "/profile",
-      redirectUri,
-    };
-  }
-
+  // Strictly reject missing/invalid state (never fall back to sessionUserId alone)
   if (!stateRecord || (sessionUserId && stateRecord.userId !== sessionUserId)) {
     return finishOAuthCallback({
       success: false,
@@ -5864,7 +6163,20 @@ app.get([
     });
   }
 
-  const clientReturnTo = stateRecord.returnTo || "/profile";
+  if (stateRecord.browserTokenHash) {
+    const cookieHash = browserToken ? crypto.createHash("sha256").update(String(browserToken)).digest("hex") : "";
+    const expectedBuf = Buffer.from(stateRecord.browserTokenHash);
+    const cookieBuf = Buffer.from(cookieHash);
+    if (!cookieHash || cookieBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(cookieBuf, expectedBuf)) {
+      return finishOAuthCallback({
+        success: false,
+        error: "OAuth session verification failed. Please retry Instagram connection from the same browser.",
+        returnTo: "/profile",
+      });
+    }
+  }
+
+  const clientReturnTo = isSafeRelativeRedirect(stateRecord.returnTo, "/profile");
   const effectiveRedirectUri = stateRecord.redirectUri || redirectUri;
 
   if (!code || typeof code !== "string" || !code.trim()) {
@@ -6557,18 +6869,34 @@ app.get("/api/creator/insights", requireAuth, (req: AuthRequest, res) => {
 
 // Meta Deauthorize Callback URL (required by Meta Developers)
 app.post("/api/instagram/deauthorize", (req, res) => {
-  console.log(`[INSTAGRAM WEBHOOK] Deauthorize callback received from Meta:`, req.body);
-  // Meta sends signed_request; acknowledge receipt with 200 OK
+  const { appSecret } = getInstagramCredentials();
+  const signedRequest = String(req.body?.signed_request || req.query?.signed_request || "").trim();
+  if (appSecret) {
+    const parsed = verifyMetaSignedRequest(signedRequest, appSecret);
+    if (!parsed) {
+      return res.status(400).json({ error: "Invalid or missing Meta signed_request signature" });
+    }
+  } else if (!signedRequest) {
+    return res.status(400).json({ error: "Missing signed_request payload" });
+  }
   res.status(200).json({ success: true, message: "Deauthorized successfully" });
 });
 
 // Meta Data Deletion Request Callback URL (required by Meta Developers for Live Mode)
 app.all("/api/instagram/data-deletion", (req, res) => {
-  const confirmationCode = `DEL_${Date.now()}_${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-  const origin = `${req.protocol}://${req.get("host")}`;
+  const { appSecret } = getInstagramCredentials();
+  const signedRequest = String(req.body?.signed_request || req.query?.signed_request || "").trim();
+  if (appSecret) {
+    const parsed = verifyMetaSignedRequest(signedRequest, appSecret);
+    if (!parsed) {
+      return res.status(400).json({ error: "Invalid or missing Meta signed_request signature" });
+    }
+  } else if (req.method === "POST" && !signedRequest) {
+    return res.status(400).json({ error: "Missing signed_request payload" });
+  }
+  const confirmationCode = `DEL_${Date.now()}_${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+  const origin = getCanonicalAppUrl(req);
   const statusUrl = `${origin}/data-deletion?code=${confirmationCode}`;
-  console.log(`[INSTAGRAM WEBHOOK] Data deletion request received, confirmation: ${confirmationCode}`);
-  
   res.status(200).json({
     url: statusUrl,
     confirmation_code: confirmationCode,
@@ -6696,8 +7024,17 @@ app.post("/api/users/:id/notifications/mark-all-read", requireAuth, async (req: 
 
 app.all(["/api/notifications/:id/read", "/api/notifications/:id/mark-read"], requireAuth, async (req: AuthRequest, res) => {
   const notifId = Number(req.params.id);
+  if (!Number.isFinite(notifId) || notifId <= 0) {
+    return res.status(400).json({ error: "Invalid notification ID" });
+  }
   try {
-    await db.update(notifications).set({ isRead: true } as any).where(eq(notifications.id, notifId));
+    const condition = req.user!.role === "admin"
+      ? eq(notifications.id, notifId)
+      : and(eq(notifications.id, notifId), eq(notifications.userId, req.user!.id));
+    const updated = await db.update(notifications).set({ isRead: true } as any).where(condition).returning({ id: notifications.id });
+    if (!updated || updated.length === 0) {
+      return res.status(404).json({ error: "Notification not found or access denied" });
+    }
     res.json({ success: true });
   } catch (err: any) {
     if (!isLocalFallbackAllowed) {
@@ -7351,7 +7688,7 @@ app.post("/api/cashfree/create-order", requireAuth, async (req: AuthRequest, res
     return res.status(403).json({ error: "Access denied" });
   }
 
-  const orderId = req.body.orderId || `order_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const orderId = `order_${Date.now()}_${crypto.randomBytes(6).toString("hex")}`;
   const targetPurpose = purpose || "wallet_deposit";
 
   try {
@@ -7367,7 +7704,7 @@ app.post("/api/cashfree/create-order", requireAuth, async (req: AuthRequest, res
 
     if (appId && secretKey) {
       const baseUrl = isProd ? "https://api.cashfree.com/pg/orders" : "https://sandbox.cashfree.com/pg/orders";
-      const origin = `${req.protocol}://${req.get("host")}`;
+      const origin = getCanonicalAppUrl(req);
 
       const cfResponse = await fetch(baseUrl, {
         method: "POST",
@@ -7554,12 +7891,25 @@ app.post("/api/cashfree/verify", requireAuth, async (req: AuthRequest, res) => {
 app.post("/api/cashfree/webhook", async (req: express.Request, res: express.Response) => {
   const { secretKey } = getCashfreeCredentials();
 
-  const rawBodyBuffer = (req as any).rawBody || Buffer.from(JSON.stringify(req.body || {}));
+  const rawBodyBuffer = (req as any).rawBody;
   const signature = String(req.headers["x-webhook-signature"] || req.headers["x-cashfree-signature"] || "");
   const timestamp = String(req.headers["x-webhook-timestamp"] || req.headers["x-cashfree-timestamp"] || "");
 
   if (!secretKey || !signature || !timestamp) {
     return res.status(401).json({ error: "Missing webhook signature, timestamp, or gateway configuration" });
+  }
+
+  if (!Buffer.isBuffer(rawBodyBuffer) || rawBodyBuffer.length === 0) {
+    return res.status(400).json({ error: "Missing raw webhook payload" });
+  }
+
+  const rawTs = Number(timestamp);
+  if (!Number.isFinite(rawTs) || rawTs <= 0) {
+    return res.status(401).json({ error: "Invalid webhook timestamp" });
+  }
+  const tsMs = rawTs < 1e12 ? rawTs * 1000 : rawTs;
+  if (Math.abs(Date.now() - tsMs) > 15 * 60 * 1000) {
+    return res.status(401).json({ error: "Stale or replayed webhook timestamp" });
   }
 
   const isValidSig = verifyCashfreeSignature(rawBodyBuffer, timestamp, signature, secretKey);
@@ -8278,18 +8628,20 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
     const walletBalance = wallet.balance;
     const shortfall = Math.max(0, Math.round((total - walletBalance) * 100) / 100);
 
-    const billTokenData = {
-      sponsorId,
-      creatorIds,
-      customRates: customRates || null,
-      creatorDeliverables: creatorDeliverables || null,
-      deliverable: defaultDeliv,
-      subtotal,
-      total,
-      nonce: crypto.randomBytes(8).toString("hex"),
-      exp: Date.now() + 15 * 60 * 1000,
-    };
-    const billId = Buffer.from(JSON.stringify(billTokenData)).toString("base64");
+    const billId = createSignedBillToken(
+      {
+        sponsorId,
+        selectedCreatorIds: creatorIds.map((cid: any) => Number(cid)),
+        deliverable: defaultDeliv,
+        creatorDeliverables: creatorDeliverables || null,
+        customRates: customRates || null,
+        subtotal,
+        platformFee: feeTotal,
+        gstAmount: gstInFee,
+        total,
+      },
+      getJwtSecret()
+    );
 
     res.json({
       lines,
@@ -8309,31 +8661,42 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
 app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "admin"), async (req: AuthRequest, res) => {
   const sponsorId = req.user!.id;
   try {
-    const { details, creatorIds, customRates, creatorDeliverables, billId } = req.body;
-    if (!billId || !Array.isArray(creatorIds) || creatorIds.length === 0) {
-      return res.status(400).json({ error: "Invalid submission data" });
+    const { details, billId } = req.body;
+    if (!billId || typeof billId !== "string") {
+      return res.status(400).json({ error: "Signed bill token is required" });
     }
 
-    let billData: any;
+    let billData: Awaited<ReturnType<typeof verifyAndConsumeBillToken>>;
     try {
-      billData = JSON.parse(Buffer.from(billId, "base64").toString("utf-8"));
-    } catch {
-      return res.status(400).json({ error: "Invalid bill token" });
+      billData = await verifyAndConsumeBillToken(billId, sponsorId, getJwtSecret());
+    } catch (billErr: any) {
+      const msg = billErr?.message || "Invalid bill token";
+      if (msg.includes("expired") || msg.includes("already been used")) {
+        return res.status(409).json({ error: msg, bill: null });
+      }
+      if (msg.includes("does not belong")) {
+        return res.status(403).json({ error: msg });
+      }
+      return res.status(400).json({ error: msg });
     }
 
-    if (Date.now() > billData.exp) {
-      return res.status(409).json({ error: "Bill expired", bill: null });
+    const creatorIds = billData.selectedCreatorIds;
+    if (!Array.isArray(creatorIds) || creatorIds.length === 0) {
+      return res.status(400).json({ error: "Invalid creator list in signed bill" });
     }
 
     const totalPayable = billData.total;
+    const customRates = billData.customRates || null;
+    const creatorDeliverables = billData.creatorDeliverables || null;
+
     const wallet = await getOrCreateWallet(sponsorId);
     if (wallet.balance < totalPayable) {
       return res.status(402).json({
         error: "Insufficient funds",
         bill: {
           subtotal: billData.subtotal,
-          feeTotal: billData.subtotal * 0.075,
-          gstInFee: billData.subtotal * 0.075 * 0.18,
+          feeTotal: billData.platformFee ?? billData.subtotal * 0.075,
+          gstInFee: billData.gstAmount ?? billData.subtotal * 0.075 * 0.18,
           total: totalPayable,
           walletBalance: wallet.balance,
           shortfall: totalPayable - wallet.balance,
@@ -8349,8 +8712,8 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     const allWorkspaces = loadAllWorkspaces();
     const newId = allWorkspaces.length > 0 ? Math.max(...allWorkspaces.map(w => w.id || 0)) + 1 : 1;
 
-    const defaultDeliv = normalizeDeliverableKey(details?.deliverable || details?.deliverableType || "reel");
-    const effectiveCreatorDeliverables = creatorDeliverables || billData.creatorDeliverables || {};
+    const defaultDeliv = normalizeDeliverableKey(billData.deliverable || details?.deliverable || details?.deliverableType || "reel");
+    const effectiveCreatorDeliverables = creatorDeliverables || {};
     const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIds.map(Number));
 
     const offerMessages: any[] = [];
@@ -8723,6 +9086,12 @@ app.all("/api/*", (req, res) => {
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("[SERVER ERROR]", err?.message || err);
   if (res.headersSent) return;
+  if (err?.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ error: "File exceeds maximum allowed upload size (25 MB)" });
+  }
+  if (err?.type === "entity.parse.failed" || (err instanceof SyntaxError && "body" in err)) {
+    return res.status(400).json({ error: "Malformed JSON request body" });
+  }
   const statusCode = err.statusCode || err.status || 500;
   const isProd = process.env.NODE_ENV === "production";
   return res.status(statusCode).json({

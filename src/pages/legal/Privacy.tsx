@@ -126,10 +126,18 @@ export default function Privacy() {
               1. Personal Information We Collect
             </h2>
             <p className="text-slate-600">
-              Mingree ("Mingree", "we", "us", or "our") operates a technology platform connecting
-              verified content creators and social media influencers with brand partners and music
-              sponsors. To provide verified matching, campaign management, and automated payout
-              services, we collect specific categories of personal data:
+              <strong>MINGREE</strong> (operating <strong>mingree.com</strong> as a{" "}
+              <strong>Proprietary / Sole Proprietorship</strong> enterprise owned by{" "}
+              <strong>Shri Lakhwinder Singh</strong>, Udyam Registration No.{" "}
+              <strong>UDYAM-PB-20-0059364</strong>, NIC Code{" "}
+              <strong>73100 – Advertising Services</strong>) operates a technology platform
+              connecting verified content creators and social media influencers with brand partners
+              and sponsors. Because <strong>MINGREE</strong> determines the purpose and means of
+              collecting and processing personal data on <strong>mingree.com</strong> for creator
+              verification, campaign matching, and payout services, <strong>MINGREE</strong> acts
+              as the <strong>Data Fiduciary</strong> under India's Digital Personal Data Protection
+              Act, 2023 ("DPDP Act"). To provide these services, we collect specific categories of
+              personal data:
             </p>
 
             <div className="space-y-3 pt-2">
@@ -518,11 +526,18 @@ export default function Privacy() {
 
             <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
               <div className="font-bold text-slate-900 text-sm">
-                Data Protection &amp; Grievance Redressal Officer
+                Data Fiduciary &amp; Grievance Redressal Officer
               </div>
               <div className="text-xs sm:text-sm text-slate-600 space-y-1">
                 <div>
-                  <strong>Platform:</strong> Mingree Influencer Marketing Platform
+                  <strong>Data Fiduciary (under DPDP Act, 2023):</strong> MINGREE (as the entity
+                  determining the purpose and means of processing personal data on mingree.com)
+                </div>
+                <div>
+                  <strong>Enterprise Details:</strong> MINGREE · Organisation Type: Proprietary (Sole
+                  Proprietorship) · <strong>Proprietor:</strong> Shri Lakhwinder Singh ·{" "}
+                  <strong>Udyam No.:</strong> UDYAM-PB-20-0059364 · <strong>Activity:</strong>{" "}
+                  Services (NIC 73100 – Advertising Services)
                 </div>
                 <div>
                   <strong>Official Privacy Contact:</strong>{" "}
@@ -577,7 +592,7 @@ export default function Privacy() {
               alt="Mingree Logo"
               className="w-5 h-5 rounded-md object-cover"
             />
-            <span>© {new Date().getFullYear()} Mingree.com. All rights reserved.</span>
+            <span>© {new Date().getFullYear()} MINGREE (Proprietor: Lakhwinder Singh) · UDYAM-PB-20-0059364. All rights reserved.</span>
           </div>
           <div className="flex items-center gap-4 font-semibold text-slate-600">
             <Link href="/" className="hover:text-rose-600">

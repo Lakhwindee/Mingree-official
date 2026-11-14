@@ -26,7 +26,7 @@ export function PhoneOtpLogin({ role = "creator", onSuccess, className = "" }: P
   const [phoneNumber, setPhoneNumber] = useState("");
   const [fullName, setFullName] = useState("");
   const [otp, setOtp] = useState("");
-  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
+  const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
@@ -54,6 +54,8 @@ export function PhoneOtpLogin({ role = "creator", onSuccess, className = "" }: P
     }
 
     setIsLoading(true);
+    setConfirmationResult(null);
+    setOtpToken(undefined);
 
     try {
       const fullPhone = `+91${cleanPhone.slice(-10)}`;
@@ -71,12 +73,15 @@ export function PhoneOtpLogin({ role = "creator", onSuccess, className = "" }: P
           body: JSON.stringify({
             email: `${cleanPhone.slice(-10)}@phone.mingree.com`,
             name: fullName.trim() || undefined,
-            phone: cleanPhone.slice(-10)
-          })
+            phone: cleanPhone.slice(-10),
+          }),
         });
         const srvData = await srvRes.json();
-        if (srvData.devOtp) {
-          setDevOtpCode(String(srvData.devOtp));
+        if (!srvRes.ok) {
+          throw new Error(srvData.error || "Could not send SMS verification code.");
+        }
+        if (srvData.otpToken) {
+          setOtpToken(String(srvData.otpToken));
         }
       }
 
@@ -103,21 +108,31 @@ export function PhoneOtpLogin({ role = "creator", onSuccess, className = "" }: P
     setIsVerifying(true);
 
     try {
-      let verifiedPhone = `+91${phoneNumber.replace(/[^0-9]/g, "").slice(-10)}`;
+      const clean10 = phoneNumber.replace(/[^0-9]/g, "").slice(-10);
+      let verifiedPhone = `+91${clean10}`;
       let idToken: string | undefined = undefined;
-      let uid: string | undefined = undefined;
+      let verifiedPhoneToken: string | undefined = undefined;
 
       if (confirmationResult) {
-        try {
-          const res = await verifyPhoneOtpCode(confirmationResult, otp);
-          verifiedPhone = res.phoneNumber || verifiedPhone;
-          idToken = res.idToken;
-          uid = res.uid;
-        } catch (confirmErr: any) {
-          if (otp !== "123456" && otp !== "898846" && otp !== devOtpCode) {
-            throw confirmErr;
-          }
+        const res = await verifyPhoneOtpCode(confirmationResult, otp);
+        verifiedPhone = res.phoneNumber || verifiedPhone;
+        idToken = res.idToken;
+      } else {
+        const verifyRes = await fetch("/api/auth/verify-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: `${clean10}@phone.mingree.com`,
+            phone: clean10,
+            otp: otp.trim(),
+            otpToken,
+          }),
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyRes.ok || !verifyData.verifiedToken) {
+          throw new Error(verifyData.error || "Invalid verification code. Please try again.");
         }
+        verifiedPhoneToken = verifyData.verifiedToken;
       }
 
       // Sync phone login with backend API
@@ -129,7 +144,7 @@ export function PhoneOtpLogin({ role = "creator", onSuccess, className = "" }: P
           role,
           name: fullName.trim() || undefined,
           idToken,
-          uid,
+          verifiedPhoneToken,
         }),
         credentials: "include",
       });

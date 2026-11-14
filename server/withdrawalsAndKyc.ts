@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, pool, isDatabaseConfigured } from "./db";
 import { withdrawals, payoutMethods, kyc, wallets, ledgerEntries, notifications } from "../shared/schema";
 import { eq } from "drizzle-orm";
 import crypto from "crypto";
@@ -211,7 +211,7 @@ export async function getUserPayoutMethods(userId: number): Promise<any[]> {
   }
 }
 
-// 4. Request Withdrawal (Transaction with Available Balance -> Pending Hold) - Database transaction required
+// 4. Request Withdrawal (Atomic Transaction with SELECT FOR UPDATE row lock)
 export async function requestWithdrawal(params: {
   userId: number;
   userRole: string;
@@ -219,6 +219,10 @@ export async function requestWithdrawal(params: {
   payoutMethodId: number;
 }): Promise<{ withdrawalId: number; pendingHoldAmount: number; newAvailableBalance: number }> {
   const { userId, userRole, amount, payoutMethodId } = params;
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Withdrawal amount must be a positive number");
+  }
 
   // Minimum checks
   const minWithdrawal = userRole === "creator" ? CONFIG.MIN_CREATOR_WITHDRAWAL : CONFIG.MIN_ARTIST_WITHDRAWAL;
@@ -234,47 +238,70 @@ export async function requestWithdrawal(params: {
     }
   }
 
-  const currentW = await getOrCreateWallet(userId);
-  if (currentW.balance < amount) {
-    throw new Error(`Insufficient available balance (₹${currentW.balance.toFixed(2)}) for withdrawal request of ₹${amount.toFixed(2)}`);
+  if (!isDatabaseConfigured) {
+    throwDbUnavailable(new Error("Database not configured"));
   }
 
-  const newBalance = currentW.balance - amount;
-  const withdrawalId = Date.now();
+  const withdrawalId = Date.now() + Math.floor(Math.random() * 1000);
+  let newBalance = 0;
 
+  const client = await pool.connect();
   try {
-    await db.transaction(async (tx) => {
-      // 1. Move amount from available balance to pending hold
-      await tx
-        .update(wallets)
-        .set({
-          balance: newBalance.toFixed(2),
-        } as any)
-        .where(eq(wallets.userId, userId));
+    await client.query("BEGIN");
 
-      // 2. Insert withdrawal hold ledger entry
-      await tx.insert(ledgerEntries).values({
-        userId,
-        type: "withdrawal_hold",
-        amount: (-amount).toFixed(2),
-        balanceAfter: newBalance.toFixed(2),
-        refType: "withdrawal_request",
-        refId: String(withdrawalId),
-      } as any);
+    // Verify payoutMethodId belongs to the requesting user
+    const pmRes = await client.query(
+      `SELECT id FROM payout_methods WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [payoutMethodId, userId]
+    );
+    if (pmRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Invalid or unauthorized payout method");
+    }
 
-      // 3. Create withdrawal record
-      await tx.insert(withdrawals).values({
-        id: withdrawalId,
-        userId,
-        amount: amount.toFixed(2),
-        tdsAmount: "0.00",
-        payoutMethodId,
-        status: "pending",
-      } as any);
-    });
+    // Ensure wallet row exists and lock it exclusively
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [userId]
+    );
+    const walletRes = await client.query(
+      `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
+      [userId]
+    );
+    const currentBalance = Number(walletRes.rows[0]?.balance || 0);
+    if (currentBalance < amount) {
+      await client.query("ROLLBACK");
+      throw new Error(`Insufficient available balance (₹${currentBalance.toFixed(2)}) for withdrawal request of ₹${amount.toFixed(2)}`);
+    }
+
+    newBalance = Math.round((currentBalance - amount) * 100) / 100;
+
+    await client.query(
+      `UPDATE wallets SET balance = $1 WHERE user_id = $2`,
+      [newBalance.toFixed(2), userId]
+    );
+
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+       VALUES ($1, 'withdrawal_hold', $2, $3, 'withdrawal_request', $4)`,
+      [userId, (-amount).toFixed(2), newBalance.toFixed(2), String(withdrawalId)]
+    );
+
+    await client.query(
+      `INSERT INTO withdrawals (id, user_id, amount, tds_amount, payout_method_id, status)
+       VALUES ($1, $2, $3, '0.00', $4, 'pending')`,
+      [withdrawalId, userId, amount.toFixed(2), payoutMethodId]
+    );
+
+    await client.query("COMMIT");
   } catch (err: any) {
-    if (err?.status === 503) throw err;
+    await client.query("ROLLBACK").catch(() => {});
+    if (err?.status === 503 || err?.message?.includes("Insufficient") || err?.message?.includes("payout method")) {
+      throw err;
+    }
     throwDbUnavailable(err);
+  } finally {
+    client.release();
   }
 
   return {
@@ -284,52 +311,72 @@ export async function requestWithdrawal(params: {
   };
 }
 
-// 5. Admin Approve Withdrawal - Database transaction required
+// 5. Admin Approve Withdrawal - Atomic Transaction with SELECT FOR UPDATE
 export async function approveWithdrawal(withdrawalId: number, adminUserId: number, utrRef: string): Promise<{ success: boolean; message: string }> {
   if (!utrRef || !utrRef.trim()) {
     throw new Error("Transfer reference / UTR is required to approve withdrawal");
   }
-
-  let record: any = null;
-  try {
-    const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
-    if (rows.length > 0) record = rows[0];
-  } catch (err: any) {
-    throwDbUnavailable(err);
+  if (!isDatabaseConfigured) {
+    throwDbUnavailable(new Error("Database not configured"));
   }
 
-  if (!record) throw new Error("Withdrawal request not found");
-  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
+  const cleanUtr = utrRef.trim();
+  let amountNum = 0;
+  let targetUserId = 0;
 
-  const amountNum = parseFloat(record.amount);
-  const targetUserId = record.userId;
-
+  const client = await pool.connect();
   try {
-    await db.transaction(async (tx) => {
-      await tx
-        .update(withdrawals)
-        .set({ status: "approved", utrRef: utrRef.trim() } as any)
-        .where(eq(withdrawals.id, withdrawalId));
+    await client.query("BEGIN");
+    const wRes = await client.query(
+      `SELECT id, user_id, amount, status FROM withdrawals WHERE id = $1 FOR UPDATE`,
+      [withdrawalId]
+    );
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal request not found");
+    }
+    const record = wRes.rows[0];
+    if (record.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal is already ${record.status}`);
+    }
 
-      await tx.insert(ledgerEntries).values({
-        userId: targetUserId,
-        type: "withdrawal_completed",
-        amount: (-amountNum).toFixed(2),
-        balanceAfter: "0.00",
-        refType: "withdrawal_approved",
-        refId: String(withdrawalId),
-      } as any);
+    amountNum = parseFloat(record.amount);
+    targetUserId = Number(record.user_id);
 
-      await tx.insert(notifications).values({
-        userId: targetUserId,
-        title: "Withdrawal Approved! 🎉",
-        message: `Your withdrawal of ₹${amountNum.toFixed(2)} has been transferred! Reference UTR: ${utrRef.trim()}`,
-        read: false,
-      } as any);
-    });
+    const walletRes = await client.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [targetUserId]);
+    const currentBal = Number(walletRes.rows[0]?.balance || 0);
+
+    await client.query(
+      `UPDATE withdrawals SET status = 'approved', utr_ref = $1 WHERE id = $2`,
+      [cleanUtr, withdrawalId]
+    );
+
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+       VALUES ($1, 'withdrawal_completed', $2, $3, 'withdrawal_approved', $4)`,
+      [targetUserId, (-amountNum).toFixed(2), currentBal.toFixed(2), String(withdrawalId)]
+    );
+
+    await client.query(
+      `INSERT INTO notifications (user_id, title, message, read)
+       VALUES ($1, $2, $3, false)`,
+      [
+        targetUserId,
+        "Withdrawal Approved! 🎉",
+        `Your withdrawal of ₹${amountNum.toFixed(2)} has been transferred! Reference UTR: ${cleanUtr}`,
+      ]
+    );
+
+    await client.query("COMMIT");
   } catch (err: any) {
-    if (err?.status === 503) throw err;
+    await client.query("ROLLBACK").catch(() => {});
+    if (err?.message?.includes("not found") || err?.message?.includes("already")) {
+      throw err;
+    }
     throwDbUnavailable(err);
+  } finally {
+    client.release();
   }
 
   recordSecurityEvent({
@@ -344,69 +391,88 @@ export async function approveWithdrawal(withdrawalId: number, adminUserId: numbe
     ipAddress: "127.0.0.1",
     userAgent: "Admin",
     decision: "ALLOW",
-    details: `Admin #${adminUserId} approved Withdrawal #${withdrawalId} (₹${amountNum}) for User #${targetUserId}. UTR: ${utrRef.trim()}`,
+    details: `Admin #${adminUserId} approved Withdrawal #${withdrawalId} (₹${amountNum}) for User #${targetUserId}. UTR: ${cleanUtr}`,
   });
 
-  return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${utrRef.trim()}` };
+  return { success: true, message: `Withdrawal #${withdrawalId} approved. UTR: ${cleanUtr}` };
 }
 
-// 6. Admin Reject Withdrawal (Returns hold amount back to available balance) - Database transaction required
+// 6. Admin Reject Withdrawal (Returns hold amount back to available balance) - Atomic SELECT FOR UPDATE
 export async function rejectWithdrawal(withdrawalId: number, adminUserId: number, reason: string): Promise<{ success: boolean; message: string }> {
   if (!reason || !reason.trim()) {
     throw new Error("Rejection reason is required");
   }
-
-  let record: any = null;
-  try {
-    const rows = await db.select().from(withdrawals).where(eq(withdrawals.id, withdrawalId));
-    if (rows.length > 0) record = rows[0];
-  } catch (err: any) {
-    throwDbUnavailable(err);
+  if (!isDatabaseConfigured) {
+    throwDbUnavailable(new Error("Database not configured"));
   }
 
-  if (!record) throw new Error("Withdrawal request not found");
-  if (record.status !== "pending") throw new Error(`Withdrawal is already ${record.status}`);
+  const cleanReason = reason.trim();
+  let amountNum = 0;
+  let targetUserId = 0;
 
-  const amountNum = parseFloat(record.amount);
-  const targetUserId = record.userId;
-  const currentW = await getOrCreateWallet(targetUserId);
-  const refundedBalance = currentW.balance + amountNum;
-
+  const client = await pool.connect();
   try {
-    await db.transaction(async (tx) => {
-      // 1. Mark status = "rejected"
-      await tx
-        .update(withdrawals)
-        .set({ status: "rejected", rejectionReason: reason.trim() } as any)
-        .where(eq(withdrawals.id, withdrawalId));
+    await client.query("BEGIN");
+    const wRes = await client.query(
+      `SELECT id, user_id, amount, status FROM withdrawals WHERE id = $1 FOR UPDATE`,
+      [withdrawalId]
+    );
+    if (wRes.rows.length === 0) {
+      await client.query("ROLLBACK");
+      throw new Error("Withdrawal request not found");
+    }
+    const record = wRes.rows[0];
+    if (record.status !== "pending") {
+      await client.query("ROLLBACK");
+      throw new Error(`Withdrawal is already ${record.status}`);
+    }
 
-      // 2. Return hold amount back to available balance
-      await tx
-        .update(wallets)
-        .set({ balance: refundedBalance.toFixed(2) } as any)
-        .where(eq(wallets.userId, targetUserId));
+    amountNum = parseFloat(record.amount);
+    targetUserId = Number(record.user_id);
 
-      // 3. Ledger entry
-      await tx.insert(ledgerEntries).values({
-        userId: targetUserId,
-        type: "withdrawal_refund",
-        amount: amountNum.toFixed(2),
-        balanceAfter: refundedBalance.toFixed(2),
-        refType: "withdrawal_rejected",
-        refId: String(withdrawalId),
-      } as any);
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, escrow_held) VALUES ($1, 0.00, 0.00) ON CONFLICT (user_id) DO NOTHING`,
+      [targetUserId]
+    );
+    const walletRes = await client.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [targetUserId]);
+    const currentBal = Number(walletRes.rows[0]?.balance || 0);
+    const refundedBalance = Math.round((currentBal + amountNum) * 100) / 100;
 
-      // 4. Notification
-      await tx.insert(notifications).values({
-        userId: targetUserId,
-        title: "Withdrawal Request Returned",
-        message: `Your withdrawal of ₹${amountNum.toFixed(2)} was returned to your balance. Reason: ${reason.trim()}`,
-        read: false,
-      } as any);
-    });
+    await client.query(
+      `UPDATE withdrawals SET status = 'rejected', rejection_reason = $1 WHERE id = $2`,
+      [cleanReason, withdrawalId]
+    );
+
+    await client.query(
+      `UPDATE wallets SET balance = $1 WHERE user_id = $2`,
+      [refundedBalance.toFixed(2), targetUserId]
+    );
+
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, type, amount, balance_after, ref_type, ref_id)
+       VALUES ($1, 'withdrawal_refund', $2, $3, 'withdrawal_rejected', $4)`,
+      [targetUserId, amountNum.toFixed(2), refundedBalance.toFixed(2), String(withdrawalId)]
+    );
+
+    await client.query(
+      `INSERT INTO notifications (user_id, title, message, read)
+       VALUES ($1, $2, $3, false)`,
+      [
+        targetUserId,
+        "Withdrawal Request Returned",
+        `Your withdrawal of ₹${amountNum.toFixed(2)} was returned to your balance. Reason: ${cleanReason}`,
+      ]
+    );
+
+    await client.query("COMMIT");
   } catch (err: any) {
-    if (err?.status === 503) throw err;
+    await client.query("ROLLBACK").catch(() => {});
+    if (err?.message?.includes("not found") || err?.message?.includes("already")) {
+      throw err;
+    }
     throwDbUnavailable(err);
+  } finally {
+    client.release();
   }
 
   recordSecurityEvent({
@@ -421,7 +487,7 @@ export async function rejectWithdrawal(withdrawalId: number, adminUserId: number
     ipAddress: "127.0.0.1",
     userAgent: "Admin",
     decision: "ALLOW",
-    details: `Admin #${adminUserId} rejected Withdrawal #${withdrawalId} (₹${amountNum}). Returned to User #${targetUserId}. Reason: ${reason.trim()}`,
+    details: `Admin #${adminUserId} rejected Withdrawal #${withdrawalId} (₹${amountNum}). Returned to User #${targetUserId}. Reason: ${cleanReason}`,
   });
 
   return { success: true, message: `Withdrawal #${withdrawalId} rejected. Funds returned to user's wallet.` };

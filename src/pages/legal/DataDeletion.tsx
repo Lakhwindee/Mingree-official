@@ -37,8 +37,8 @@ export default function DataDeletion() {
               Overview
             </h2>
             <p className="leading-relaxed text-xs sm:text-sm text-muted-foreground">
-              Mingree is an influencer marketing platform operated by <strong>LAKHWINDER Singh / MusicLand Studios</strong>.
-              In accordance with Meta's Platform Terms and GDPR/data privacy regulations, users have the right to request the deletion of all data associated with their Instagram account that was provided to or stored by Mingree.
+              Mingree (<strong>mingree.com</strong>) is an influencer marketing and advertising platform owned and operated by <strong>MINGREE</strong>, a <strong>Sole Proprietorship</strong> of <strong>Shri Lakhwinder Singh (Proprietor)</strong> registered under MSME Udyam Registration Number <strong>UDYAM-PB-20-0059364</strong> (Business Activity: <strong>Services</strong>; NIC Code: <strong>73100 – Advertising Services</strong>).
+              In accordance with Meta's Platform Terms and applicable data privacy regulations, users have the right to request the deletion of all data associated with their Instagram account that was provided to or stored by Mingree.
             </p>
           </section>
 

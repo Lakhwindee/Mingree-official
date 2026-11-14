@@ -227,6 +227,20 @@ export default function AboutMingree() {
           ))}
         </Accordion>
       </div>
+
+      {/* MSME / Enterprise Registration Details */}
+      <Card className="border-border/80 bg-muted/20">
+        <CardContent className="p-5 space-y-2">
+          <h3 className="font-bold text-sm text-foreground">Enterprise &amp; MSME Registration Details</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-muted-foreground pt-1">
+            <div><strong className="text-foreground">Enterprise Name:</strong> MINGREE</div>
+            <div><strong className="text-foreground">Owner / Proprietor:</strong> Shri Lakhwinder Singh</div>
+            <div><strong className="text-foreground">Organisation Type:</strong> Proprietary (Sole Proprietorship)</div>
+            <div><strong className="text-foreground">Udyam Registration No.:</strong> UDYAM-PB-20-0059364</div>
+            <div className="sm:col-span-2"><strong className="text-foreground">Business Activity:</strong> Services (NIC Code: 73100 – Advertising Services)</div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 

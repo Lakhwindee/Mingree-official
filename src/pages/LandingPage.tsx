@@ -262,7 +262,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="pt-6 border-t border-border text-center text-xs text-muted-foreground">
-            © 2026 Mingree Inc. All rights reserved.
+            © {new Date().getFullYear()} MINGREE (Proprietor: Lakhwinder Singh) · UDYAM-PB-20-0059364. All rights reserved.
           </div>
         </div>
       </footer>

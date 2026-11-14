@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=server.js",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/server.cjs && esbuild server.ts --bundle --platform=node --format=esm --packages=external --outfile=server.js",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js server.js.map",
@@ -18,6 +18,7 @@
     "db:seed": "tsx server/seed.ts",
     "test:smoke": "tsx scripts/smoke-test.ts",
     "test:verify": "tsx scripts/verify-implementation.ts",
+    "test:security": "tsx scripts/security-regression.test.ts",
     "worker:build": "wrangler deploy --dry-run",
     "deploy:cf": "npm run build && wrangler deploy"
   },

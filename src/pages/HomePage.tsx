@@ -1094,7 +1094,7 @@ export default function HomePage() {
 
           {/* Bottom Bar */}
           <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 font-medium">
-            <div>© {new Date().getFullYear()} Mingree.com. All rights reserved.</div>
+            <div>© {new Date().getFullYear()} MINGREE (Proprietor: Lakhwinder Singh) · Sole Proprietorship · UDYAM-PB-20-0059364</div>
             <div className="flex items-center gap-4">
               <span>Made with pride in India</span>
             </div>

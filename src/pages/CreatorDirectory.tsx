@@ -771,7 +771,7 @@ export default function CreatorDirectory() {
               className="w-6 h-6 rounded-md object-cover"
             />
             <span className="font-bold text-slate-900">Mingree</span>
-            <span>© {new Date().getFullYear()} Mingree Technologies Pvt. Ltd.</span>
+            <span>© {new Date().getFullYear()} MINGREE (Proprietor: Lakhwinder Singh) · UDYAM-PB-20-0059364</span>
           </div>
 
           <div className="flex items-center gap-4">

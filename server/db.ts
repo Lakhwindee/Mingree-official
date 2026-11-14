@@ -127,6 +127,7 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           ALTER TABLE users ADD COLUMN IF NOT EXISTS billing_address text;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean DEFAULT false;
           ALTER TABLE users ADD COLUMN IF NOT EXISTS status text DEFAULT 'active';
+          ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version int NOT NULL DEFAULT 1;
 
           -- 2. Ensure creator_profiles exists with all required columns
           CREATE TABLE IF NOT EXISTS creator_profiles (
@@ -363,12 +364,6 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
             UPDATE rate_cards SET creator_id = user_id WHERE creator_id IS NULL AND user_id IS NOT NULL;
             UPDATE rate_cards SET price = base_price WHERE (price IS NULL OR price = 0) AND base_price IS NOT NULL;
             UPDATE rate_cards SET base_price = price WHERE base_price IS NULL AND price IS NOT NULL;
-            DELETE FROM rate_cards a
-            USING rate_cards b
-            WHERE a.id < b.id
-              AND a.user_id IS NOT NULL
-              AND a.user_id = b.user_id
-              AND a.deliverable_type = b.deliverable_type;
           EXCEPTION WHEN OTHERS THEN
             NULL;
           END;
@@ -438,6 +433,22 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
             created_at timestamptz NOT NULL DEFAULT now(),
             reviewed_at timestamptz
           );
+
+          -- 5d. Security tables for revoked session JTIs and single-use OTP/bill JTIs
+          CREATE TABLE IF NOT EXISTS revoked_tokens (
+            jti text PRIMARY KEY,
+            expires_at timestamptz NOT NULL,
+            revoked_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens (expires_at);
+
+          CREATE TABLE IF NOT EXISTS used_jti_tokens (
+            jti_key text PRIMARY KEY,
+            namespace text NOT NULL DEFAULT 'general',
+            expires_at timestamptz NOT NULL,
+            used_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE INDEX IF NOT EXISTS idx_used_jti_expires ON used_jti_tokens (expires_at);
 
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));

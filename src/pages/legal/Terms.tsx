@@ -27,7 +27,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold mb-4">1. Business Information</h2>
             <p className="text-muted-foreground leading-relaxed">
-              This website is owned and operated by <strong>LAKHWINDER Singh / MusicLand Studios</strong>, operating under the brand name <strong>Mingree</strong>. By using this platform, you are entering into an agreement with the company. All references to "we", "us", "our", or "the Company" refer to LAKHWINDER Singh / MusicLand Studios (Mingree).
+              This website (<a href="https://mingree.com" className="text-primary hover:underline">mingree.com</a>) is owned and operated by <strong>MINGREE</strong>, a <strong>Proprietary (Sole Proprietorship)</strong> enterprise owned by <strong>Shri Lakhwinder Singh (Proprietor)</strong>, registered under MSME Udyam Registration Number <strong>UDYAM-PB-20-0059364</strong> (Business Activity: <strong>Services</strong>; NIC Code: <strong>73100 – Advertising Services</strong>). By using this platform, you are entering into an agreement with <strong>MINGREE</strong> (Proprietor: <strong>Lakhwinder Singh</strong>). All references to "we", "us", "our", or "MINGREE" refer to this sole proprietorship enterprise.
             </p>
             <p className="text-muted-foreground leading-relaxed mt-2">
               Website: <a href="https://mingree.com" className="text-primary hover:underline">https://mingree.com</a>

@@ -64,7 +64,7 @@ export function SplashScreen({ onFinish, durationMs = 1300 }: SplashScreenProps)
               from
             </span>
             <div className="text-xs font-medium text-zinc-400">
-              Mingree Media Network
+              MINGREE
             </div>
           </motion.div>
         </motion.div>
