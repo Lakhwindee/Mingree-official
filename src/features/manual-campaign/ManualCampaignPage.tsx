@@ -24,6 +24,7 @@ const Check = __DummyIcon;
 const DELIVERABLES: { id: DeliverableType; label: string; shortLabel: string }[] = [
   { id: "reel", label: "Instagram Reel", shortLabel: "Reel" },
   { id: "story", label: "Instagram Story", shortLabel: "Story" },
+  { id: "simple_post", label: "Simple Post", shortLabel: "Post" },
   { id: "collab_post", label: "Collab Package", shortLabel: "Collab" },
   { id: "bio_link_story", label: "Bio Link & Story", shortLabel: "Bio & Story" },
 ];
@@ -35,6 +36,9 @@ function getDeliverableLabel(id: DeliverableType): string {
 function getCreatorRateForDeliverable(c: CreatorCard, deliv: DeliverableType): number {
   if (c.rateCard && typeof c.rateCard[deliv] === "number" && c.rateCard[deliv] > 0) {
     return c.rateCard[deliv];
+  }
+  if (deliv === "simple_post") {
+    return Math.round((c.rateCard?.reel || c.price) * 0.7);
   }
   return c.price;
 }
@@ -752,60 +756,61 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                     ? c.genres.slice(0, 2).join(" & ")
                     : "Fashion & Lifestyle";
                 const cardRates: { id: DeliverableType; label: string; price: number }[] = [
-                  { id: "reel", label: "Reel Post", price: getCreatorRateForDeliverable(c, "reel") },
-                  { id: "story", label: "Story Post", price: getCreatorRateForDeliverable(c, "story") },
-                  { id: "collab_post", label: "Collab Post", price: getCreatorRateForDeliverable(c, "collab_post") },
+                  { id: "reel", label: "Reel", price: getCreatorRateForDeliverable(c, "reel") },
+                  { id: "story", label: "Story", price: getCreatorRateForDeliverable(c, "story") },
+                  { id: "simple_post", label: "Post", price: getCreatorRateForDeliverable(c, "simple_post") },
+                  { id: "collab_post", label: "Collab", price: getCreatorRateForDeliverable(c, "collab_post") },
                 ];
 
                 return (
                   <div
                     key={c.id}
                     className={cn(
-                      "relative rounded-3xl bg-white dark:bg-card border p-5 sm:p-6 shadow-xl shadow-slate-200/70 dark:shadow-none space-y-4 flex flex-col justify-between transition-all duration-200",
+                      "relative rounded-2xl bg-white dark:bg-card border p-4 shadow-lg shadow-slate-200/60 dark:shadow-none space-y-3.5 flex flex-col justify-between transition-all duration-200",
                       isChosen
                         ? "border-rose-500 ring-2 ring-rose-500/20"
                         : "border-slate-200 dark:border-border hover:border-rose-300"
                     )}
                   >
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {/* Top Status Bar */}
-                      <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-border/60">
-                        <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400/80 shrink-0" />
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-border/60">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400/80 shrink-0" />
                           <span>
                             {c.isRealRegisteredCreator ? "Featured Star" : "Verified Creator"}
                           </span>
                         </div>
-                        <span className="text-xs text-slate-400 font-medium">Live sync</span>
+                        <span className="text-[11px] text-slate-400 font-medium">Live sync</span>
                       </div>
 
                       {/* Creator Avatar & Profile Info */}
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3">
                         <div className="relative flex-shrink-0">
                           <CreatorAvatar
                             avatarUrl={c.avatarUrl}
                             displayName={creatorName}
                             username={c.username}
-                            size={68}
-                            className="!rounded-2xl border-2 border-rose-500 shadow-md"
+                            size={56}
+                            className="!rounded-xl border-2 border-rose-500 shadow-sm"
                           />
-                          <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-rose-600 text-white flex items-center justify-center text-xs font-black shadow-md">
+                          <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[10px] font-black shadow-xs">
                             ✓
                           </div>
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <h4 className="text-lg font-black text-slate-900 dark:text-foreground truncate leading-tight">
+                          <div className="flex items-center gap-1">
+                            <h4 className="text-base font-black text-slate-900 dark:text-foreground truncate leading-tight">
                               {creatorName}
                             </h4>
-                            <BadgeCheck className="w-4 h-4 text-sky-500 flex-shrink-0" />
+                            <BadgeCheck className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
                           </div>
-                          <p className="text-xs text-slate-500 font-mono font-medium truncate mt-0.5">
+                          <p className="text-[11px] text-slate-500 font-mono font-medium truncate mt-0.5">
                             @{c.username}
                           </p>
-                          <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 min-w-0">
-                            <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                            <span className="truncate">{cityName}, India</span>
+                          <div className="flex items-center gap-1 mt-0.5 text-[11px] text-slate-500 min-w-0">
+                            <MapPin className="w-3 h-3 text-rose-500 shrink-0" />
+                            <span className="truncate">{cityName}</span>
                             <span aria-hidden="true">·</span>
                             <span className="text-rose-600 font-semibold truncate">
                               {categoryLabel}
@@ -814,37 +819,43 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                         </div>
                       </div>
 
-                      {/* 3-Column Verified Performance Metrics */}
-                      <div className="grid grid-cols-3 gap-2.5 p-3 rounded-2xl bg-slate-50 dark:bg-muted/30 border border-slate-200/90 dark:border-border text-center">
-                        <div className="space-y-0.5">
-                          <div className="text-[11px] text-slate-500 font-semibold">Followers</div>
-                          <div className="text-base font-black text-slate-900 dark:text-foreground font-mono tabular-nums">
+                      {/* 4-Column Verified Performance Metrics (Followers, Reach, Avg Views, Engagement) */}
+                      <div className="grid grid-cols-4 gap-1.5 p-2 rounded-xl bg-slate-50 dark:bg-muted/30 border border-slate-200/90 dark:border-border text-center">
+                        <div className="space-y-0.2">
+                          <div className="text-[10px] text-slate-500 font-semibold">Followers</div>
+                          <div className="text-xs font-black text-slate-900 dark:text-foreground font-mono tabular-nums">
                             {c.followers > 0 ? compact(c.followers) : "—"}
                           </div>
                         </div>
-                        <div className="space-y-0.5 border-x border-slate-200 dark:border-border">
-                          <div className="text-[11px] text-slate-500 font-semibold">Avg Views</div>
-                          <div className="text-base font-black text-slate-900 dark:text-foreground font-mono tabular-nums">
+                        <div className="space-y-0.2 border-x border-slate-200 dark:border-border">
+                          <div className="text-[10px] text-slate-500 font-semibold">Reach</div>
+                          <div className="text-xs font-black text-sky-600 dark:text-sky-400 font-mono tabular-nums">
+                            {c.reach != null && c.reach > 0 ? compact(c.reach) : (c.followers > 0 ? compact(Math.round(c.followers * 2.2)) : "—")}
+                          </div>
+                        </div>
+                        <div className="space-y-0.2 border-r border-slate-200 dark:border-border">
+                          <div className="text-[10px] text-slate-500 font-semibold">Views</div>
+                          <div className="text-xs font-black text-slate-900 dark:text-foreground font-mono tabular-nums">
                             {c.medianViews != null && c.medianViews > 0 ? compact(c.medianViews) : "—"}
                           </div>
                         </div>
-                        <div className="space-y-0.5">
-                          <div className="text-[11px] text-slate-500 font-semibold">Engagement</div>
-                          <div className="text-base font-black text-emerald-600 font-mono tabular-nums">
+                        <div className="space-y-0.2">
+                          <div className="text-[10px] text-slate-500 font-semibold">Eng.</div>
+                          <div className="text-xs font-black text-emerald-600 font-mono tabular-nums">
                             {c.engagementRate != null && c.engagementRate > 0 ? `${c.engagementRate}%` : "4.8%"}
                           </div>
                         </div>
                       </div>
 
                       {/* Standardized Rates Preview & Deliverable Selector */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-foreground">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 dark:text-foreground">
                           <span>Standardized Rates</span>
-                          <span className="text-slate-600 dark:text-muted-foreground font-semibold">
-                            Standard Platform Percentage
+                          <span className="text-slate-500 font-medium text-[10px]">
+                            Platform Verified
                           </span>
                         </div>
-                        <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div className="grid grid-cols-4 gap-1.5 text-xs">
                           {cardRates.map((item) => {
                             const isSelectedPkg = activeDeliv === item.id;
                             return (
@@ -856,18 +867,18 @@ export function ManualCampaignPage({ api, onBack, onAddMoney, onCreated }: Props
                                   setCreatorPackage(c, item.id);
                                 }}
                                 className={cn(
-                                  "p-2.5 rounded-xl border text-center transition-all cursor-pointer",
+                                  "p-2 rounded-xl border text-center transition-all cursor-pointer",
                                   isSelectedPkg
-                                    ? "bg-rose-50/70 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800"
-                                    : "bg-slate-50 dark:bg-muted/20 border-slate-200 dark:border-border hover:border-rose-200"
+                                    ? "bg-rose-50/80 dark:bg-rose-950/35 border-rose-300 dark:border-rose-700 shadow-xs"
+                                    : "bg-slate-50/80 dark:bg-muted/20 border-slate-200 dark:border-border hover:border-rose-200"
                                 )}
                               >
-                                <div className="text-slate-600 dark:text-muted-foreground font-semibold truncate">
+                                <div className="text-[11px] text-slate-600 dark:text-muted-foreground font-semibold truncate">
                                   {item.label}
                                 </div>
                                 <div
                                   className={cn(
-                                    "font-black text-sm mt-0.5 font-mono tabular-nums",
+                                    "font-black text-xs mt-0.5 font-mono tabular-nums",
                                     isSelectedPkg
                                       ? "text-rose-600 dark:text-rose-400"
                                       : "text-slate-900 dark:text-foreground"

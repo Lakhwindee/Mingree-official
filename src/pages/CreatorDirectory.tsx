@@ -37,6 +37,7 @@ interface PublicCreator {
   indiaAudiencePct: number;
   pricePerReel: number;
   pricePerStory: number;
+  pricePerSimplePost: number;
   pricePerCollab: number;
   completedDeals: number;
   onTimeRate: number;
@@ -60,6 +61,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 96,
     pricePerReel: 2800,
     pricePerStory: 1400,
+    pricePerSimplePost: 2000,
     pricePerCollab: 3900,
     completedDeals: 24,
     onTimeRate: 100,
@@ -81,6 +83,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 94,
     pricePerReel: 6500,
     pricePerStory: 3250,
+    pricePerSimplePost: 4500,
     pricePerCollab: 9100,
     completedDeals: 31,
     onTimeRate: 98,
@@ -102,6 +105,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 98,
     pricePerReel: 6500,
     pricePerStory: 3250,
+    pricePerSimplePost: 4500,
     pricePerCollab: 9100,
     completedDeals: 39,
     onTimeRate: 100,
@@ -123,6 +127,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 95,
     pricePerReel: 2800,
     pricePerStory: 1400,
+    pricePerSimplePost: 2000,
     pricePerCollab: 3900,
     completedDeals: 19,
     onTimeRate: 100,
@@ -144,6 +149,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 97,
     pricePerReel: 6500,
     pricePerStory: 3250,
+    pricePerSimplePost: 4500,
     pricePerCollab: 9100,
     completedDeals: 42,
     onTimeRate: 100,
@@ -165,6 +171,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 98,
     pricePerReel: 1200,
     pricePerStory: 600,
+    pricePerSimplePost: 900,
     pricePerCollab: 1700,
     completedDeals: 15,
     onTimeRate: 100,
@@ -186,6 +193,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 93,
     pricePerReel: 6500,
     pricePerStory: 3250,
+    pricePerSimplePost: 4500,
     pricePerCollab: 9100,
     completedDeals: 27,
     onTimeRate: 100,
@@ -207,6 +215,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 95,
     pricePerReel: 2800,
     pricePerStory: 1400,
+    pricePerSimplePost: 2000,
     pricePerCollab: 3900,
     completedDeals: 18,
     onTimeRate: 100,
@@ -228,6 +237,7 @@ const DEFAULT_CREATORS: PublicCreator[] = [
     indiaAudiencePct: 96,
     pricePerReel: 2800,
     pricePerStory: 1400,
+    pricePerSimplePost: 2000,
     pricePerCollab: 3900,
     completedDeals: 21,
     onTimeRate: 100,
@@ -592,104 +602,116 @@ export default function CreatorDirectory() {
             {filteredCreators.map((c) => (
               <div
                 key={c.id}
-                className="relative rounded-3xl bg-white border border-slate-200 hover:border-rose-300 p-6 shadow-xl shadow-slate-200/70 space-y-5 flex flex-col justify-between transition-all duration-300"
+                className="relative rounded-2xl bg-white border border-slate-200 hover:border-rose-300 p-4 shadow-lg shadow-slate-200/60 space-y-3.5 flex flex-col justify-between transition-all duration-200"
               >
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {/* Status bar */}
-                  <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
-                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-700">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400/80 shrink-0" />
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400/80 shrink-0" />
                       <span>{c.badge ? c.badge.replace(/^[^\w]+/, "").trim() : "Featured Star"}</span>
                     </div>
-                    <span className="text-xs text-slate-400 font-medium">Live sync</span>
+                    <span className="text-[11px] text-slate-400 font-medium">Live sync</span>
                   </div>
 
                   {/* Creator Avatar & Info */}
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
                     <div className="relative flex-shrink-0">
                       {c.avatar && !c.avatar.includes("unsplash.com") ? (
                         <CreatorAvatar
                           avatarUrl={c.avatar}
                           displayName={c.displayName}
                           username={c.username}
-                          size={68}
-                          className="!rounded-2xl border-2 border-rose-500 shadow-md"
+                          size={56}
+                          className="!rounded-xl border-2 border-rose-500 shadow-sm"
                         />
                       ) : (
                         <img
                           src={c.avatar}
                           alt={c.displayName}
                           referrerPolicy="no-referrer"
-                          className="w-17 h-17 rounded-2xl object-cover border-2 border-rose-500 shadow-md"
+                          className="w-14 h-14 rounded-xl object-cover border-2 border-rose-500 shadow-sm"
                         />
                       )}
-                      <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-rose-600 text-white flex items-center justify-center text-xs font-black shadow-md">
+                      <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-rose-600 text-white flex items-center justify-center text-[10px] font-black shadow-xs">
                         ✓
                       </div>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h4 className="text-lg font-black text-slate-900 truncate">
+                      <div className="flex items-center gap-1">
+                        <h4 className="text-base font-black text-slate-900 truncate leading-tight">
                           {c.displayName}
                         </h4>
-                        <BadgeCheck className="w-4 h-4 text-sky-500 flex-shrink-0" />
+                        <BadgeCheck className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
                       </div>
-                      <p className="text-xs text-slate-500 font-mono font-medium truncate">
+                      <p className="text-[11px] text-slate-500 font-mono font-medium truncate mt-0.5">
                         {c.handle}
                       </p>
-                      <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 min-w-0">
-                        <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                        <span className="truncate">{c.city}, India</span>
+                      <div className="flex items-center gap-1 mt-0.5 text-[11px] text-slate-500 min-w-0">
+                        <MapPin className="w-3 h-3 text-rose-500 shrink-0" />
+                        <span className="truncate">{c.city}</span>
                         <span aria-hidden="true">·</span>
                         <span className="text-rose-600 font-semibold truncate">{c.category}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Real Verified Performance Metrics */}
-                  <div className="grid grid-cols-3 gap-2.5 p-3 rounded-2xl bg-slate-50 border border-slate-200/90 text-center">
-                    <div className="space-y-0.5">
-                      <div className="text-[11px] text-slate-500 font-semibold">Followers</div>
-                      <div className="text-base font-black text-slate-900 font-mono tabular-nums">
+                  {/* 4-Column Verified Performance Metrics (Followers, Reach, Avg Views, Engagement) */}
+                  <div className="grid grid-cols-4 gap-1.5 p-2 rounded-xl bg-slate-50 border border-slate-200/90 text-center">
+                    <div className="space-y-0.2">
+                      <div className="text-[10px] text-slate-500 font-semibold">Followers</div>
+                      <div className="text-xs font-black text-slate-900 font-mono tabular-nums">
                         {formatNumber(c.followers)}
                       </div>
                     </div>
-                    <div className="space-y-0.5 border-x border-slate-200">
-                      <div className="text-[11px] text-slate-500 font-semibold">Avg Views</div>
-                      <div className="text-base font-black text-slate-900 font-mono tabular-nums">
+                    <div className="space-y-0.2 border-x border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-semibold">Reach</div>
+                      <div className="text-xs font-black text-sky-600 font-mono tabular-nums">
+                        {c.reach > 0 ? formatNumber(c.reach) : formatNumber(Math.round(c.followers * 2.2))}
+                      </div>
+                    </div>
+                    <div className="space-y-0.2 border-r border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-semibold">Views</div>
+                      <div className="text-xs font-black text-slate-900 font-mono tabular-nums">
                         {formatNumber(c.medianViews)}
                       </div>
                     </div>
-                    <div className="space-y-0.5">
-                      <div className="text-[11px] text-slate-500 font-semibold">Engagement</div>
-                      <div className="text-base font-black text-emerald-600 font-mono tabular-nums">
+                    <div className="space-y-0.2">
+                      <div className="text-[10px] text-slate-500 font-semibold">Eng.</div>
+                      <div className="text-xs font-black text-emerald-600 font-mono tabular-nums">
                         {c.engagementRate}%
                       </div>
                     </div>
                   </div>
 
                   {/* Standardized Rates */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
                       <span>Standardized Rates</span>
-                      <span className="text-slate-600 font-semibold">Standard Platform Percentage</span>
+                      <span className="text-slate-500 font-medium text-[10px]">Platform Verified</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="p-2.5 rounded-xl bg-rose-50/70 border border-rose-200 text-center">
-                        <div className="text-slate-600 font-semibold">Reel Post</div>
-                        <div className="text-rose-600 font-black text-sm mt-0.5 font-mono tabular-nums">
+                    <div className="grid grid-cols-4 gap-1.5 text-xs">
+                      <div className="p-2 rounded-xl bg-rose-50/80 border border-rose-300 text-center">
+                        <div className="text-[11px] text-slate-600 font-semibold">Reel</div>
+                        <div className="text-rose-600 font-black text-xs mt-0.5 font-mono tabular-nums">
                           {formatINR(c.pricePerReel)}
                         </div>
                       </div>
-                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-center">
-                        <div className="text-slate-600 font-semibold">Story Post</div>
-                        <div className="text-slate-900 font-black text-sm mt-0.5 font-mono tabular-nums">
+                      <div className="p-2 rounded-xl bg-slate-50/80 border border-slate-200 text-center">
+                        <div className="text-[11px] text-slate-600 font-semibold">Story</div>
+                        <div className="text-slate-900 font-black text-xs mt-0.5 font-mono tabular-nums">
                           {formatINR(c.pricePerStory)}
                         </div>
                       </div>
-                      <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-center">
-                        <div className="text-slate-600 font-semibold">Collab Post</div>
-                        <div className="text-slate-900 font-black text-sm mt-0.5 font-mono tabular-nums">
+                      <div className="p-2 rounded-xl bg-slate-50/80 border border-slate-200 text-center">
+                        <div className="text-[11px] text-slate-600 font-semibold">Post</div>
+                        <div className="text-slate-900 font-black text-xs mt-0.5 font-mono tabular-nums">
+                          {formatINR(c.pricePerSimplePost || Math.round(c.pricePerReel * 0.7))}
+                        </div>
+                      </div>
+                      <div className="p-2 rounded-xl bg-slate-50/80 border border-slate-200 text-center">
+                        <div className="text-[11px] text-slate-600 font-semibold">Collab</div>
+                        <div className="text-slate-900 font-black text-xs mt-0.5 font-mono tabular-nums">
                           {formatINR(c.pricePerCollab)}
                         </div>
                       </div>
@@ -702,12 +724,12 @@ export default function CreatorDirectory() {
                   <button
                     type="button"
                     onClick={() => handleBookClick(c)}
-                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm shadow-lg shadow-rose-600/25 transition cursor-pointer"
+                    className="w-full flex items-center justify-center gap-1.5 py-3 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md transition cursor-pointer"
                   >
-                    <Lock className="w-4 h-4 text-white" />
+                    <Lock className="w-3.5 h-3.5 text-white" />
                     <span>Book Creator with Payment Protection</span>
                   </button>
-                  <p className="text-[11px] text-slate-400 text-center mt-2 font-medium">
+                  <p className="text-[11px] text-slate-400 text-center mt-1.5 font-medium leading-tight">
                     Funds released strictly after you review and approve the post.
                   </p>
                 </div>

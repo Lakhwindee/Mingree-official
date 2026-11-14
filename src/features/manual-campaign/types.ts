@@ -1,12 +1,13 @@
 // Types for the "Choose creators" (manual) campaign flow.
 // Money is shown in rupees here for DISPLAY only. The server computes and checks every amount.
 
-export type DeliverableType = "reel" | "story" | "collab_post" | "bio_link_story";
+export type DeliverableType = "reel" | "story" | "simple_post" | "collab_post" | "bio_link_story";
 export type MetricsSource = "api_verified" | "creator_reported" | "none";
 
 export interface CreatorRateCard {
   reel: number;
   story: number;
+  simple_post: number;
   collab_post: number;
   bio_link_story: number;
 }
