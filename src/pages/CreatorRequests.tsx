@@ -37,6 +37,13 @@ export default function CreatorRequests() {
   const queryClient = useQueryClient();
   const [mainTab, setMainTab] = useState<"deals" | "history" | "rate-card">("deals");
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "rate-card") {
+      setMainTab("rate-card");
+    }
+  }, []);
+
   // Popup 1: Simple Deal Info, File Download & Submit Reel Link ONLY
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   const [liveReelUrl, setLiveReelUrl] = useState<string>("");

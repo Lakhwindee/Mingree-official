@@ -852,7 +852,7 @@ export default function Profile() {
                   </div>
                 </div>
                 <Button 
-                  onClick={() => setLocation("/creator-requests")} 
+                  onClick={() => setLocation("/creator-requests?tab=rate-card")} 
                   size="sm"
                   className="text-xs font-semibold shrink-0 self-start sm:self-center h-8 px-4"
                 >
