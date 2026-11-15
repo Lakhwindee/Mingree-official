@@ -1,4 +1,9 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import dns from "dns";
+dotenv.config({ override: true });
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch {}
 import express from "express";
 import path from "path";
 import os from "os";
@@ -634,16 +639,61 @@ function getMinInstagramFollowers(): number {
 }
 
 function getEmailCredentials(): { user: string; pass: string } | null {
-  const user = (process.env.GMAIL_USER || inMemorySettings.gmail_user || "manindersinghjudge@gmail.com").trim();
-  const pass = (process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "vpeqznebxkcyamde")
+  const rawUser = (process.env.GMAIL_USER || inMemorySettings.gmail_user || "infomingree@gmail.com").trim();
+  const rawPass = (process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "fsoeexddhrhzwpuu")
     .trim()
     .replace(/\s+/g, "");
+
+  const pass = !rawPass || rawPass === "skockriejwxifwfv" || rawPass === "vpeqznebxkcyamde" ? "fsoeexddhrhzwpuu" : rawPass;
+  const user = !rawUser || rawUser === "manindersinghjudge@gmail.com" ? "infomingree@gmail.com" : rawUser;
 
   if (user && pass) {
     return { user, pass };
   }
   return null;
 }
+
+let sharedSmtpTransporter: ReturnType<typeof nodemailer.createTransport> | null = null;
+let sharedSmtpKey = "";
+
+function getSharedSmtpTransporter(creds: { user: string; pass: string }, forceNew = false): ReturnType<typeof nodemailer.createTransport> {
+  const key = `${creds.user}:${creds.pass}`;
+  if (!sharedSmtpTransporter || sharedSmtpKey !== key || forceNew) {
+    if (sharedSmtpTransporter) {
+      try {
+        sharedSmtpTransporter.close();
+      } catch {}
+    }
+    sharedSmtpKey = key;
+    sharedSmtpTransporter = nodemailer.createTransport({
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 200,
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: {
+        user: creds.user,
+        pass: creds.pass,
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 14000,
+    } as any);
+  }
+  return sharedSmtpTransporter;
+}
+
+// Pre-warm Gmail SMTP connection pool in background on startup
+setTimeout(() => {
+  const creds = getEmailCredentials();
+  if (creds) {
+    getSharedSmtpTransporter(creds)
+      .verify()
+      .then(() => console.log(`[SMTP POOL] Ready for ${creds.user}`))
+      .catch(() => {});
+  }
+}, 500);
 
 // Secure Expiring OTP Store (PostgreSQL email_otps + TTL in-memory cache; never writes /tmp/mingree_otp_store.json)
 interface StoredOtp {
@@ -781,41 +831,80 @@ async function sendEmailOtp(
     : "";
 
   const buildHtml = () => `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 12px; background-color: #ffffff;">
-      <div style="text-align: center; margin-bottom: 24px;">
-        <h1 style="background: linear-gradient(135deg, #ec4899, #f43f5e, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; font-weight: 800; margin: 0;">Mingree</h1>
-        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator &amp; Brand Collaboration Platform</p>
-      </div>
-      <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
-        <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${escapeHtml(userName || "there")}</strong>,</p>
-        <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">${introText}</p>
-        <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
-          <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${escapeHtml(otp)}</span>
-        </div>
-        ${companionSmsHtml}
-        <p style="color: #64748b; font-size: 13px; margin: 16px 0 0 0; text-align: center;">⏱️ This OTP is valid for <strong>10 minutes</strong>. Please do not share it with anyone.</p>
-      </div>
-      <div style="margin-top: 24px; text-align: center; color: #94a3b8; font-size: 12px;">
-        <p style="margin: 0;">If you didn't request this code, you can safely ignore this email.</p>
-        <p style="margin: 6px 0 0 0;">&copy; ${new Date().getFullYear()} Mingree. All rights reserved.</p>
-      </div>
-    </div>
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${escapeHtml(subject)}</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="table-layout: fixed; background-color: #f1f5f9; padding: 32px 16px;">
+        <tr>
+          <td align="center">
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06); overflow: hidden; border: 1px solid #e2e8f0;">
+              <!-- Header -->
+              <tr>
+                <td style="padding: 32px 32px 24px 32px; text-align: center; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);">
+                  <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.5px; background: linear-gradient(135deg, #ec4899 0%, #f43f5e 50%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Mingree</h1>
+                  <p style="margin: 6px 0 0 0; color: #94a3b8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">Creator &amp; Brand Collaboration</p>
+                </td>
+              </tr>
+              <!-- Body -->
+              <tr>
+                <td style="padding: 32px;">
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                    <tr>
+                      <td>
+                        <p style="margin: 0 0 12px 0; color: #1e293b; font-size: 16px; font-weight: 600;">Hello ${escapeHtml(userName || "Creator")},</p>
+                        <p style="margin: 0 0 24px 0; color: #475569; font-size: 14px; line-height: 1.6;">${introText}</p>
+                        
+                        <!-- OTP Box -->
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 24px;">
+                          <tr>
+                            <td align="center" style="background: linear-gradient(135deg, #fff1f2 0%, #fffbeb 100%); border: 2px dashed #fda4af; border-radius: 12px; padding: 24px;">
+                              <span style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #be123c; font-family: 'Courier New', Courier, monospace;">${escapeHtml(otp)}</span>
+                              <div style="margin-top: 8px; color: #9f1239; font-size: 12px; font-weight: 600;">Secure Verification Code</div>
+                            </td>
+                          </tr>
+                        </table>
+
+                        ${companionSmsHtml}
+
+                        <!-- Security Notice -->
+                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border-radius: 8px; padding: 12px 16px; border-left: 4px solid #3b82f6;">
+                          <tr>
+                            <td>
+                              <p style="margin: 0; color: #334155; font-size: 12px; line-height: 1.5;">
+                                ⏱️ This code expires in <strong>10 minutes</strong>. Never share your OTP with anyone, including Mingree support.
+                              </p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+              <!-- Footer -->
+              <tr>
+                <td style="padding: 20px 32px 32px 32px; text-align: center; background-color: #f8fafc; border-top: 1px solid #f1f5f9;">
+                  <p style="margin: 0 0 6px 0; color: #64748b; font-size: 12px;">If you didn't request this verification code, please ignore this email.</p>
+                  <p style="margin: 0; color: #94a3b8; font-size: 11px;">&copy; ${new Date().getFullYear()} Mingree. All rights reserved.</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
   `;
 
-  const trySendWithUser = async (senderEmail: string) => {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: senderEmail,
-        pass: creds.pass,
-      },
-      connectionTimeout: 4500,
-      greetingTimeout: 4500,
-      socketTimeout: 5500,
-    } as any);
-
+  const sendMailAttempt = async (forceNewPool: boolean) => {
+    const transporter = getSharedSmtpTransporter(creds, forceNewPool);
     await transporter.sendMail({
-      from: `"Mingree" <${senderEmail}>`,
+      from: `"Mingree" <${creds.user}>`,
       to: toEmail,
       subject,
       html: buildHtml(),
@@ -823,25 +912,20 @@ async function sendEmailOtp(
   };
 
   try {
-    await trySendWithUser(creds.user);
+    await sendMailAttempt(false);
     console.log(`[EMAIL OTP] Sent (${purpose}) to ${toEmail} via ${creds.user}`);
     return { success: true };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    // If recipient is a @gmail.com address and differs from creds.user, try authenticating with recipient's Gmail in case the App Password belongs to that Gmail account
-    const cleanTo = toEmail.trim().toLowerCase();
-    if (cleanTo.endsWith("@gmail.com") && cleanTo !== creds.user.toLowerCase()) {
-      try {
-        await trySendWithUser(cleanTo);
-        inMemorySettings.gmail_user = cleanTo;
-        saveSettings(inMemorySettings);
-        console.log(`[EMAIL OTP] Auto-detected matching Gmail sender (${cleanTo}) and sent OTP!`);
-        return { success: true };
-      } catch {}
+  } catch (firstErr) {
+    try {
+      await sendMailAttempt(true);
+      console.log(`[EMAIL OTP] Sent (${purpose}) on retry to ${toEmail} via ${creds.user}`);
+      return { success: true };
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[EMAIL OTP ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
+      console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Code: ${otp}`);
+      return { success: false, error: errorMsg };
     }
-    console.error(`[EMAIL OTP ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
-    console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Code: ${otp}`);
-    return { success: false, error: errorMsg };
   }
 }
 
@@ -1229,20 +1313,10 @@ async function sendPlatformEmail(options: {
     </div>
   `;
 
-  const trySendNotification = async (senderEmail: string) => {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: senderEmail,
-        pass: creds.pass,
-      },
-      connectionTimeout: 4500,
-      greetingTimeout: 4500,
-      socketTimeout: 5500,
-    } as any);
-
+  const trySendNotification = async (forceNewPool: boolean) => {
+    const transporter = getSharedSmtpTransporter(creds, forceNewPool);
     await transporter.sendMail({
-      from: `"Mingree" <${senderEmail}>`,
+      from: `"Mingree" <${creds.user}>`,
       to: toEmail,
       subject: options.subject,
       html,
@@ -1250,21 +1324,18 @@ async function sendPlatformEmail(options: {
   };
 
   try {
-    await trySendNotification(creds.user);
+    await trySendNotification(false);
     console.log(`[EMAIL SENT] To: ${toEmail} | Subject: ${options.subject}`);
     return { success: true };
-  } catch (err: any) {
-    if (toEmail.endsWith("@gmail.com") && toEmail !== creds.user.toLowerCase()) {
-      try {
-        await trySendNotification(toEmail);
-        inMemorySettings.gmail_user = toEmail;
-        saveSettings(inMemorySettings);
-        console.log(`[EMAIL SENT] Auto-detected Gmail sender (${toEmail}) | Subject: ${options.subject}`);
-        return { success: true };
-      } catch {}
+  } catch (firstErr: any) {
+    try {
+      await trySendNotification(true);
+      console.log(`[EMAIL SENT] To: ${toEmail} (retry) | Subject: ${options.subject}`);
+      return { success: true };
+    } catch (err: any) {
+      console.warn(`[EMAIL WARN] Could not send email to ${toEmail}:`, err?.message || err);
+      return { success: false };
     }
-    console.warn(`[EMAIL WARN] Could not send email to ${toEmail}:`, err?.message || err);
-    return { success: false };
   }
 }
 
@@ -1604,7 +1675,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
           Promise.race([
             sendEmailOtp(cleanEmail, codeToSend, userName, "signup", companionSms),
             new Promise<{ success: boolean; error: string }>((resolve) =>
-              setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 5000)
+              setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 15000)
             ),
           ])
             .then((r) => {
@@ -1623,7 +1694,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
           Promise.race([
             sendSmsOtp(cleanPhone, smsCodeToSend, userName),
             new Promise<{ success: boolean; error?: string }>((resolve) =>
-              setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 5000)
+              setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 12000)
             ),
           ])
             .then((r) => {
@@ -1776,7 +1847,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
         Promise.race([
           sendSmsOtp(cleanPhone, rawOtp, userName),
           new Promise<{ success: boolean; error?: string }>((resolve) =>
-            setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 5000)
+            setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 12000)
           ),
         ])
           .then((smsRes) => {
@@ -1799,7 +1870,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
             purpose === "forgot_password" ? "forgot_password" : "signup"
           ),
           new Promise<{ success: boolean; error: string }>((resolve) =>
-            setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 5000)
+            setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 15000)
           ),
         ])
           .then((emailResult) => {
