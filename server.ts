@@ -920,8 +920,28 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
 
   if (fast2smsKey) {
     try {
-      // Primary: Quick SMS route (active on account)
+      // Primary: Fast2SMS OTP route (works when Quick API Access is OFF)
       let res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+        method: "POST",
+        headers: {
+          "authorization": fast2smsKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          variables_values: otp,
+          route: "otp",
+          numbers: cleanPhone
+        })
+      });
+      let data = await res.json();
+      if (data && (data.return === true || data.status === true || data.return === "true")) {
+        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
+        return { success: true };
+      }
+      const otpErrMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "");
+
+      // Fallback: Quick SMS route (requires Quick API Access ON and >= ₹7 balance)
+      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
         method: "POST",
         headers: {
           "authorization": fast2smsKey,
@@ -935,34 +955,16 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
           numbers: cleanPhone
         })
       });
-      let data = await res.json();
+      data = await res.json();
       if (data && (data.return === true || data.status === true || data.return === "true")) {
         console.log(`[FAST2SMS QUICK SENT] To: +91${cleanPhone}`);
         return { success: true };
       }
 
-      // Fallback: Fast2SMS OTP route
-      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-        method: "POST",
-        headers: {
-          "authorization": fast2smsKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          variables_values: otp,
-          route: "otp",
-          numbers: cleanPhone
-        })
-      });
-      data = await res.json();
-      if (data && (data.return === true || data.status === true || data.return === "true")) {
-        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
-        return { success: true };
-      }
-
-      const errMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
-      console.warn("[FAST2SMS RESPONSE]", errMsg);
-      return { success: false, error: errMsg };
+      const quickErrMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
+      const combinedErr = otpErrMsg ? `${otpErrMsg} / ${quickErrMsg}` : quickErrMsg;
+      console.warn("[FAST2SMS RESPONSE]", combinedErr);
+      return { success: false, error: combinedErr };
     } catch (err: any) {
       console.error("[FAST2SMS ERROR]", err.message);
       return { success: false, error: err.message || "SMS network failure" };
