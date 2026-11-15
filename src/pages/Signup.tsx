@@ -415,7 +415,7 @@ export default function Signup() {
                     inputMode="email"
                     autoCapitalize="none"
                     autoCorrect="off"
-                    placeholder={role === "sponsor" ? "Business Email *" : "Email Address *"}
+                    placeholder="Email Address *"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="text-xs h-9"
@@ -653,21 +653,7 @@ export default function Signup() {
                     </InputOTP>
                   </div>
 
-                  {devEmailOtp && (
-                    <div className="flex items-center justify-between rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-[11px]">
-                      <span className="text-amber-700 dark:text-amber-300 font-medium">
-                        Instant Backup Code:{" "}
-                        <strong className="font-mono tracking-wider">{devEmailOtp}</strong>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setEmailOtp(devEmailOtp)}
-                        className="font-bold text-primary hover:underline cursor-pointer"
-                      >
-                        Auto-fill
-                      </button>
-                    </div>
-                  )}
+
 
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
                     <span>Sent to your email inbox</span>
@@ -729,21 +715,7 @@ export default function Signup() {
                     </InputOTP>
                   </div>
 
-                  {devSmsOtp && (
-                    <div className="flex items-center justify-between rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-[11px]">
-                      <span className="text-amber-700 dark:text-amber-300 font-medium">
-                        Instant Backup Code:{" "}
-                        <strong className="font-mono tracking-wider">{devSmsOtp}</strong>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setSmsOtp(devSmsOtp)}
-                        className="font-bold text-primary hover:underline cursor-pointer"
-                      >
-                        Auto-fill
-                      </button>
-                    </div>
-                  )}
+
 
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
                     <span>Sent via SMS to your mobile</span>
