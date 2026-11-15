@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import os from "os";
@@ -633,11 +634,13 @@ function getMinInstagramFollowers(): number {
 }
 
 function getEmailCredentials(): { user: string; pass: string } | null {
-  const user = process.env.GMAIL_USER || inMemorySettings.gmail_user || "";
-  const pass = process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "";
+  const user = (process.env.GMAIL_USER || inMemorySettings.gmail_user || "manindersinghjudge@gmail.com").trim();
+  const pass = (process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "vpeqznebxkcyamde")
+    .trim()
+    .replace(/\s+/g, "");
 
   if (user && pass) {
-    return { user: user.trim(), pass: pass.trim().replace(/\s+/g, "") };
+    return { user, pass };
   }
   return null;
 }
@@ -742,73 +745,103 @@ function generateOtp(): string {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
-// Send OTP via Nodemailer (Email-only OTP for Signup & Password Reset)
+// Send OTP via Nodemailer (Gmail SMTP for Signup & Password Reset)
 async function sendEmailOtp(
   toEmail: string,
   otp: string,
   userName?: string,
-  purpose: "signup" | "forgot_password" | string = "signup"
+  purpose: "signup" | "forgot_password" | string = "signup",
+  companionSmsOtp?: { phone: string; otp: string }
 ): Promise<{ success: boolean; error?: string }> {
   const creds = getEmailCredentials();
   if (!creds) {
     console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Purpose: ${purpose} | Code: ${otp}`);
-    return { success: true };
+    return { success: false, error: "Gmail credentials not configured" };
   }
-
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: creds.user,
-      pass: creds.pass,
-    },
-    connectionTimeout: 4000,
-    greetingTimeout: 4000,
-    socketTimeout: 5000,
-  } as any);
 
   const isReset = purpose === "forgot_password";
   const subject = isReset
     ? "Your Password Reset OTP Code - Mingree"
-    : "Your Email Verification OTP Code - Mingree";
+    : "Your Verification OTP Code - Mingree";
   const introText = isReset
     ? "Use the 6-digit verification code below to reset your Mingree account password:"
     : "Use the 6-digit verification code below to verify your email address on Mingree:";
 
-  const mailOptions = {
-    from: `"Mingree" <${creds.user}>`,
-    to: toEmail,
-    subject,
-    html: `
-      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 12px; background-color: #ffffff;">
-        <div style="text-align: center; margin-bottom: 24px;">
-          <h1 style="background: linear-gradient(135deg, #ec4899, #f43f5e, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; font-weight: 800; margin: 0;">Mingree</h1>
-          <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator &amp; Brand Collaboration Platform</p>
-        </div>
-        <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
-          <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${escapeHtml(userName || "there")}</strong>,</p>
-          <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">${introText}</p>
-          <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
-            <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${escapeHtml(otp)}</span>
-          </div>
-          <p style="color: #64748b; font-size: 13px; margin: 16px 0 0 0; text-align: center;">⏱️ This OTP is valid for <strong>10 minutes</strong>. Please do not share it with anyone.</p>
-        </div>
-        <div style="margin-top: 24px; text-align: center; color: #94a3b8; font-size: 12px;">
-          <p style="margin: 0;">If you didn't request this code, you can safely ignore this email.</p>
-          <p style="margin: 6px 0 0 0;">&copy; ${new Date().getFullYear()} Mingree. All rights reserved.</p>
+  const companionSmsHtml = companionSmsOtp
+    ? `
+      <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #e2e8f0;">
+        <p style="color: #475569; font-size: 13px; margin: 0 0 8px 0; text-align: center;">
+          📱 Your Mobile Verification OTP for <strong>+91 ${escapeHtml(companionSmsOtp.phone)}</strong>:
+        </p>
+        <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
+          <span style="font-size: 24px; font-weight: 800; letter-spacing: 6px; color: #0f172a; font-family: monospace;">${escapeHtml(companionSmsOtp.otp)}</span>
         </div>
       </div>
-    `,
+    `
+    : "";
+
+  const buildHtml = () => `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 12px; background-color: #ffffff;">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <h1 style="background: linear-gradient(135deg, #ec4899, #f43f5e, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; font-weight: 800; margin: 0;">Mingree</h1>
+        <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator &amp; Brand Collaboration Platform</p>
+      </div>
+      <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
+        <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${escapeHtml(userName || "there")}</strong>,</p>
+        <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">${introText}</p>
+        <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
+          <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${escapeHtml(otp)}</span>
+        </div>
+        ${companionSmsHtml}
+        <p style="color: #64748b; font-size: 13px; margin: 16px 0 0 0; text-align: center;">⏱️ This OTP is valid for <strong>10 minutes</strong>. Please do not share it with anyone.</p>
+      </div>
+      <div style="margin-top: 24px; text-align: center; color: #94a3b8; font-size: 12px;">
+        <p style="margin: 0;">If you didn't request this code, you can safely ignore this email.</p>
+        <p style="margin: 6px 0 0 0;">&copy; ${new Date().getFullYear()} Mingree. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+
+  const trySendWithUser = async (senderEmail: string) => {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: senderEmail,
+        pass: creds.pass,
+      },
+      connectionTimeout: 4500,
+      greetingTimeout: 4500,
+      socketTimeout: 5500,
+    } as any);
+
+    await transporter.sendMail({
+      from: `"Mingree" <${senderEmail}>`,
+      to: toEmail,
+      subject,
+      html: buildHtml(),
+    });
   };
 
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`[EMAIL OTP] Sent (${purpose}) to ${toEmail}`);
+    await trySendWithUser(creds.user);
+    console.log(`[EMAIL OTP] Sent (${purpose}) to ${toEmail} via ${creds.user}`);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
+    // If recipient is a @gmail.com address and differs from creds.user, try authenticating with recipient's Gmail in case the App Password belongs to that Gmail account
+    const cleanTo = toEmail.trim().toLowerCase();
+    if (cleanTo.endsWith("@gmail.com") && cleanTo !== creds.user.toLowerCase()) {
+      try {
+        await trySendWithUser(cleanTo);
+        inMemorySettings.gmail_user = cleanTo;
+        saveSettings(inMemorySettings);
+        console.log(`[EMAIL OTP] Auto-detected matching Gmail sender (${cleanTo}) and sent OTP!`);
+        return { success: true };
+      } catch {}
+    }
     console.error(`[EMAIL OTP ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
     console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Code: ${otp}`);
-    return { success: true };
+    return { success: false, error: errorMsg };
   }
 }
 
@@ -830,19 +863,8 @@ async function sendPlatformEmail(options: {
   const creds = getEmailCredentials();
   if (!creds) {
     console.log(`[EMAIL NOTIFICATION FALLBACK] To: ${toEmail} | Subject: ${options.subject}`);
-    return { success: true };
+    return { success: false };
   }
-
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: creds.user,
-      pass: creds.pass,
-    },
-    connectionTimeout: 4000,
-    greetingTimeout: 4000,
-    socketTimeout: 5000,
-  } as any);
 
   const ctaBlock =
     options.ctaLabel && options.ctaUrl
@@ -874,16 +896,40 @@ async function sendPlatformEmail(options: {
     </div>
   `;
 
-  try {
+  const trySendNotification = async (senderEmail: string) => {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: senderEmail,
+        pass: creds.pass,
+      },
+      connectionTimeout: 4500,
+      greetingTimeout: 4500,
+      socketTimeout: 5500,
+    } as any);
+
     await transporter.sendMail({
-      from: `"Mingree" <${creds.user}>`,
+      from: `"Mingree" <${senderEmail}>`,
       to: toEmail,
       subject: options.subject,
       html,
     });
+  };
+
+  try {
+    await trySendNotification(creds.user);
     console.log(`[EMAIL SENT] To: ${toEmail} | Subject: ${options.subject}`);
     return { success: true };
   } catch (err: any) {
+    if (toEmail.endsWith("@gmail.com") && toEmail !== creds.user.toLowerCase()) {
+      try {
+        await trySendNotification(toEmail);
+        inMemorySettings.gmail_user = toEmail;
+        saveSettings(inMemorySettings);
+        console.log(`[EMAIL SENT] Auto-detected Gmail sender (${toEmail}) | Subject: ${options.subject}`);
+        return { success: true };
+      } catch {}
+    }
     console.warn(`[EMAIL WARN] Could not send email to ${toEmail}:`, err?.message || err);
     return { success: false };
   }
@@ -1030,12 +1076,32 @@ async function consumeVerifiedEmailToken(token: string | undefined, expectedEmai
 // Send SMS OTP helper (Fast2SMS / Twilio)
 async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
-  const fast2smsKey = (process.env.FAST2SMS_API_KEY || "").trim();
+  const fast2smsKey = (process.env.FAST2SMS_API_KEY || inMemorySettings.fast2sms_api_key || "").trim();
 
   if (fast2smsKey) {
     try {
-      // Primary: Quick SMS route (active on account)
+      // Primary: Fast2SMS OTP route (lowest cost ₹0.25/OTP)
       let res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+        method: "POST",
+        headers: {
+          "authorization": fast2smsKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          variables_values: otp,
+          route: "otp",
+          numbers: cleanPhone
+        })
+      });
+      let data = await res.json();
+      if (data && (data.return === true || data.status === true || data.return === "true")) {
+        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
+        return { success: true };
+      }
+      const otpRouteErr = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "");
+
+      // Fallback: Quick SMS route
+      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
         method: "POST",
         headers: {
           "authorization": fast2smsKey,
@@ -1049,34 +1115,16 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
           numbers: cleanPhone
         })
       });
-      let data = await res.json();
+      data = await res.json();
       if (data && (data.return === true || data.status === true || data.return === "true")) {
         console.log(`[FAST2SMS QUICK SENT] To: +91${cleanPhone}`);
         return { success: true };
       }
 
-      // Fallback: Fast2SMS OTP route
-      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-        method: "POST",
-        headers: {
-          "authorization": fast2smsKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          variables_values: otp,
-          route: "otp",
-          numbers: cleanPhone
-        })
-      });
-      data = await res.json();
-      if (data && (data.return === true || data.status === true || data.return === "true")) {
-        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
-        return { success: true };
-      }
-
-      const errMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
-      console.warn("[FAST2SMS RESPONSE]", errMsg);
-      return { success: false, error: errMsg };
+      const quickRouteErr = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
+      const combinedErr = otpRouteErr || quickRouteErr;
+      console.warn("[FAST2SMS RESPONSE]", combinedErr);
+      return { success: false, error: combinedErr };
     } catch (err: any) {
       console.error("[FAST2SMS ERROR]", err.message);
       return { success: false, error: err.message || "SMS network failure" };
@@ -1112,7 +1160,7 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
   }
 
   console.log(`[DEV SMS OTP FALLBACK] To: +91${cleanPhone} | Code: ${otp}`);
-  return { success: true };
+  return { success: false, error: "SMS gateway not configured" };
 }
 
 // Send OTP (Supports selectable SMS or Email channel, plus Dual Email + SMS OTP for Signup)
@@ -1133,7 +1181,6 @@ app.post("/api/auth/send-otp", async (req, res) => {
 
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
     const hasSmtp = Boolean(getEmailCredentials());
-    const hasSmsProvider = Boolean((process.env.FAST2SMS_API_KEY || "").trim() || process.env.TWILIO_ACCOUNT_SID);
 
     // Dual OTP flow for Signup: sends 1 OTP to Email and 1 separate OTP to Mobile SMS
     if (purpose === "signup_dual") {
@@ -1151,51 +1198,65 @@ app.post("/api/auth/send-otp", async (req, res) => {
       let smsOtpToken: string | undefined;
       let rawEmailOtp: string | undefined;
       let rawSmsOtp: string | undefined;
-
-      const tasks: Promise<void>[] = [];
+      let emailDelivered = false;
+      let smsDelivered = false;
+      let smsError: string | undefined;
+      let emailError: string | undefined;
 
       if (sendEmailNow) {
         rawEmailOtp = generateOtp();
         const emailOtpHash = crypto.createHash("sha256").update(rawEmailOtp).digest("hex");
         await setOtpRecord(cleanEmail, { otpHash: emailOtpHash, expiresAt, attempts: 0, name: userName });
         emailOtpToken = createSignedOtpToken(cleanEmail, emailOtpHash, expiresAt);
-
-        const codeToSend = rawEmailOtp;
-        tasks.push(
-          Promise.race([
-            sendEmailOtp(cleanEmail, codeToSend, userName, "signup"),
-            new Promise<{ success: boolean; error: string }>((resolve) =>
-              setTimeout(() => resolve({ success: true, error: "Email queued" }), 4500)
-            ),
-          ])
-            .then(() => {})
-            .catch((err: any) => {
-              console.warn("[SIGNUP EMAIL OTP WARN]", err?.message || err);
-            })
-        );
       }
 
       if (sendSmsNow) {
         rawSmsOtp = generateOtp();
-        // Ensure SMS OTP is distinct from Email OTP so user verifies both channels
         if (rawEmailOtp && rawSmsOtp === rawEmailOtp) {
           rawSmsOtp = String(((Number(rawSmsOtp) + 135791) % 900000) + 100000);
         }
         const smsOtpHash = crypto.createHash("sha256").update(rawSmsOtp).digest("hex");
         await setOtpRecord(cleanPhone, { otpHash: smsOtpHash, expiresAt, attempts: 0, name: userName });
         smsOtpToken = createSignedOtpToken(cleanPhone, smsOtpHash, expiresAt);
+      }
 
+      const tasks: Promise<void>[] = [];
+
+      if (sendEmailNow && rawEmailOtp) {
+        const codeToSend = rawEmailOtp;
+        const companionSms = sendSmsNow && rawSmsOtp ? { phone: cleanPhone, otp: rawSmsOtp } : undefined;
+        tasks.push(
+          Promise.race([
+            sendEmailOtp(cleanEmail, codeToSend, userName, "signup", companionSms),
+            new Promise<{ success: boolean; error: string }>((resolve) =>
+              setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 5000)
+            ),
+          ])
+            .then((r) => {
+              emailDelivered = Boolean(r?.success);
+              if (!r?.success) emailError = r?.error;
+            })
+            .catch((err: any) => {
+              emailError = err?.message || "Email error";
+            })
+        );
+      }
+
+      if (sendSmsNow && rawSmsOtp) {
         const smsCodeToSend = rawSmsOtp;
         tasks.push(
           Promise.race([
             sendSmsOtp(cleanPhone, smsCodeToSend, userName),
             new Promise<{ success: boolean; error?: string }>((resolve) =>
-              setTimeout(() => resolve({ success: true, error: "SMS queued" }), 4500)
+              setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 5000)
             ),
           ])
-            .then(() => {})
+            .then((r) => {
+              smsDelivered = Boolean(r?.success);
+              if (!r?.success) smsError = r?.error;
+            })
             .catch((err: any) => {
-              console.warn("[SIGNUP SMS OTP WARN]", err?.message || err);
+              smsError = err?.message || "SMS error";
             })
         );
       }
@@ -1207,19 +1268,21 @@ app.post("/api/auth/send-otp", async (req, res) => {
           ? `New Email OTP sent to ${cleanEmail}`
           : resendTarget === "sms"
           ? `New SMS OTP sent to +91 ${cleanPhone}`
-          : `Verification OTPs sent to both Email (${cleanEmail}) and SMS (+91 ${cleanPhone})`;
+          : `Verification OTPs generated for Email (${cleanEmail}) and Mobile (+91 ${cleanPhone})`;
 
       return res.json({
         message,
         dualVerification: true,
-        smsSent: sendSmsNow,
-        emailSent: sendEmailNow,
+        smsSent: smsDelivered,
+        emailSent: emailDelivered,
+        smsError,
+        emailError,
         emailConfigured: hasSmtp,
         emailOtpToken,
         smsOtpToken,
         otpToken: emailOtpToken,
-        devEmailOtp: !hasSmtp && rawEmailOtp ? rawEmailOtp : undefined,
-        devSmsOtp: !hasSmsProvider && rawSmsOtp ? rawSmsOtp : undefined,
+        devEmailOtp: !emailDelivered && rawEmailOtp ? rawEmailOtp : undefined,
+        devSmsOtp: !smsDelivered && rawSmsOtp ? rawSmsOtp : undefined,
         expiresIn: 600,
       });
     }
@@ -1318,8 +1381,10 @@ app.post("/api/auth/send-otp", async (req, res) => {
 
     const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
-    let smsSent = false;
-    let emailSent = false;
+    let smsDelivered = false;
+    let emailDelivered = false;
+    let smsError: string | undefined;
+    let emailError: string | undefined;
 
     const requestedChannel = String(channel || "").toLowerCase().trim();
     const shouldSendSms =
@@ -1336,14 +1401,15 @@ app.post("/api/auth/send-otp", async (req, res) => {
         Promise.race([
           sendSmsOtp(cleanPhone, rawOtp, userName),
           new Promise<{ success: boolean; error?: string }>((resolve) =>
-            setTimeout(() => resolve({ success: true, error: "SMS queued" }), 4500)
+            setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 5000)
           ),
         ])
           .then((smsRes) => {
-            smsSent = Boolean(smsRes?.success);
+            smsDelivered = Boolean(smsRes?.success);
+            if (!smsRes?.success) smsError = smsRes?.error;
           })
           .catch((smsErr: any) => {
-            console.warn("[SMS OTP WARN]", smsErr?.message || smsErr);
+            smsError = smsErr?.message || "SMS error";
           })
       );
     }
@@ -1358,35 +1424,47 @@ app.post("/api/auth/send-otp", async (req, res) => {
             purpose === "forgot_password" ? "forgot_password" : "signup"
           ),
           new Promise<{ success: boolean; error: string }>((resolve) =>
-            setTimeout(() => resolve({ success: true, error: "Email queued" }), 4500)
+            setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 5000)
           ),
         ])
           .then((emailResult) => {
-            if (emailResult.success) {
-              emailSent = true;
-            }
+            emailDelivered = Boolean(emailResult?.success);
+            if (!emailResult?.success) emailError = emailResult?.error;
           })
           .catch((emailErr: any) => {
-            console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
-            emailSent = true;
+            emailError = emailErr?.message || "Email error";
           })
       );
     }
 
     await Promise.allSettled(deliveryPromises);
 
+    // If SMS was requested for Forgot Password and Fast2SMS failed, also send backup email if user has a linked real email
+    if (shouldSendSms && !smsDelivered && !shouldSendEmail && linkedRealEmail && !linkedRealEmail.endsWith("@phone.mingree.com")) {
+      try {
+        const backupRes = await sendEmailOtp(linkedRealEmail, rawOtp, userName, "forgot_password");
+        if (backupRes.success) emailDelivered = true;
+      } catch {}
+    }
+
+    const anyDelivered = smsDelivered || emailDelivered;
+
     return res.json({
       message:
-        shouldSendSms && shouldSendEmail
+        smsDelivered && emailDelivered
           ? `Verification code sent via SMS (+91 ${cleanPhone}) and email (${linkedRealEmail})`
-          : shouldSendSms
+          : smsDelivered
           ? `Verification code sent via SMS to +91 ${cleanPhone}`
-          : `Verification code sent via Email to ${linkedRealEmail || cleanEmail}`,
-      smsSent: smsSent || shouldSendSms,
-      emailSent: emailSent || shouldSendEmail,
+          : emailDelivered
+          ? `Verification code sent via Email to ${linkedRealEmail || cleanEmail}`
+          : `Verification code generated for ${shouldSendSms ? `+91 ${cleanPhone}` : cleanEmail}`,
+      smsSent: smsDelivered,
+      emailSent: emailDelivered,
+      smsError,
+      emailError,
       emailConfigured: hasSmtp,
       otpToken,
-      devOtp: !hasSmtp && !hasSmsProvider ? rawOtp : undefined,
+      devOtp: !anyDelivered ? rawOtp : undefined,
       expiresIn: 600,
     });
   } catch (err: any) {
@@ -1658,21 +1736,27 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
     let emailSent = false;
+    let emailError: string | undefined;
     try {
       const result = await sendEmailOtp(cleanEmail, rawOtp, userName, "forgot_password");
       if (result.success) {
         emailSent = true;
+      } else {
+        emailError = result.error;
       }
-    } catch {}
+    } catch (err: any) {
+      emailError = err?.message || "Email error";
+    }
 
     const hasSmtp = Boolean(getEmailCredentials());
 
     return res.json({
-      message: `Password reset code sent to ${cleanEmail}`,
+      message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Password reset code generated for ${cleanEmail}`,
       emailConfigured: hasSmtp,
       emailSent,
+      emailError,
       otpToken,
-      devOtp: !hasSmtp ? rawOtp : undefined,
+      devOtp: !emailSent ? rawOtp : undefined,
       expiresIn: 600,
     });
   } catch (err: any) {

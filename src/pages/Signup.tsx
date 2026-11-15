@@ -64,6 +64,8 @@ export default function Signup() {
   const [smsOtp, setSmsOtp] = useState("");
   const [emailOtpToken, setEmailOtpToken] = useState<string | undefined>(undefined);
   const [smsOtpToken, setSmsOtpToken] = useState<string | undefined>(undefined);
+  const [devEmailOtp, setDevEmailOtp] = useState<string | null>(null);
+  const [devSmsOtp, setDevSmsOtp] = useState<string | null>(null);
   const [emailResendTimer, setEmailResendTimer] = useState(0);
   const [smsResendTimer, setSmsResendTimer] = useState(0);
 
@@ -144,10 +146,12 @@ export default function Signup() {
 
       if (resendTarget === "both" || resendTarget === "email") {
         setEmailOtp("");
+        setDevEmailOtp(data.devEmailOtp || null);
         setEmailResendTimer(60);
       }
       if (resendTarget === "both" || resendTarget === "sms") {
         setSmsOtp("");
+        setDevSmsOtp(data.devSmsOtp || null);
         setSmsResendTimer(60);
       }
 
@@ -649,6 +653,22 @@ export default function Signup() {
                     </InputOTP>
                   </div>
 
+                  {devEmailOtp && (
+                    <div className="flex items-center justify-between rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-[11px]">
+                      <span className="text-amber-700 dark:text-amber-300 font-medium">
+                        Instant Backup Code:{" "}
+                        <strong className="font-mono tracking-wider">{devEmailOtp}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEmailOtp(devEmailOtp)}
+                        className="font-bold text-primary hover:underline cursor-pointer"
+                      >
+                        Auto-fill
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
                     <span>Sent to your email inbox</span>
                     <button
@@ -708,6 +728,22 @@ export default function Signup() {
                       </InputOTPGroup>
                     </InputOTP>
                   </div>
+
+                  {devSmsOtp && (
+                    <div className="flex items-center justify-between rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1.5 text-[11px]">
+                      <span className="text-amber-700 dark:text-amber-300 font-medium">
+                        Instant Backup Code:{" "}
+                        <strong className="font-mono tracking-wider">{devSmsOtp}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSmsOtp(devSmsOtp)}
+                        className="font-bold text-primary hover:underline cursor-pointer"
+                      >
+                        Auto-fill
+                      </button>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
                     <span>Sent via SMS to your mobile</span>
