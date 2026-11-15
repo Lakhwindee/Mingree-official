@@ -1713,8 +1713,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
         emailOtpToken,
         smsOtpToken,
         otpToken: emailOtpToken,
-        devEmailOtp: rawEmailOtp,
-        devSmsOtp: rawSmsOtp,
+
         expiresIn: 600,
       });
     }
@@ -1896,7 +1895,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
       emailError,
       emailConfigured: hasSmtp,
       otpToken,
-      devOtp: rawOtp,
+
       expiresIn: 600,
     });
   } catch (err: any) {
@@ -2188,7 +2187,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
       emailSent,
       emailError,
       otpToken,
-      devOtp: !emailSent ? rawOtp : undefined,
+
       expiresIn: 600,
     });
   } catch (err: any) {
