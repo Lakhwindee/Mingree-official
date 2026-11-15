@@ -122,7 +122,7 @@ export default function Signup() {
       }
 
       setOtp("");
-      const successMsg = data.message || `SMS verification code sent to +91 ${cleanPhone.slice(-10)}`;
+      const successMsg = data.message || `Verification code sent to ${cleanEmail}`;
       toast.success(successMsg);
 
       setStep("otp");
@@ -290,12 +290,12 @@ export default function Signup() {
         <Card className="border-border">
           <CardHeader className="text-center pt-6 pb-4">
             <CardTitle className="text-xl font-bold tracking-tight text-foreground">
-              {step === "form" ? "Create Account" : "Verify Mobile Number"}
+              {step === "form" ? "Create Account" : "Verify OTP"}
             </CardTitle>
             <CardDescription className="text-xs text-muted-foreground mt-1">
               {step === "form" 
                 ? "Sign up to join Mingree" 
-                : `Enter the 6-digit SMS code sent to ${phone}`}
+                : `Enter the 6-digit code sent via SMS (+91 ${phone.replace(/[^0-9]/g, "").slice(-10)}) & Email (${email.trim().toLowerCase()})`}
             </CardDescription>
           </CardHeader>
           
@@ -551,8 +551,10 @@ export default function Signup() {
               <div className="space-y-4">
                 <div className="rounded-lg bg-muted/50 p-3 text-center border border-border">
                   <p className="text-xs text-muted-foreground">
-                    Enter the 6-digit SMS verification code sent to{" "}
-                    <strong className="text-foreground font-mono">+91 {phone.replace(/[^0-9]/g, "").slice(-10)}</strong>
+                    Enter the 6-digit verification code sent via SMS to{" "}
+                    <strong className="text-foreground font-mono">+91 {phone.replace(/[^0-9]/g, "").slice(-10)}</strong>{" "}
+                    and Email to{" "}
+                    <strong className="text-foreground font-mono">{email.trim().toLowerCase()}</strong>
                   </p>
                 </div>
 

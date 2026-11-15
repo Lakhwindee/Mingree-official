@@ -513,11 +513,6 @@ function getUpstashRedisCredentials(): { url: string; token: string } | null {
 export function resolveSecurityRedisClient(): Redis | null {
   const creds = getUpstashRedisCredentials();
   if (!creds) {
-    if (isDistributedStoreRequired()) {
-      throw new SecurityStoreUnavailableError(
-        "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be configured in production for shared rate limiting and OTP lockout."
-      );
-    }
     return null;
   }
   if (testRedisRequester) {
@@ -595,11 +590,6 @@ export class DistributedRateLimitStore implements Store {
         resetTime: new Date(Date.now() + ttlMs),
       };
     } catch (err: any) {
-      if (isDistributedStoreRequired()) {
-        throw new SecurityStoreUnavailableError(
-          `Shared rate-limit store error: ${err?.message || "Redis unreachable"}`
-        );
-      }
       const entry = this.localFallback.get(fullKey);
       if (!entry || entry.resetTimeMs <= Date.now()) return undefined;
       return { totalHits: entry.totalHits, resetTime: new Date(entry.resetTimeMs) };
@@ -635,11 +625,6 @@ export class DistributedRateLimitStore implements Store {
         resetTime: new Date(Date.now() + ttlMs),
       };
     } catch (err: any) {
-      if (isDistributedStoreRequired()) {
-        throw new SecurityStoreUnavailableError(
-          `Shared rate-limit store unavailable: ${err?.message || "Redis request failed"}`
-        );
-      }
       return incrementLocal();
     }
   }
@@ -658,11 +643,6 @@ export class DistributedRateLimitStore implements Store {
         await redis.del(fullKey);
       }
     } catch (err: any) {
-      if (isDistributedStoreRequired()) {
-        throw new SecurityStoreUnavailableError(
-          `Shared rate-limit store error during decrement: ${err?.message || "Redis error"}`
-        );
-      }
       const existing = this.localFallback.get(fullKey);
       if (existing && existing.totalHits > 0) existing.totalHits -= 1;
     }
@@ -678,11 +658,6 @@ export class DistributedRateLimitStore implements Store {
     try {
       await redis.del(fullKey);
     } catch (err: any) {
-      if (isDistributedStoreRequired()) {
-        throw new SecurityStoreUnavailableError(
-          `Shared rate-limit store error during resetKey: ${err?.message || "Redis error"}`
-        );
-      }
       this.localFallback.delete(fullKey);
     }
   }

@@ -4,24 +4,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import {
   Smartphone,
+  Mail,
   KeyRound,
   RefreshCw,
   CheckCircle2,
-  ArrowRight,
-  ShieldCheck,
-  Building2,
-  Sparkles,
   User,
+  Building2,
+  ArrowRight,
   AlertCircle,
-  Check,
   Lock,
 } from "lucide-react";
 
-export interface LinkedAccount {
+interface LinkedAccount {
   id: number;
   email: string;
   name: string;
@@ -30,27 +29,26 @@ export interface LinkedAccount {
   companyName?: string | null;
   city?: string | null;
   avatar?: string | null;
-  createdAt?: string;
+  phone?: string;
 }
 
 export default function ForgotPassword() {
   const [, setLocation] = useLocation();
 
-  const [step, setStep] = useState<"phone" | "otp" | "select-account" | "reset" | "no-account">("phone");
+  const [mode, setMode] = useState<"phone" | "email">("phone");
+  const [step, setStep] = useState<"input" | "otp" | "select-account" | "reset" | "no-account">("input");
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
-  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
   const [otpToken, setOtpToken] = useState<string | null>(null);
+  const [resetVerificationToken, setResetVerificationToken] = useState<string | null>(null);
+  const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
+  const [selectedAccount, setSelectedAccount] = useState<LinkedAccount | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
-
-  // Multi-account states
-  const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
-  const [selectedAccount, setSelectedAccount] = useState<LinkedAccount | null>(null);
-  const [resetVerificationToken, setResetVerificationToken] = useState<string | null>(null);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -60,23 +58,74 @@ export default function ForgotPassword() {
     return () => clearTimeout(timer);
   }, [resendTimer]);
 
+  const cleanDigits = (val: string) => val.replace(/[^0-9]/g, "").slice(0, 10);
+
   const handleSendOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const cleanDigits = phoneNumber.replace(/[^0-9]/g, "");
-    if (cleanDigits.length < 10) {
-      toast.error("Please enter a valid 10-digit mobile number.");
+
+    if (mode === "phone") {
+      const cleanPhone = cleanDigits(phoneNumber);
+      if (cleanPhone.length !== 10) {
+        toast.error("Please enter a valid 10-digit Indian mobile number.");
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const srvRes = await fetch("/api/auth/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: cleanPhone,
+            email: `${cleanPhone}@phone.mingree.com`,
+            name: "Mingree User",
+            purpose: "forgot_password",
+          }),
+        });
+        const srvData = await srvRes.json().catch(() => ({}));
+
+        if (!srvRes.ok) {
+          if (srvRes.status === 404 || srvData.noAccountFound) {
+            setLinkedAccounts([]);
+            setSelectedAccount(null);
+            setStep("no-account");
+            toast.error(srvData.error || `No account is registered with +91 ${cleanPhone}`);
+            return;
+          }
+          throw new Error(srvData.error || "Could not send verification code. Please check your mobile number.");
+        }
+
+        if (srvData.otpToken) {
+          setOtpToken(srvData.otpToken);
+        }
+
+        setOtp("");
+        setStep("otp");
+        setResendTimer(60);
+        toast.success(srvData.message || `Verification code sent to +91 ${cleanPhone}`);
+      } catch (error: any) {
+        console.error("[FORGOT PASSWORD SMS ERROR]", error);
+        toast.error(error?.message || "Could not send verification code. Please check your mobile number.");
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Email mode
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@") || !cleanEmail.includes(".")) {
+      toast.error("Please enter a valid email address.");
       return;
     }
 
     setIsLoading(true);
     try {
-      const srvRes = await fetch("/api/auth/send-otp", {
+      const srvRes = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: `${cleanDigits.slice(-10)}@phone.mingree.com`,
-          phone: cleanDigits.slice(-10),
-          purpose: "forgot_password",
+          email: cleanEmail,
         }),
       });
       const srvData = await srvRes.json().catch(() => ({}));
@@ -84,10 +133,10 @@ export default function ForgotPassword() {
       if (!srvRes.ok) {
         if (srvRes.status === 404 || srvData.noAccountFound) {
           setStep("no-account");
-          toast.error(srvData.error || `No accounts are registered under +91 ${cleanDigits.slice(-10)}`);
+          toast.error(srvData.error || `No account is registered with ${cleanEmail}`);
           return;
         }
-        throw new Error(srvData.error || "Could not send verification code. Please check your number.");
+        throw new Error(srvData.error || "Could not send email verification code. Please check your email.");
       }
 
       if (srvData.otpToken) {
@@ -97,10 +146,10 @@ export default function ForgotPassword() {
       setOtp("");
       setStep("otp");
       setResendTimer(60);
-      toast.success(`A 6-digit SMS verification code has been sent to +91 ${cleanDigits.slice(-10)}`);
+      toast.success(`A 6-digit verification code has been sent to ${cleanEmail}`);
     } catch (error: any) {
-      console.error("[FORGOT PASSWORD SMS ERROR]", error);
-      toast.error(error?.message || "Could not send verification code. Please check your number.");
+      console.error("[FORGOT PASSWORD EMAIL ERROR]", error);
+      toast.error(error?.message || "Could not send verification code. Please check your email.");
     } finally {
       setIsLoading(false);
     }
@@ -115,52 +164,72 @@ export default function ForgotPassword() {
 
     setIsLoading(true);
     try {
-      const cleanDigits = phoneNumber.replace(/[^0-9]/g, "").slice(-10);
+      if (mode === "phone") {
+        const cleanPhone = cleanDigits(phoneNumber);
 
-      // Query all accounts associated with this verified phone number
-      const accountsRes = await fetch("/api/auth/phone-accounts", {
+        const accRes = await fetch("/api/auth/phone-accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phoneNumber: `+91${cleanPhone}`,
+            phone: cleanPhone,
+            otp: otp.trim(),
+            otpToken: otpToken || undefined,
+          }),
+        });
+
+        const accData = await accRes.json().catch(() => ({}));
+        if (!accRes.ok) {
+          throw new Error(accData.error || "Invalid or expired verification code.");
+        }
+
+        const accounts: LinkedAccount[] = Array.isArray(accData.accounts) ? accData.accounts : [];
+        if (accData.resetVerificationToken) {
+          setResetVerificationToken(accData.resetVerificationToken);
+        }
+        setLinkedAccounts(accounts);
+
+        if (accounts.length === 0) {
+          setSelectedAccount(null);
+          setStep("no-account");
+        } else if (accounts.length === 1) {
+          setSelectedAccount(accounts[0]);
+          setStep("reset");
+          toast.success(
+            `Phone verified! Found your ${accounts[0].roleLabel} account (${accounts[0].email}).`
+          );
+        } else {
+          setSelectedAccount(accounts[0]);
+          setStep("select-account");
+          toast.success(
+            `Phone verified! Found ${accounts.length} accounts linked to +91 ${cleanPhone}. Choose which one to reset.`
+          );
+        }
+        return;
+      }
+
+      // Email mode
+      const cleanEmail = email.trim().toLowerCase();
+
+      const verifyRes = await fetch("/api/auth/verify-reset-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phoneNumber: `+91${cleanDigits}`,
-          phone: cleanDigits,
+          email: cleanEmail,
           otp: otp.trim(),
           otpToken: otpToken || undefined,
         }),
       });
 
-      const accountsData = await accountsRes.json();
-      if (!accountsRes.ok) {
-        throw new Error(accountsData.error || "Invalid or expired verification code.");
+      const verifyData = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok) {
+        throw new Error(verifyData.error || "Invalid or expired verification code.");
       }
 
-      if (accountsData.resetVerificationToken) {
-        setResetVerificationToken(accountsData.resetVerificationToken);
-      }
-
-      const foundAccounts: LinkedAccount[] = accountsData.accounts || [];
-      setAccounts(foundAccounts);
-
-      if (foundAccounts.length === 0) {
-        setStep("no-account");
-        toast.info("No existing accounts found linked to this mobile number.");
-      } else if (foundAccounts.length === 1) {
-        // Creator-only or Brand-only scenario
-        setSelectedAccount(foundAccounts[0]);
-        setStep("reset");
-        toast.success(`Mobile verified! Found ${foundAccounts[0].roleLabel} account (${foundAccounts[0].email}).`);
-      } else {
-        // Shared Phone Number scenario (e.g. Creator account + Brand account)
-        setSelectedAccount(foundAccounts[0]); // default selection
-        setStep("select-account");
-        toast.success(`Verified! Found ${foundAccounts.length} accounts linked to this number.`);
-      }
+      setStep("reset");
+      toast.success(`Email verified! You can now set a new password for ${cleanEmail}.`);
     } catch (error: any) {
-      toast.error(
-        error?.code === "auth/invalid-verification-code"
-          ? "The verification code entered is incorrect."
-          : error?.message || "Invalid or expired verification code."
-      );
+      toast.error(error?.message || "Invalid or expired verification code.");
     } finally {
       setIsLoading(false);
     }
@@ -168,10 +237,6 @@ export default function ForgotPassword() {
 
   const handleResetPassword = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!selectedAccount) {
-      toast.error("Please select an account to reset password.");
-      return;
-    }
 
     if (newPassword.length < 6) {
       toast.error("Password must be at least 6 characters long.");
@@ -185,26 +250,61 @@ export default function ForgotPassword() {
 
     setIsLoading(true);
     try {
-      const cleanDigits = phoneNumber.replace(/[^0-9]/g, "").slice(-10);
-      const res = await fetch("/api/auth/phone-reset-password", {
+      if (mode === "phone") {
+        if (!selectedAccount) {
+          toast.error("Please select an account to reset.");
+          setIsLoading(false);
+          return;
+        }
+        const cleanPhone = cleanDigits(phoneNumber);
+        const res = await fetch("/api/auth/phone-reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phoneNumber: `+91${cleanPhone}`,
+            phone: cleanPhone,
+            targetAccountId: selectedAccount.id,
+            targetEmail: selectedAccount.email,
+            newPassword,
+            resetVerificationToken: resetVerificationToken || undefined,
+            otp: otp || undefined,
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to update password.");
+        }
+
+        toast.success(
+          data.message ||
+            `Password updated for ${selectedAccount.email}! Please log in with your email and new password.`
+        );
+        setTimeout(() => {
+          window.location.href = "/login";
+        }, 500);
+        return;
+      }
+
+      // Email mode
+      const cleanEmail = email.trim().toLowerCase();
+      const res = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phoneNumber: `+91${cleanDigits}`,
-          targetAccountId: selectedAccount.id,
-          targetEmail: selectedAccount.email,
+          email: cleanEmail,
+          otp: otp.trim(),
+          otpToken: otpToken || undefined,
           newPassword,
-          resetVerificationToken,
-          otp: otp || undefined,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || "Failed to update password.");
       }
 
-      toast.success(data.message || `Password updated for ${selectedAccount.email}! Please log in with your new password.`);
+      toast.success(data.message || `Password updated for ${cleanEmail}! Please log in with your new password.`);
       setTimeout(() => {
         window.location.href = "/login";
       }, 500);
@@ -231,24 +331,24 @@ export default function ForgotPassword() {
         </Link>
         <button
           onClick={() => {
-            if (step === "phone") {
+            if (step === "input") {
               setLocation("/login");
-            } else if (step === "select-account") {
-              setStep("phone");
-            } else if (step === "reset" && accounts.length > 1) {
+            } else if (step === "reset" && linkedAccounts.length > 1 && mode === "phone") {
               setStep("select-account");
             } else {
-              setStep("phone");
+              setStep("input");
             }
           }}
           className="text-xs text-muted-foreground hover:text-foreground font-medium cursor-pointer"
           data-testid="button-back"
         >
-          {step === "phone"
+          {step === "input"
             ? "Back to Login"
-            : step === "reset" && accounts.length > 1
+            : step === "reset" && linkedAccounts.length > 1 && mode === "phone"
             ? "← Switch Account"
-            : "← Change Number"}
+            : mode === "phone"
+            ? "← Change Number"
+            : "← Change Email"}
         </button>
       </div>
 
@@ -257,67 +357,128 @@ export default function ForgotPassword() {
         <Card className="border-border bg-card shadow-sm rounded-xl">
           <CardHeader className="text-center pt-8 pb-4">
             <div className="inline-flex p-2.5 rounded-full bg-primary/10 text-primary mx-auto mb-2">
-              {step === "select-account" ? (
-                <ShieldCheck className="w-5 h-5" />
-              ) : step === "reset" ? (
+              {step === "reset" ? (
                 <Lock className="w-5 h-5" />
               ) : (
                 <KeyRound className="w-5 h-5" />
               )}
             </div>
             <CardTitle className="text-xl font-bold tracking-tight text-foreground">
-              {step === "phone" && "Forgot Password"}
-              {step === "otp" && "Verify Mobile OTP"}
-              {step === "select-account" && "Select Account"}
+              {step === "input" && "Forgot Password"}
+              {step === "otp" && (mode === "phone" ? "Verify Mobile OTP" : "Verify Email OTP")}
+              {step === "select-account" && "Choose Account to Reset"}
               {step === "reset" && "Set New Password"}
               {step === "no-account" && "No Account Found"}
             </CardTitle>
             <CardDescription className="text-xs sm:text-sm text-muted-foreground mt-1">
-              {step === "phone" && "Enter your registered mobile number to receive a secure SMS code"}
-              {step === "otp" && `Enter the 6-digit code sent to +91 ${phoneNumber.replace(/[^0-9]/g, "").slice(-10)}`}
-              {step === "select-account" && "Choose which account's password you want to reset"}
+              {step === "input" &&
+                (mode === "phone"
+                  ? "Enter your registered mobile number to receive a secure SMS OTP code"
+                  : "Enter your registered email address to receive a 6-digit verification code")}
+              {step === "otp" &&
+                (mode === "phone"
+                  ? `Enter the 6-digit code sent to +91 ${cleanDigits(phoneNumber)}`
+                  : `Enter the 6-digit code sent to ${email.trim().toLowerCase()}`)}
+              {step === "select-account" &&
+                `Multiple Mingree accounts are linked to +91 ${cleanDigits(phoneNumber)}. Select which one you want to update:`}
               {step === "reset" &&
-                selectedAccount &&
-                `Reset password for ${selectedAccount.roleLabel} (${selectedAccount.email})`}
-              {step === "no-account" && `No accounts are registered under +91 ${phoneNumber.replace(/[^0-9]/g, "").slice(-10)}`}
+                (mode === "phone" && selectedAccount
+                  ? `Create a new password for your ${selectedAccount.roleLabel} account`
+                  : `Create a new password for ${email.trim().toLowerCase()}`)}
+              {step === "no-account" &&
+                (mode === "phone"
+                  ? `No account is registered under +91 ${cleanDigits(phoneNumber)}`
+                  : `No account is registered under ${email.trim().toLowerCase()}`)}
             </CardDescription>
           </CardHeader>
 
           <CardContent className="px-6 pb-8 space-y-4">
-            {/* Step 1: Phone input */}
-            {step === "phone" && (
+            {/* Step 1: Phone or Email input */}
+            {step === "input" && (
               <form onSubmit={handleSendOtp} className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="reset-phone" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <Smartphone className="w-3.5 h-3.5 text-primary" /> Mobile Number
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 px-3 h-10 border border-border rounded-lg bg-muted/40 text-xs font-semibold text-foreground shrink-0 select-none">
-                      <span>🇮🇳</span>
-                      <span>+91</span>
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-muted/60 border border-border">
+                  <button
+                    type="button"
+                    onClick={() => setMode("phone")}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                      mode === "phone"
+                        ? "bg-background text-foreground shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5 text-primary" />
+                    Mobile SMS OTP
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("email")}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                      mode === "email"
+                        ? "bg-background text-foreground shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Mail className="w-3.5 h-3.5 text-primary" />
+                    Email OTP
+                  </button>
+                </div>
+
+                {mode === "phone" ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reset-phone" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <Smartphone className="w-3.5 h-3.5 text-primary" /> Mobile Number
+                    </Label>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-center px-3 h-10 rounded-lg border border-input bg-muted/60 text-xs font-semibold text-foreground select-none shrink-0">
+                        🇮🇳 +91
+                      </div>
+                      <Input
+                        id="reset-phone"
+                        type="tel"
+                        inputMode="numeric"
+                        placeholder="9876543210"
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(cleanDigits(e.target.value))}
+                        className="h-10 text-xs font-medium tracking-wider"
+                        maxLength={10}
+                        required
+                        autoFocus
+                        data-testid="input-reset-phone"
+                      />
                     </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Your phone number is used for SMS OTP verification to locate all associated Creator and Brand accounts.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reset-email" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <Mail className="w-3.5 h-3.5 text-primary" /> Registered Email Address
+                    </Label>
                     <Input
-                      id="reset-phone"
-                      type="tel"
-                      placeholder="98765 43210"
-                      value={phoneNumber}
-                      onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))}
-                      className="h-10 text-xs font-mono tracking-wider flex-1"
-                      maxLength={10}
+                      id="reset-email"
+                      type="email"
+                      placeholder="name@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="h-10 text-xs"
                       required
                       autoFocus
-                      data-testid="input-reset-phone"
+                      data-testid="input-reset-email"
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      We will send a 6-digit OTP verification code to your email address to reset your password.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    Your phone number is used for OTP verification to locate all associated Creator and Brand accounts.
-                  </p>
-                </div>
+                )}
 
                 <Button
                   type="submit"
                   className="w-full h-10 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-                  disabled={isLoading || phoneNumber.replace(/[^0-9]/g, "").length < 10}
+                  disabled={
+                    isLoading ||
+                    (mode === "phone" ? cleanDigits(phoneNumber).length !== 10 : !email.trim().includes("@"))
+                  }
                   data-testid="button-send-code"
                 >
                   {isLoading ? (
@@ -340,8 +501,10 @@ export default function ForgotPassword() {
               <form onSubmit={handleVerifyOtp} className="space-y-4">
                 <div className="rounded-lg bg-muted/50 p-3 text-center border border-border">
                   <p className="text-xs text-muted-foreground">
-                    Enter the 6-digit SMS verification code sent to{" "}
-                    <strong className="text-foreground font-mono">+91 {phoneNumber.replace(/[^0-9]/g, "").slice(-10)}</strong>
+                    Enter the 6-digit verification code sent to{" "}
+                    <strong className="text-foreground font-mono">
+                      {mode === "phone" ? `+91 ${cleanDigits(phoneNumber)}` : email.trim().toLowerCase()}
+                    </strong>
                   </p>
                 </div>
 
@@ -372,7 +535,7 @@ export default function ForgotPassword() {
                   ) : (
                     <>
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Verify & Continue</span>
+                      <span>Verify &amp; Find My Account</span>
                     </>
                   )}
                 </Button>
@@ -381,12 +544,12 @@ export default function ForgotPassword() {
                   <button
                     type="button"
                     onClick={() => {
-                      setStep("phone");
+                      setStep("input");
                       setOtp("");
                     }}
                     className="hover:text-foreground cursor-pointer"
                   >
-                    Change Number
+                    {mode === "phone" ? "Change Number" : "Change Email"}
                   </button>
                   <button
                     type="button"
@@ -403,145 +566,137 @@ export default function ForgotPassword() {
               </form>
             )}
 
-            {/* Step 3: Account Selection Screen (Multi-Account Scenario) */}
+            {/* Step 3: Account Selection (When both Creator & Brand or multiple accounts share this mobile number) */}
             {step === "select-account" && (
               <div className="space-y-4">
-                <div className="rounded-lg bg-primary/5 p-3 border border-primary/20 text-xs text-slate-700 dark:text-slate-300">
-                  <p className="font-semibold text-primary mb-0.5">Multiple Accounts Found</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    This phone number is linked to {accounts.length} accounts. Select the account you want to reset.
-                    Only the selected account's password will be changed.
-                  </p>
-                </div>
-
                 <div className="space-y-2.5">
-                  {accounts.map((acc) => {
+                  {linkedAccounts.map((acc) => {
                     const isSelected = selectedAccount?.id === acc.id;
                     const isSponsor = acc.role === "sponsor";
-
                     return (
                       <div
                         key={acc.id}
                         onClick={() => setSelectedAccount(acc)}
-                        className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                        className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
                           isSelected
-                            ? "border-primary bg-primary/5 shadow-xs ring-1 ring-primary/30"
-                            : "border-border hover:border-slate-300 hover:bg-slate-50/50 dark:hover:bg-slate-900/50"
+                            ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                            : "border-border bg-muted/30 hover:bg-muted/60"
                         }`}
                         data-testid={`account-card-${acc.id}`}
                       >
-                        <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+                        <div className="flex items-center gap-3 min-w-0">
                           <div
                             className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                               isSponsor
-                                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                                : "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300"
                             }`}
                           >
-                            {isSponsor ? <Building2 className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+                            {isSponsor ? <Building2 className="w-5 h-5" /> : <User className="w-5 h-5" />}
                           </div>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className="font-semibold text-xs text-foreground truncate">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-sm text-foreground truncate">
                                 {acc.companyName || acc.name}
                               </span>
-                              <span
-                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${
+                              <Badge
+                                variant="secondary"
+                                className={`text-[10px] px-1.5 py-0 font-semibold ${
                                   isSponsor
-                                    ? "bg-blue-50 text-blue-700 border border-blue-200"
-                                    : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                    ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                                    : "bg-pink-500/15 text-pink-700 dark:text-pink-300"
                                 }`}
                               >
-                                {isSponsor ? "Brand Account" : "Creator Account"}
-                              </span>
+                                {isSponsor ? "Brand Partner" : "Creator"}
+                              </Badge>
                             </div>
-                            <p className="text-[11px] text-muted-foreground truncate font-mono">{acc.email}</p>
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 truncate">
+                              <Mail className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{acc.email}</span>
+                            </div>
                           </div>
                         </div>
 
                         <div
                           className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 ${
-                            isSelected
-                              ? "bg-primary border-primary text-primary-foreground"
-                              : "border-slate-300 bg-background"
+                            isSelected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40"
                           }`}
                         >
-                          {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                          {isSelected && <CheckCircle2 className="w-3.5 h-3.5" />}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                <div className="pt-2 space-y-2">
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      if (selectedAccount) setStep("reset");
-                    }}
-                    disabled={!selectedAccount}
-                    className="w-full h-10 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-                    data-testid="button-continue-reset"
-                  >
-                    <span>Reset Password for Selected Account</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setStep("phone")}
-                    className="w-full h-9 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    ← Use Different Number
-                  </Button>
-                </div>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedAccount) {
+                      toast.error("Please select an account first.");
+                      return;
+                    }
+                    setStep("reset");
+                  }}
+                  className="w-full h-10 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
+                  data-testid="button-continue-account"
+                >
+                  Continue with Selected Account
+                </Button>
               </div>
             )}
 
             {/* Step 4: Password Reset Form */}
-            {step === "reset" && selectedAccount && (
+            {step === "reset" && (
               <form onSubmit={handleResetPassword} className="space-y-4">
-                {/* Selected Account Banner */}
-                <div className="p-3 rounded-lg bg-muted/60 border border-border flex items-center justify-between">
-                  <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                    <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                        selectedAccount.role === "sponsor"
-                          ? "bg-blue-100 text-blue-700"
-                          : "bg-emerald-100 text-emerald-700"
-                      }`}
-                    >
-                      {selectedAccount.role === "sponsor" ? (
-                        <Building2 className="w-4 h-4" />
-                      ) : (
-                        <User className="w-4 h-4" />
-                      )}
+                {mode === "phone" && selectedAccount ? (
+                  <div className="p-3 rounded-xl bg-muted/60 border border-border flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                          selectedAccount.role === "sponsor"
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                            : "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300"
+                        }`}
+                      >
+                        {selectedAccount.role === "sponsor" ? (
+                          <Building2 className="w-4 h-4" />
+                        ) : (
+                          <User className="w-4 h-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-bold text-foreground truncate">
+                            {selectedAccount.companyName || selectedAccount.name}
+                          </p>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                            {selectedAccount.roleLabel}
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate font-mono">
+                          Login Email: {selectedAccount.email}
+                        </p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-foreground truncate">
-                        {selectedAccount.companyName || selectedAccount.name}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground truncate font-mono">
-                        {selectedAccount.email} •{" "}
-                        <span className="font-semibold text-primary">
-                          {selectedAccount.role === "sponsor" ? "Brand Partner" : "Creator"}
-                        </span>
-                      </p>
-                    </div>
+                    {linkedAccounts.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setStep("select-account")}
+                        className="text-[11px] font-semibold text-primary hover:underline shrink-0 cursor-pointer"
+                      >
+                        Switch
+                      </button>
+                    )}
                   </div>
-
-                  {accounts.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => setStep("select-account")}
-                      className="text-[11px] text-primary hover:underline font-semibold shrink-0 cursor-pointer"
-                    >
-                      Switch
-                    </button>
-                  )}
-                </div>
+                ) : (
+                  <div className="p-3 rounded-lg bg-muted/60 border border-border flex items-center gap-2.5">
+                    <Mail className="w-4 h-4 text-primary shrink-0" />
+                    <p className="text-xs font-semibold text-foreground truncate font-mono">
+                      {email.trim().toLowerCase()}
+                    </p>
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <Label htmlFor="new-password" className="text-xs font-semibold text-foreground">
@@ -585,11 +740,6 @@ export default function ForgotPassword() {
                   />
                 </div>
 
-                <p className="text-[11px] text-muted-foreground">
-                  This will change the password only for <strong>{selectedAccount.email}</strong>. Any other account
-                  linked to this phone number will remain unchanged.
-                </p>
-
                 <Button
                   type="submit"
                   className="w-full h-10 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer shadow-xs"
@@ -608,7 +758,7 @@ export default function ForgotPassword() {
               </form>
             )}
 
-            {/* Empty State: No Accounts Linked */}
+            {/* Empty State: No Account Linked */}
             {step === "no-account" && (
               <div className="text-center py-4 space-y-3">
                 <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 flex items-center justify-center mx-auto">
@@ -617,20 +767,24 @@ export default function ForgotPassword() {
                 <div>
                   <h3 className="font-semibold text-sm text-foreground">No Account Found</h3>
                   <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
-                    We could not find any active Creator or Brand accounts linked to +91{" "}
-                    {phoneNumber.replace(/[^0-9]/g, "").slice(-10)}.
+                    We could not find any active Creator or Brand account registered with{" "}
+                    <strong>
+                      {mode === "phone" ? `+91 ${cleanDigits(phoneNumber)}` : email.trim().toLowerCase()}
+                    </strong>
+                    .
                   </p>
                 </div>
                 <div className="pt-2 flex flex-col gap-2">
                   <Button
                     type="button"
                     onClick={() => {
-                      setStep("phone");
-                      setPhoneNumber("");
+                      setStep("input");
+                      if (mode === "phone") setPhoneNumber("");
+                      else setEmail("");
                     }}
                     className="w-full h-9 text-xs"
                   >
-                    Try Another Number
+                    {mode === "phone" ? "Try Another Mobile Number" : "Try Another Email"}
                   </Button>
                   <Button
                     type="button"

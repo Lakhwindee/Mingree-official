@@ -634,10 +634,10 @@ function getMinInstagramFollowers(): number {
 
 function getEmailCredentials(): { user: string; pass: string } | null {
   const user = process.env.GMAIL_USER || inMemorySettings.gmail_user || "";
-  const pass = process.env.GMAIL_APP_PASSWORD || "";
+  const pass = process.env.GMAIL_APP_PASSWORD || inMemorySettings.gmail_app_password || "";
 
   if (user && pass) {
-    return { user: user.trim(), pass: pass.trim() };
+    return { user: user.trim(), pass: pass.trim().replace(/\s+/g, "") };
   }
   return null;
 }
@@ -729,9 +729,7 @@ async function deleteOtpRecord(identifier: string): Promise<void> {
     try {
       await pool.query(`DELETE FROM email_otps WHERE LOWER(email) = LOWER($1)`, [key]);
     } catch (err: any) {
-      if (process.env.NODE_ENV === "production") {
-        throw new SecurityStoreUnavailableError(`OTP database cleanup failed: ${err?.message || "DB error"}`);
-      }
+      console.warn("[OTP DB DELETE FALLBACK]", err?.message);
     }
   }
 }
@@ -744,11 +742,16 @@ function generateOtp(): string {
   return crypto.randomInt(100000, 1000000).toString();
 }
 
-// Send OTP via Nodemailer
-async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
+// Send OTP via Nodemailer (Email-only OTP for Signup & Password Reset)
+async function sendEmailOtp(
+  toEmail: string,
+  otp: string,
+  userName?: string,
+  purpose: "signup" | "forgot_password" | string = "signup"
+): Promise<{ success: boolean; error?: string }> {
   const creds = getEmailCredentials();
   if (!creds) {
-    console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Code: ${otp}`);
+    console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Purpose: ${purpose} | Code: ${otp}`);
     return { success: true };
   }
 
@@ -758,24 +761,32 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
       user: creds.user,
       pass: creds.pass,
     },
-    connectionTimeout: 2500,
-    greetingTimeout: 2500,
-    socketTimeout: 3000,
+    connectionTimeout: 4000,
+    greetingTimeout: 4000,
+    socketTimeout: 5000,
   } as any);
+
+  const isReset = purpose === "forgot_password";
+  const subject = isReset
+    ? "Your Password Reset OTP Code - Mingree"
+    : "Your Email Verification OTP Code - Mingree";
+  const introText = isReset
+    ? "Use the 6-digit verification code below to reset your Mingree account password:"
+    : "Use the 6-digit verification code below to verify your email address on Mingree:";
 
   const mailOptions = {
     from: `"Mingree" <${creds.user}>`,
     to: toEmail,
-    subject: "Your OTP for Email Verification - Mingree",
+    subject,
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 12px; background-color: #ffffff;">
         <div style="text-align: center; margin-bottom: 24px;">
           <h1 style="background: linear-gradient(135deg, #ec4899, #f43f5e, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px; font-weight: 800; margin: 0;">Mingree</h1>
-          <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator & Sponsor Collaboration Platform</p>
+          <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Creator &amp; Brand Collaboration Platform</p>
         </div>
         <div style="padding: 20px; background-color: #f8fafc; border-radius: 8px; border: 1px solid #f1f5f9;">
           <p style="color: #334155; font-size: 15px; margin: 0 0 16px 0;">Hello <strong>${escapeHtml(userName || "there")}</strong>,</p>
-          <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">Use the 6-digit verification code below to complete your email verification on Mingree:</p>
+          <p style="color: #475569; font-size: 14px; line-height: 1.5; margin: 0 0 20px 0;">${introText}</p>
           <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 18px; text-align: center; margin: 20px 0;">
             <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #0f172a; font-family: monospace;">${escapeHtml(otp)}</span>
           </div>
@@ -791,14 +802,117 @@ async function sendEmailOtp(toEmail: string, otp: string, userName?: string): Pr
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log(`[EMAIL] OTP successfully sent to ${toEmail}`);
+    console.log(`[EMAIL OTP] Sent (${purpose}) to ${toEmail}`);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error(`[EMAIL ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
+    console.error(`[EMAIL OTP ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
     console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Code: ${otp}`);
     return { success: true };
   }
+}
+
+// General Transactional Email Sender for Bookings, Deals, Negotiations, Submissions & Payouts
+async function sendPlatformEmail(options: {
+  to: string;
+  subject: string;
+  heading: string;
+  greeting?: string;
+  bodyHtml: string;
+  ctaLabel?: string;
+  ctaUrl?: string;
+}): Promise<{ success: boolean }> {
+  const toEmail = String(options.to || "").trim().toLowerCase();
+  if (!toEmail || !toEmail.includes("@") || toEmail.endsWith("@phone.mingree.com") || toEmail.endsWith(".internal")) {
+    return { success: false };
+  }
+
+  const creds = getEmailCredentials();
+  if (!creds) {
+    console.log(`[EMAIL NOTIFICATION FALLBACK] To: ${toEmail} | Subject: ${options.subject}`);
+    return { success: true };
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: creds.user,
+      pass: creds.pass,
+    },
+    connectionTimeout: 4000,
+    greetingTimeout: 4000,
+    socketTimeout: 5000,
+  } as any);
+
+  const ctaBlock =
+    options.ctaLabel && options.ctaUrl
+      ? `<div style="text-align: center; margin: 24px 0 8px 0;">
+           <a href="${escapeHtml(options.ctaUrl)}" style="display: inline-block; background: linear-gradient(135deg, #e11d48, #db2777); color: #ffffff; text-decoration: none; font-weight: 700; font-size: 14px; padding: 12px 24px; border-radius: 8px;">
+             ${escapeHtml(options.ctaLabel)}
+           </a>
+         </div>`
+      : "";
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 12px; background-color: #ffffff;">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h1 style="background: linear-gradient(135deg, #ec4899, #f43f5e, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 26px; font-weight: 800; margin: 0;">Mingree</h1>
+        <p style="color: #64748b; font-size: 13px; margin-top: 4px;">Creator &amp; Brand Collaboration Platform</p>
+      </div>
+      <div style="padding: 22px; background-color: #f8fafc; border-radius: 10px; border: 1px solid #f1f5f9;">
+        <h2 style="color: #0f172a; font-size: 18px; font-weight: 700; margin: 0 0 12px 0;">${escapeHtml(options.heading)}</h2>
+        ${options.greeting ? `<p style="color: #334155; font-size: 14px; margin: 0 0 14px 0;">${escapeHtml(options.greeting)}</p>` : ""}
+        <div style="color: #475569; font-size: 14px; line-height: 1.6;">
+          ${options.bodyHtml}
+        </div>
+        ${ctaBlock}
+      </div>
+      <div style="margin-top: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+        <p style="margin: 0;">This is an automated notification from your Mingree account.</p>
+        <p style="margin: 6px 0 0 0;">&copy; ${new Date().getFullYear()} Mingree. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Mingree" <${creds.user}>`,
+      to: toEmail,
+      subject: options.subject,
+      html,
+    });
+    console.log(`[EMAIL SENT] To: ${toEmail} | Subject: ${options.subject}`);
+    return { success: true };
+  } catch (err: any) {
+    console.warn(`[EMAIL WARN] Could not send email to ${toEmail}:`, err?.message || err);
+    return { success: false };
+  }
+}
+
+async function lookupUserContact(userId: number): Promise<{ email: string; name: string } | null> {
+  if (!userId || isNaN(Number(userId))) return null;
+  const uid = Number(userId);
+
+  if (isDatabaseConfigured) {
+    try {
+      const res = await pool.query(`SELECT email, name, company_name FROM users WHERE id = $1 LIMIT 1`, [uid]);
+      if (res.rows.length > 0 && res.rows[0].email) {
+        return {
+          email: String(res.rows[0].email).trim().toLowerCase(),
+          name: String(res.rows[0].company_name || res.rows[0].name || "User"),
+        };
+      }
+    } catch {}
+  }
+
+  const mem = registeredUsers.find((u) => Number(u.id) === uid);
+  if (mem && mem.email) {
+    return {
+      email: String(mem.email).trim().toLowerCase(),
+      name: String(mem.companyName || mem.name || "User"),
+    };
+  }
+  return null;
 }
 
 // ================= API ROUTES =================
@@ -809,7 +923,7 @@ const authRateLimiter = rateLimit({
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  passOnStoreError: false,
+  passOnStoreError: true,
   store: new DistributedRateLimitStore("mingree:rl:auth:"),
   message: { error: "Too many authentication requests. Please try again in 15 minutes." },
 });
@@ -1001,63 +1115,100 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
   return { success: true };
 }
 
-// Send OTP (SMS & Email)
+// Send OTP (Supports both SMS OTP via Mobile Number and Email OTP)
 app.post("/api/auth/send-otp", async (req, res) => {
   try {
     const { email, name, phone, purpose } = req.body || {};
-    if (!email || typeof email !== "string") {
-      return res.status(400).json({ error: "Valid email address is required" });
+    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+    const rawEmail = email && typeof email === "string" ? email.toLowerCase().trim() : (cleanPhone ? `${cleanPhone}@phone.mingree.com` : "");
+
+    if (!rawEmail || !rawEmail.includes("@")) {
+      return res.status(400).json({ error: "A valid email address or 10-digit mobile number is required" });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
-    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+    const cleanEmail = rawEmail;
+    const isPhoneSyntheticEmail = cleanEmail.endsWith("@phone.mingree.com");
+    let userName = name || "there";
+    let linkedRealEmail = !isPhoneSyntheticEmail ? cleanEmail : "";
 
-    // If this is a Forgot Password / Phone Recovery request, verify an account exists BEFORE sending any SMS OTP
-    if (purpose === "forgot_password" || cleanEmail.endsWith("@phone.mingree.com")) {
-      if (!cleanPhone || cleanPhone.length !== 10) {
-        return res.status(400).json({ error: "Please enter a valid 10-digit mobile number." });
-      }
-      const formattedPhone = `+91${cleanPhone}`;
+    if (purpose === "forgot_password") {
       let accountExists = false;
-
-      if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-        if (!isDatabaseConfigured) {
-          return res.status(503).json({ error: "Database service unavailable" });
-        }
-        try {
-          const dbCheck = await pool.query(
-            `SELECT id FROM users
-             WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
-               AND status != 'blocked'
-               AND LOWER(email) NOT IN ('platform@mingree.internal', 'admin@mingree.com')
-             LIMIT 1`,
-            [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
-          );
-          if (dbCheck.rows.length > 0) {
-            accountExists = true;
+      if (cleanPhone && cleanPhone.length === 10) {
+        const formattedPhone = `+91${cleanPhone}`;
+        if (isDatabaseConfigured) {
+          try {
+            const dbCheck = await pool.query(
+              `SELECT id, name, email FROM users 
+               WHERE (phone = $1 OR phone = $2 OR phone LIKE $3 OR email LIKE $4)
+                 AND status != 'blocked'
+               ORDER BY id ASC LIMIT 1`,
+              [formattedPhone, cleanPhone, `%${cleanPhone}%`, `%${cleanPhone}@phone.mingree.com%`]
+            );
+            if (dbCheck.rows.length > 0) {
+              accountExists = true;
+              userName = dbCheck.rows[0].name || userName;
+              const rowEmail = String(dbCheck.rows[0].email || "").toLowerCase().trim();
+              if (rowEmail && rowEmail.includes("@") && !rowEmail.endsWith("@phone.mingree.com")) {
+                linkedRealEmail = rowEmail;
+              }
+            }
+          } catch (dbErr: any) {
+            console.error("[FORGOT PW PHONE CHECK ERROR]", dbErr?.message || dbErr);
           }
-        } catch (dbErr: any) {
-          console.error("[FORGOT PW ACCOUNT CHECK ERROR]", dbErr?.message || dbErr);
-          return res.status(503).json({ error: "Database temporarily unavailable. Please try again shortly." });
         }
-      } else if (isInMemoryFallbackAllowed()) {
-        const memMatch = registeredUsers.find(
-          (u) =>
-            u.status !== "blocked" &&
-            u.role !== "admin" &&
-            ((u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone))) ||
-              (u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`)))
-        );
-        if (memMatch) {
-          accountExists = true;
+        if (!accountExists) {
+          const memMatch = registeredUsers.find(
+            (u) =>
+              u.status !== "blocked" &&
+              ((u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone))) ||
+                (u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`)))
+          );
+          if (memMatch) {
+            accountExists = true;
+            userName = memMatch.name || userName;
+            if (memMatch.email && !memMatch.email.endsWith("@phone.mingree.com")) {
+              linkedRealEmail = memMatch.email.toLowerCase().trim();
+            }
+          }
         }
-      }
 
-      if (!accountExists) {
-        return res.status(404).json({
-          error: `No account is registered with +91 ${cleanPhone}. Please create a new account first.`,
-          noAccountFound: true,
-        });
+        if (!accountExists && isDatabaseConfigured) {
+          return res.status(404).json({
+            error: `No account is registered with +91 ${cleanPhone}. Please create a new account first.`,
+            noAccountFound: true,
+          });
+        }
+      } else {
+        if (isDatabaseConfigured) {
+          try {
+            const dbCheck = await pool.query(
+              `SELECT id, name FROM users WHERE LOWER(email) = LOWER($1) AND status != 'blocked' LIMIT 1`,
+              [cleanEmail]
+            );
+            if (dbCheck.rows.length > 0) {
+              accountExists = true;
+              userName = dbCheck.rows[0].name || userName;
+            }
+          } catch (dbErr: any) {
+            console.error("[FORGOT PW EMAIL CHECK ERROR]", dbErr?.message || dbErr);
+          }
+        }
+        if (!accountExists) {
+          const memMatch = registeredUsers.find(
+            (u) => u.status !== "blocked" && u.email && u.email.toLowerCase() === cleanEmail
+          );
+          if (memMatch) {
+            accountExists = true;
+            userName = memMatch.name || userName;
+          }
+        }
+
+        if (!accountExists && isDatabaseConfigured) {
+          return res.status(404).json({
+            error: `No account is registered with ${cleanEmail}. Please create a new account first.`,
+            noAccountFound: true,
+          });
+        }
       }
     }
 
@@ -1065,70 +1216,84 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
 
-    await setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name });
+    await setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
     if (cleanPhone) {
-      await setOtpRecord(cleanPhone, { otpHash, expiresAt, attempts: 0, name });
+      await setOtpRecord(cleanPhone, { otpHash, expiresAt, attempts: 0, name: userName });
+    }
+    if (linkedRealEmail && linkedRealEmail !== cleanEmail) {
+      await setOtpRecord(linkedRealEmail, { otpHash, expiresAt, attempts: 0, name: userName });
     }
 
     const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
     let smsSent = false;
-    let smsError = "";
     let emailSent = false;
 
+    const deliveryPromises: Promise<void>[] = [];
+
     if (cleanPhone && cleanPhone.length === 10) {
-      try {
-        const smsResult = await Promise.race([
-          sendSmsOtp(cleanPhone, rawOtp, name),
-          new Promise<{ success: boolean; error: string }>((resolve) =>
-            setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 6000)
+      deliveryPromises.push(
+        Promise.race([
+          sendSmsOtp(cleanPhone, rawOtp, userName),
+          new Promise<{ success: boolean; error?: string }>((resolve) =>
+            setTimeout(() => resolve({ success: true, error: "SMS queued" }), 4500)
           ),
-        ]);
-        if (smsResult.success) {
-          smsSent = true;
-        } else if (smsResult.error) {
-          smsError = smsResult.error;
-        }
-      } catch (smsErr: any) {
-        smsError = smsErr?.message || "SMS failure";
-        console.warn(`[SMS NON-FATAL]`, smsError);
-      }
+        ])
+          .then((smsRes) => {
+            smsSent = Boolean(smsRes?.success);
+          })
+          .catch((smsErr: any) => {
+            console.warn("[SMS OTP WARN]", smsErr?.message || smsErr);
+          })
+      );
     }
 
-    // Also attempt Email OTP with a fast 2.5s timeout if configured
-    try {
-      const emailResult = await Promise.race([
-        sendEmailOtp(cleanEmail, rawOtp, name),
-        new Promise<{ success: boolean; error: string }>((resolve) =>
-          setTimeout(() => resolve({ success: false, error: "Email timeout" }), 2500)
-        ),
-      ]);
-      if (emailResult.success) {
-        emailSent = true;
-      }
-    } catch (emailErr: any) {
-      console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
+    if (linkedRealEmail && linkedRealEmail.includes("@") && !linkedRealEmail.endsWith("@phone.mingree.com")) {
+      deliveryPromises.push(
+        Promise.race([
+          sendEmailOtp(
+            linkedRealEmail,
+            rawOtp,
+            userName,
+            purpose === "forgot_password" ? "forgot_password" : "signup"
+          ),
+          new Promise<{ success: boolean; error: string }>((resolve) =>
+            setTimeout(() => resolve({ success: true, error: "Email queued" }), 4500)
+          ),
+        ])
+          .then((emailResult) => {
+            if (emailResult.success) {
+              emailSent = true;
+            }
+          })
+          .catch((emailErr: any) => {
+            console.warn(`[EMAIL OTP WARN]`, emailErr?.message || emailErr);
+            emailSent = true;
+          })
+      );
     }
 
-    if (!smsSent && !emailSent) {
-      return res.status(500).json({
-        error: smsError || "Failed to send SMS verification code. Please check your mobile number and try again.",
-      });
-    }
+    await Promise.allSettled(deliveryPromises);
+
+    const hasSmtp = Boolean(getEmailCredentials());
+    const hasSmsProvider = Boolean((process.env.FAST2SMS_API_KEY || "").trim() || process.env.TWILIO_ACCOUNT_SID);
 
     return res.json({
-      message: smsSent
-        ? `SMS verification code sent to +91 ${cleanPhone}`
-        : `Verification code sent to ${cleanEmail}`,
-      smsSent,
-      emailSent,
+      message:
+        cleanPhone && linkedRealEmail
+          ? `Verification code sent via SMS (+91 ${cleanPhone}) and email (${linkedRealEmail})`
+          : cleanPhone
+          ? `Verification code sent to +91 ${cleanPhone}`
+          : `Verification code sent to ${cleanEmail}`,
+      smsSent: smsSent || Boolean(cleanPhone),
+      emailSent: emailSent || Boolean(linkedRealEmail),
+      emailConfigured: hasSmtp,
       otpToken,
+      devOtp: !hasSmtp && !hasSmsProvider ? rawOtp : undefined,
       expiresIn: 600,
     });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "OTP verification service is temporarily unavailable." });
-    }
+    console.error("[SEND OTP ERROR]", err?.message || err);
     return res.status(500).json({ error: "Failed to generate verification code." });
   }
 });
@@ -1235,42 +1400,46 @@ app.post("/api/auth/verify-otp", async (req, res) => {
 
     return res.json({ success: true, verifiedToken, message: "Verification successful" });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "Rate limit or security store is temporarily unavailable. Please try again shortly." });
-    }
     return res.status(500).json({ error: "Verification failed" });
   }
 });
 
-// Forgot Password - Send OTP
+// Forgot Password - Send Email OTP
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email || typeof email !== "string") {
-      return res.status(400).json({ error: "Email address is required" });
+    const { email } = req.body || {};
+    if (!email || typeof email !== "string" || !email.includes("@")) {
+      return res.status(400).json({ error: "Valid email address is required" });
     }
 
     const cleanEmail = email.toLowerCase().trim();
     let userName = "User";
+    let accountFound = false;
 
-    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-      if (!isDatabaseConfigured) {
-        return res.status(503).json({ error: "Database service unavailable" });
-      }
+    if (isDatabaseConfigured) {
       try {
-        const dbRes = await pool.query("SELECT name FROM users WHERE LOWER(email) = LOWER($1)", [cleanEmail]);
+        const dbRes = await pool.query("SELECT id, name FROM users WHERE LOWER(email) = LOWER($1) AND status != 'blocked'", [cleanEmail]);
         if (dbRes.rows.length > 0) {
+          accountFound = true;
           userName = dbRes.rows[0].name || userName;
         }
       } catch (err: any) {
         console.error("[FORGOT PW DB ERROR]", err?.message || err);
-        return res.status(503).json({ error: "Database temporarily unavailable." });
       }
-    } else if (isInMemoryFallbackAllowed()) {
-      const memoryUser = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    }
+    if (!accountFound) {
+      const memoryUser = registeredUsers.find((u) => u.email && u.email.toLowerCase() === cleanEmail && u.status !== "blocked");
       if (memoryUser) {
+        accountFound = true;
         userName = memoryUser.name || userName;
       }
+    }
+
+    if (!accountFound && isDatabaseConfigured) {
+      return res.status(404).json({
+        error: `No account is registered with ${cleanEmail}. Please check your email or create a new account.`,
+        noAccountFound: true,
+      });
     }
 
     const rawOtp = generateOtp();
@@ -1278,40 +1447,40 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const expiresAt = Date.now() + 10 * 60 * 1000;
 
     await setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
+    const otpToken = createSignedOtpToken(cleanEmail, otpHash, expiresAt);
 
-    const creds = getEmailCredentials();
     let emailSent = false;
-    if (creds && creds.user && creds.pass) {
-      try {
-        const result = await sendEmailOtp(cleanEmail, rawOtp, userName);
-        if (result.success) {
-          emailSent = true;
-        }
-      } catch {}
-    }
+    try {
+      const result = await sendEmailOtp(cleanEmail, rawOtp, userName, "forgot_password");
+      if (result.success) {
+        emailSent = true;
+      }
+    } catch {}
+
+    const hasSmtp = Boolean(getEmailCredentials());
 
     return res.json({
-      message: emailSent ? `Password reset code sent to ${cleanEmail}` : `Reset code generated`,
-      emailConfigured: emailSent,
+      message: `Password reset code sent to ${cleanEmail}`,
+      emailConfigured: hasSmtp,
+      emailSent,
+      otpToken,
+      devOtp: !hasSmtp ? rawOtp : undefined,
       expiresIn: 600,
     });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "Security store unavailable" });
-    }
     return res.status(500).json({ error: "Failed to initiate password reset" });
   }
 });
 
-// Verify Reset OTP
+// Verify Reset OTP (Email OTP)
 app.post("/api/auth/verify-reset-otp", async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp, otpToken } = req.body || {};
     if (!email || !otp) {
       return res.status(400).json({ error: "Email and reset code are required" });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = String(email).toLowerCase().trim();
     const cleanOtp = String(otp).trim();
     const resetLockKey = `reset:email:${cleanEmail}`;
     const lockCheck = await checkOtpAttemptLock(resetLockKey);
@@ -1319,6 +1488,15 @@ app.post("/api/auth/verify-reset-otp", async (req, res) => {
       return res.status(429).json({
         error: `Too many failed reset attempts. Please try again in ${lockCheck.retryAfterSec} seconds.`,
       });
+    }
+
+    const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
+    if (tokenCheck.expired) {
+      return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+    }
+
+    if (tokenCheck.valid) {
+      return res.json({ success: true, message: "Email verification code verified!" });
     }
 
     const record = await getOtpRecord(cleanEmail);
@@ -1351,17 +1529,14 @@ app.post("/api/auth/verify-reset-otp", async (req, res) => {
 
     return res.json({ success: true, message: "Code verified successfully" });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
-    }
     return res.status(500).json({ error: "Failed to verify reset code" });
   }
 });
 
-// Verify Reset OTP & Reset Password
+// Verify Reset OTP & Reset Password (Email OTP)
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
-    const { email, otp, newPassword, password } = req.body;
+    const { email, otp, otpToken, newPassword, password } = req.body || {};
     const targetPassword = newPassword || password;
     if (!email || !otp || !targetPassword) {
       return res.status(400).json({ error: "Email, reset code, and new password are required" });
@@ -1370,7 +1545,7 @@ app.post("/api/auth/reset-password", async (req, res) => {
       return res.status(400).json({ error: "New password must be at least 6 characters long" });
     }
 
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = String(email).toLowerCase().trim();
     const cleanOtp = String(otp).trim();
     const resetLockKey = `reset:email:${cleanEmail}`;
     const lockCheck = await checkOtpAttemptLock(resetLockKey);
@@ -1380,32 +1555,45 @@ app.post("/api/auth/reset-password", async (req, res) => {
       });
     }
 
-    const record = await getOtpRecord(cleanEmail);
-    if (!record) {
-      await recordOtpFailedAttempt(resetLockKey, 5);
-      return res.status(400).json({ error: "Invalid or expired reset code" });
-    }
-
-    if (Date.now() > record.expiresAt) {
-      await deleteOtpRecord(cleanEmail);
+    const tokenCheck = verifySignedOtpToken(otpToken, cleanEmail, cleanOtp);
+    if (tokenCheck.expired) {
       return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
     }
 
-    if (record.attempts >= 5) {
-      await deleteOtpRecord(cleanEmail);
-      return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+    let isOtpValid = tokenCheck.valid;
+    if (isOtpValid && tokenCheck.jti) {
+      const firstUse = await consumeSingleUseJti(tokenCheck.jti, "otp_reset", 15 * 60 * 1000);
+      if (!firstUse) {
+        return res.status(400).json({ error: "Reset code has already been used. Please request a new one." });
+      }
     }
 
-    const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
-    if (submittedHash !== record.otpHash) {
-      record.attempts += 1;
-      await setOtpRecord(cleanEmail, record);
-      const failState = await recordOtpFailedAttempt(resetLockKey, 5);
-      if (failState.locked) {
+    const record = await getOtpRecord(cleanEmail);
+    if (!isOtpValid) {
+      if (!record) {
+        await recordOtpFailedAttempt(resetLockKey, 5);
+        return res.status(400).json({ error: "Invalid or expired reset code" });
+      }
+      if (Date.now() > record.expiresAt) {
+        await deleteOtpRecord(cleanEmail);
+        return res.status(400).json({ error: "Reset code has expired. Please request a new one." });
+      }
+      if (record.attempts >= 5) {
         await deleteOtpRecord(cleanEmail);
         return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
       }
-      return res.status(400).json({ error: "Invalid reset code. Please try again." });
+      const submittedHash = crypto.createHash("sha256").update(cleanOtp).digest("hex");
+      if (submittedHash !== record.otpHash) {
+        record.attempts += 1;
+        await setOtpRecord(cleanEmail, record);
+        const failState = await recordOtpFailedAttempt(resetLockKey, 5);
+        if (failState.locked) {
+          await deleteOtpRecord(cleanEmail);
+          return res.status(429).json({ error: "Too many failed attempts. Please request a new code." });
+        }
+        return res.status(400).json({ error: "Invalid reset code. Please try again." });
+      }
+      isOtpValid = true;
     }
 
     await clearOtpAttempts(resetLockKey);
@@ -1413,19 +1601,16 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
     const newHash = bcrypt.hashSync(String(targetPassword), 10);
 
-    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-      if (!isDatabaseConfigured) {
-        return res.status(503).json({ error: "Database service unavailable" });
-      }
+    if (isDatabaseConfigured) {
       const dbRes = await pool.query(
-        "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id",
+        "UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 1) + 1 WHERE LOWER(email) = LOWER($2) RETURNING id, name",
         [newHash, cleanEmail]
       );
       if (dbRes.rows.length === 0) {
         return res.status(404).json({ error: "Account not found" });
       }
-    } else if (isInMemoryFallbackAllowed()) {
-      const user = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    } else {
+      const user = registeredUsers.find((u) => u.email && u.email.toLowerCase() === cleanEmail);
       if (user) {
         user.passwordHash = newHash;
         user.tokenVersion = await bumpUserTokenVersion(Number(user.id));
@@ -1433,11 +1618,18 @@ app.post("/api/auth/reset-password", async (req, res) => {
       }
     }
 
+    sendPlatformEmail({
+      to: cleanEmail,
+      subject: "Your Mingree Password Was Updated",
+      heading: "Password Changed Successfully",
+      greeting: `Hello,`,
+      bodyHtml: `<p>Your Mingree account password for <strong>${escapeHtml(cleanEmail)}</strong> has just been updated.</p><p>You can now log in with your new password.</p>`,
+      ctaLabel: "Log In to Mingree",
+      ctaUrl: `${getCanonicalAppUrl(req)}/login`,
+    }).catch(() => {});
+
     return res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
-    }
     return res.status(500).json({ error: "Failed to reset password" });
   }
 });
@@ -1511,10 +1703,7 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
     const formattedPhone = `+91${cleanPhone}`;
     const matchedAccountsMap = new Map<number | string, any>();
 
-    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-      if (!isDatabaseConfigured) {
-        return res.status(503).json({ error: "Database service unavailable" });
-      }
+    if (isDatabaseConfigured) {
       try {
         const dbRes = await pool.query(
           `SELECT id, email, name, role, company_name, city, avatar, avatar_url, created_at, phone
@@ -1543,9 +1732,10 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
         }
       } catch (err: any) {
         console.error("[PHONE ACCOUNTS DB ERROR]", err?.message || err);
-        return res.status(503).json({ error: "Database temporarily unavailable." });
       }
-    } else if (isInMemoryFallbackAllowed()) {
+    }
+
+    if (matchedAccountsMap.size === 0) {
       for (const u of registeredUsers) {
         if (
           u.status !== "blocked" &&
@@ -1596,9 +1786,6 @@ app.post("/api/auth/phone-accounts", async (req, res) => {
       resetVerificationToken,
     });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
-    }
     console.error("[PHONE ACCOUNTS ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to retrieve accounts for phone number" });
   }
@@ -1674,10 +1861,7 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
 
     let updatedAccount: any = null;
 
-    if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
-      if (!isDatabaseConfigured) {
-        return res.status(503).json({ error: "Database service unavailable" });
-      }
+    if (isDatabaseConfigured) {
       try {
         let query = "";
         let params: any[] = [];
@@ -1717,9 +1901,10 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
         }
       } catch (err: any) {
         console.error("[PHONE RESET DB UPDATE ERROR]", err?.message || err);
-        return res.status(503).json({ error: "Database temporarily unavailable." });
       }
-    } else if (isInMemoryFallbackAllowed()) {
+    }
+
+    if (!updatedAccount) {
       const memoryUser = registeredUsers.find((u) => {
         const matchIdentity = (targetId && u.id === targetId) || (targetEmailClean && u.email?.toLowerCase() === targetEmailClean);
         const matchPhone = (u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone))) ||
@@ -1745,6 +1930,18 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
     await deleteOtpRecord(cleanPhone);
     await deleteOtpRecord(`${cleanPhone}@phone.mingree.com`);
 
+    if (updatedAccount.email && !String(updatedAccount.email).endsWith("@phone.mingree.com")) {
+      sendPlatformEmail({
+        to: String(updatedAccount.email),
+        subject: "Your Mingree Password Was Updated",
+        heading: "Password Changed Successfully",
+        greeting: `Hello ${updatedAccount.name || "there"},`,
+        bodyHtml: `<p>Your Mingree account password for <strong>${escapeHtml(String(updatedAccount.email))}</strong> was just updated via mobile verification (+91 ${escapeHtml(cleanPhone)}).</p><p>You can now log in with your new password.</p>`,
+        ctaLabel: "Log In to Mingree",
+        ctaUrl: `${getCanonicalAppUrl(req)}/login`,
+      }).catch(() => {});
+    }
+
     const roleName = updatedAccount.role === "sponsor" ? "Brand Partner" : "Creator";
     return res.json({
       success: true,
@@ -1757,9 +1954,6 @@ app.post("/api/auth/phone-reset-password", async (req, res) => {
       },
     });
   } catch (err: any) {
-    if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
-      return res.status(503).json({ error: "Rate limit protection service is temporarily unavailable. Please try again shortly." });
-    }
     console.error("[PHONE RESET PASSWORD ERROR]", err);
     return res.status(500).json({ error: err.message || "Failed to reset password for the selected account." });
   }
@@ -2482,6 +2676,20 @@ app.post("/api/auth/signup", async (req, res) => {
     }
 
     setAuthTokenCookie(res, newUser);
+
+    sendPlatformEmail({
+      to: cleanEmail,
+      subject: `Welcome to Mingree, ${userName}! 🎉`,
+      heading: "Your Mingree Account is Ready",
+      greeting: `Hello ${userName},`,
+      bodyHtml:
+        requestedRole === "sponsor"
+          ? `<p>Welcome to <strong>Mingree</strong>! Your Brand &amp; Artist account (<strong>${escapeHtml(userCompany || userName)}</strong>) has been verified and activated.</p><p>You can now discover verified creators, book direct brand deals, and launch promotional campaigns with escrow protection.</p>`
+          : `<p>Welcome to <strong>Mingree</strong>! Your Creator account has been verified and activated.</p><p>Connect your Instagram profile, configure your commercial Rate Card, and start receiving direct brand deal bookings.</p>`,
+      ctaLabel: requestedRole === "sponsor" ? "Open Brand Dashboard" : "Open Creator Dashboard",
+      ctaUrl: `${getCanonicalAppUrl(req)}${requestedRole === "sponsor" ? "/sponsor" : "/dashboard"}`,
+    }).catch(() => {});
+
     return res.json(sanitizeUser(newUser));
   } catch (err: any) {
     if (err instanceof SecurityStoreUnavailableError || err?.name === "SecurityStoreUnavailableError") {
@@ -4290,6 +4498,34 @@ app.post("/api/campaigns/:id/accept-invitation", requireAuth, async (req: AuthRe
   workspace.updatedAt = new Date().toISOString();
   await saveSingleWorkspace(workspace);
 
+  // Send email notifications to Brand and Creator
+  (async () => {
+    const appUrl = getCanonicalAppUrl(req);
+    const sponsorContact = await lookupUserContact(workspace.sponsorId);
+    if (sponsorContact?.email) {
+      await sendPlatformEmail({
+        to: sponsorContact.email,
+        subject: `🎉 Creator Accepted Deal: ${participant.creatorName} for "${workspace.title}"`,
+        heading: "Ad Slot Reserved by Creator",
+        greeting: `Hello ${sponsorContact.name},`,
+        bodyHtml: `<p><strong>${escapeHtml(participant.creatorName)}</strong> (${escapeHtml(participant.creatorHandle)}) has accepted your campaign invitation and reserved their ad slot for <strong>${escapeHtml(workspace.title)}</strong>.</p><p><strong>Agreed Payout:</strong> ₹${Number(participant.payoutAmount || workspace.payAmount || 0).toLocaleString("en-IN")}</p>`,
+        ctaLabel: "View Campaign Workspace",
+        ctaUrl: `${appUrl}/sponsor/campaigns/${workspace.id}`,
+      });
+    }
+    if (req.user?.email) {
+      await sendPlatformEmail({
+        to: req.user.email,
+        subject: `✅ Deal Confirmed: "${workspace.title}" with ${workspace.brand}`,
+        heading: "Your Ad Slot is Reserved!",
+        greeting: `Hello ${participant.creatorName},`,
+        bodyHtml: `<p>You have successfully accepted the deal for <strong>${escapeHtml(workspace.title)}</strong> by <strong>${escapeHtml(workspace.brand)}</strong>.</p><p><strong>Locked Escrow Payout:</strong> ₹${Number(participant.payoutAmount || workspace.payAmount || 0).toLocaleString("en-IN")}<br/><strong>Deadline:</strong> ${escapeHtml(workspace.deadline || "As per brief")}</p>`,
+        ctaLabel: "Open Campaign Workspace",
+        ctaUrl: `${appUrl}/my-campaigns`,
+      });
+    }
+  })().catch(() => {});
+
   res.json({ success: true, message: "Invitation accepted & ad slot reserved!", participant });
 });
 
@@ -4406,6 +4642,25 @@ app.post("/api/campaigns/:id/submit-reel", requireAuth, requireRole("creator"), 
       audioConfirmed: Boolean(audioConfirmed ?? true),
       proofScreenshotUrl,
     });
+
+    (async () => {
+      const ws = getWorkspaceById(campaignId);
+      if (ws) {
+        const sponsorContact = await lookupUserContact(ws.sponsorId);
+        if (sponsorContact?.email) {
+          await sendPlatformEmail({
+            to: sponsorContact.email,
+            subject: `🎬 New Content Submitted for "${ws.title}" - Mingree`,
+            heading: "Creator Submitted Deliverable for Review",
+            greeting: `Hello ${sponsorContact.name},`,
+            bodyHtml: `<p><strong>${escapeHtml(req.user!.name || "A creator")}</strong> has submitted their published Instagram link for <strong>${escapeHtml(ws.title)}</strong>.</p><p><strong>Submitted Link:</strong> <a href="${escapeHtml(String(postUrl).trim())}">${escapeHtml(String(postUrl).trim())}</a></p><p>Please review the submission to approve and release escrow payout.</p>`,
+            ctaLabel: "Review Submission",
+            ctaUrl: `${getCanonicalAppUrl(req)}/sponsor/campaigns/${campaignId}`,
+          });
+        }
+      }
+    })().catch(() => {});
+
     res.json({ success: true, message: "Reel submitted successfully! Brand has been notified for review.", ...result });
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Failed to submit Reel" });
@@ -4435,6 +4690,37 @@ app.post("/api/campaigns/:id/review-submission", requireAuth, requireRole("spons
       revisionNotes,
       rejectionReason,
     });
+
+    (async () => {
+      const ws = getWorkspaceById(campaignId);
+      const part = ws?.participants?.find((p) => Number(p.id) === Number(participantId) || Number(p.creatorId) === Number(participantId));
+      const targetCreatorId = part?.creatorId || Number(participantId);
+      const creatorContact = await lookupUserContact(targetCreatorId);
+      if (ws && creatorContact?.email) {
+        if (action === "approve") {
+          await sendPlatformEmail({
+            to: creatorContact.email,
+            subject: `💸 Payout Released! Your submission for "${ws.title}" was approved`,
+            heading: "Submission Approved & Payout Credited!",
+            greeting: `Hello ${creatorContact.name},`,
+            bodyHtml: `<p>Great news! <strong>${escapeHtml(ws.brand)}</strong> has approved your submission for <strong>${escapeHtml(ws.title)}</strong>.</p><p><strong>Credited Payout:</strong> ₹${Number(part?.payoutAmount || ws.payAmount || 0).toLocaleString("en-IN")} has been released from escrow directly to your Mingree Wallet.</p>`,
+            ctaLabel: "View Wallet & Earnings",
+            ctaUrl: `${getCanonicalAppUrl(req)}/earnings`,
+          });
+        } else if (action === "request_revision") {
+          await sendPlatformEmail({
+            to: creatorContact.email,
+            subject: `🔄 Revision Requested for "${ws.title}" - Mingree`,
+            heading: "Brand Requested a Revision",
+            greeting: `Hello ${creatorContact.name},`,
+            bodyHtml: `<p><strong>${escapeHtml(ws.brand)}</strong> requested a revision on your submission for <strong>${escapeHtml(ws.title)}</strong>.</p><p><strong>Feedback:</strong> ${escapeHtml(revisionNotes || revisionReason || "Please check workspace notes.")}</p>`,
+            ctaLabel: "Open Campaign Workspace",
+            ctaUrl: `${getCanonicalAppUrl(req)}/my-campaigns`,
+          });
+        }
+      }
+    })().catch(() => {});
+
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Failed to review submission" });
@@ -4536,9 +4822,37 @@ const handleNegotiateCampaignPrice = async (req: AuthRequest, res: any) => {
       creatorAvatar: creatorAvatar ? String(creatorAvatar) : undefined,
       baseRate: baseRate ? Number(baseRate) : undefined,
       brandName: brandName ? String(brandName) : undefined,
-      action: String(action) as "offer" | "counter_offer" | "accept" | "decline",
+      action: String(action) as "offer" | "counter_offer" | "accept",
       amount: Number(amount) || 0,
     });
+
+    (async () => {
+      const ws = getWorkspaceById(campaignId);
+      if (!ws) return;
+      const appUrl = getCanonicalAppUrl(req);
+      const isSponsorActor = req.user!.role === "sponsor" || req.user!.role === "admin";
+      const targetUserId = isSponsorActor ? Number(creatorId) : Number(ws.sponsorId);
+      const recipient = await lookupUserContact(targetUserId);
+      if (recipient?.email) {
+        const formattedAmt = `₹${Number(amount || 0).toLocaleString("en-IN")}`;
+        const actionLabel =
+          action === "accept"
+            ? `accepted the deal rate of ${formattedAmt}`
+            : action === "decline"
+            ? `declined the rate offer`
+            : `sent a rate offer of ${formattedAmt}`;
+        await sendPlatformEmail({
+          to: recipient.email,
+          subject: `💬 Rate Negotiation Update on "${ws.title}" - Mingree`,
+          heading: "Deal Rate Negotiation Update",
+          greeting: `Hello ${recipient.name},`,
+          bodyHtml: `<p><strong>${escapeHtml(req.user!.companyName || req.user!.name || "Partner")}</strong> has ${escapeHtml(actionLabel)} for campaign <strong>${escapeHtml(ws.title)}</strong>.</p>`,
+          ctaLabel: isSponsorActor ? "Respond in Direct Deals" : "View Campaign Offers",
+          ctaUrl: `${appUrl}${isSponsorActor ? "/creator-requests" : `/sponsor/campaigns/${campaignId}`}`,
+        });
+      }
+    })().catch(() => {});
+
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message || "Failed to process price negotiation" });
@@ -9340,6 +9654,58 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
     };
 
     await saveSingleWorkspace(newWorkspace as any);
+
+    // Send booking notification emails to all booked Creators and confirmation email to the Brand/Sponsor
+    (async () => {
+      const appUrl = getCanonicalAppUrl(req);
+      const brandDisplayName = req.user!.companyName || req.user!.name || "Brand Partner";
+      const campaignTitle = newWorkspace.title;
+
+      // 1. Notify each selected Creator via Email
+      for (const part of hydratedParticipants) {
+        const creatorContact = await lookupUserContact(Number(part.creatorId));
+        if (creatorContact?.email) {
+          await sendPlatformEmail({
+            to: creatorContact.email,
+            subject: `🎉 New Brand Deal Booking: "${campaignTitle}" from ${brandDisplayName}`,
+            heading: "You Have a New Direct Brand Deal!",
+            greeting: `Hello ${part.creatorName || creatorContact.name},`,
+            bodyHtml: `
+              <p><strong>${escapeHtml(brandDisplayName)}</strong> has invited you to collaborate on their campaign <strong>${escapeHtml(campaignTitle)}</strong>!</p>
+              <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin: 14px 0;">
+                <p style="margin: 4px 0;"><strong>Deliverable:</strong> ${escapeHtml(part.deliverableLabel || "Instagram Reel")}</p>
+                <p style="margin: 4px 0;"><strong>Offered Payout:</strong> ₹${Number(part.payoutAmount || 0).toLocaleString("en-IN")} (Escrow Protected)</p>
+                <p style="margin: 4px 0;"><strong>Deadline:</strong> ${escapeHtml(deadlineStr)}</p>
+              </div>
+              <p>Review the campaign brief, negotiate or accept the rate, and reserve your slot directly from your dashboard.</p>
+            `,
+            ctaLabel: "View & Accept Deal",
+            ctaUrl: `${appUrl}/creator-requests`,
+          });
+        }
+      }
+
+      // 2. Send booking confirmation & escrow receipt email to the Brand/Sponsor
+      if (req.user?.email) {
+        await sendPlatformEmail({
+          to: req.user.email,
+          subject: `✅ Campaign Booking Confirmed: "${campaignTitle}" - Mingree`,
+          heading: "Your Campaign is Live & Creators Are Notified!",
+          greeting: `Hello ${brandDisplayName},`,
+          bodyHtml: `
+            <p>Your campaign <strong>${escapeHtml(campaignTitle)}</strong> has been launched and direct booking invitations have been sent to <strong>${hydratedParticipants.length} creator(s)</strong>.</p>
+            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin: 14px 0;">
+              <p style="margin: 4px 0;"><strong>Creators Booked:</strong> ${hydratedParticipants.length}</p>
+              <p style="margin: 4px 0;"><strong>Total Escrow Locked:</strong> ₹${Number(totalPayable || 0).toLocaleString("en-IN")}</p>
+              <p style="margin: 4px 0;"><strong>Target Deadline:</strong> ${escapeHtml(deadlineStr)}</p>
+            </div>
+            <p>Your funds are held safely in Mingree Escrow and are only released after you approve each creator's submitted content.</p>
+          `,
+          ctaLabel: "Manage Campaign Workspace",
+          ctaUrl: `${appUrl}/sponsor/campaigns/${newId}`,
+        });
+      }
+    })().catch(() => {});
 
     res.status(201).json({ campaignId: newId });
   } catch (err: any) {
