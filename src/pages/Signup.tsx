@@ -64,8 +64,7 @@ export default function Signup() {
   const [smsOtp, setSmsOtp] = useState("");
   const [emailOtpToken, setEmailOtpToken] = useState<string | undefined>(undefined);
   const [smsOtpToken, setSmsOtpToken] = useState<string | undefined>(undefined);
-  const [devEmailOtp, setDevEmailOtp] = useState<string | null>(null);
-  const [devSmsOtp, setDevSmsOtp] = useState<string | null>(null);
+
   const [emailResendTimer, setEmailResendTimer] = useState(0);
   const [smsResendTimer, setSmsResendTimer] = useState(0);
 
@@ -146,12 +145,10 @@ export default function Signup() {
 
       if (resendTarget === "both" || resendTarget === "email") {
         setEmailOtp("");
-        setDevEmailOtp(data.devEmailOtp || null);
         setEmailResendTimer(60);
       }
       if (resendTarget === "both" || resendTarget === "sms") {
         setSmsOtp("");
-        setDevSmsOtp(data.devSmsOtp || null);
         setSmsResendTimer(60);
       }
 

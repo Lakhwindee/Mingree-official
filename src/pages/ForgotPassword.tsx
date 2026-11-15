@@ -40,7 +40,7 @@ export default function ForgotPassword() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
-  const [devOtp, setDevOtp] = useState<string | null>(null);
+
   const [otpToken, setOtpToken] = useState<string | null>(null);
   const [resetVerificationToken, setResetVerificationToken] = useState<string | null>(null);
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
@@ -100,7 +100,7 @@ export default function ForgotPassword() {
         if (srvData.otpToken) {
           setOtpToken(srvData.otpToken);
         }
-        setDevOtp(srvData.devOtp || null);
+
 
         setOtp("");
         setStep("otp");
@@ -145,7 +145,7 @@ export default function ForgotPassword() {
       if (srvData.otpToken) {
         setOtpToken(srvData.otpToken);
       }
-      setDevOtp(srvData.devOtp || null);
+
 
       setOtp("");
       setStep("otp");
