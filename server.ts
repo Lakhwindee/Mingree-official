@@ -800,8 +800,7 @@ async function sendEmailOtp(
   toEmail: string,
   otp: string,
   userName?: string,
-  purpose: "signup" | "forgot_password" | string = "signup",
-  companionSmsOtp?: { phone: string; otp: string }
+  purpose: "signup" | "forgot_password" | string = "signup"
 ): Promise<{ success: boolean; error?: string }> {
   const creds = getEmailCredentials();
   if (!creds) {
@@ -816,19 +815,6 @@ async function sendEmailOtp(
   const introText = isReset
     ? "Use the 6-digit verification code below to reset your Mingree account password:"
     : "Use the 6-digit verification code below to verify your email address on Mingree:";
-
-  const companionSmsHtml = companionSmsOtp
-    ? `
-      <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #e2e8f0;">
-        <p style="color: #475569; font-size: 13px; margin: 0 0 8px 0; text-align: center;">
-          📱 Your Mobile Verification OTP for <strong>+91 ${escapeHtml(companionSmsOtp.phone)}</strong>:
-        </p>
-        <div style="background-color: #ffffff; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 12px; text-align: center;">
-          <span style="font-size: 24px; font-weight: 800; letter-spacing: 6px; color: #0f172a; font-family: monospace;">${escapeHtml(companionSmsOtp.otp)}</span>
-        </div>
-      </div>
-    `
-    : "";
 
   const buildHtml = () => `
     <!DOCTYPE html>
@@ -869,7 +855,7 @@ async function sendEmailOtp(
                           </tr>
                         </table>
 
-                        ${companionSmsHtml}
+
 
                         <!-- Security Notice -->
                         <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border-radius: 8px; padding: 12px 16px; border-left: 4px solid #3b82f6;">
@@ -1673,7 +1659,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
         const companionSms = sendSmsNow && rawSmsOtp ? { phone: cleanPhone, otp: rawSmsOtp } : undefined;
         tasks.push(
           Promise.race([
-            sendEmailOtp(cleanEmail, codeToSend, userName, "signup", companionSms),
+            sendEmailOtp(cleanEmail, codeToSend, userName, "signup"),
             new Promise<{ success: boolean; error: string }>((resolve) =>
               setTimeout(() => resolve({ success: false, error: "Email SMTP timeout" }), 15000)
             ),
@@ -1727,8 +1713,8 @@ app.post("/api/auth/send-otp", async (req, res) => {
         emailOtpToken,
         smsOtpToken,
         otpToken: emailOtpToken,
-        devEmailOtp: !emailDelivered && rawEmailOtp ? rawEmailOtp : undefined,
-        devSmsOtp: !smsDelivered && rawSmsOtp ? rawSmsOtp : undefined,
+        devEmailOtp: rawEmailOtp,
+        devSmsOtp: rawSmsOtp,
         expiresIn: 600,
       });
     }
@@ -1910,7 +1896,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
       emailError,
       emailConfigured: hasSmtp,
       otpToken,
-      devOtp: !anyDelivered ? rawOtp : undefined,
+      devOtp: rawOtp,
       expiresIn: 600,
     });
   } catch (err: any) {
