@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { queryClient } from "@/lib/queryClient";
 import { getCitiesByCountry } from "@shared/cities";
 import { useAuth } from "@/lib/auth-context";
+import { Mail, Smartphone, CheckCircle2, ShieldCheck } from "lucide-react";
 
 const COUNTRIES = [
   { code: "IN", name: "India" }
@@ -43,7 +44,7 @@ export default function Signup() {
   const [city, setCity] = useState("");
   const [password, setPassword] = useState("");
   const availableCities = getCitiesByCountry(country);
-  
+
   // Brand/Sponsor specific fields
   const [companyName, setCompanyName] = useState("");
   const [gstNumber, setGstNumber] = useState("");
@@ -57,25 +58,36 @@ export default function Signup() {
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [otp, setOtp] = useState("");
-  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
-  const [otpToken, setOtpToken] = useState<string | undefined>(undefined);
-  const [resendTimer, setResendTimer] = useState(0);
+
+  // Dual OTP verification states (Email OTP + Mobile SMS OTP)
+  const [emailOtp, setEmailOtp] = useState("");
+  const [smsOtp, setSmsOtp] = useState("");
+  const [emailOtpToken, setEmailOtpToken] = useState<string | undefined>(undefined);
+  const [smsOtpToken, setSmsOtpToken] = useState<string | undefined>(undefined);
+  const [emailResendTimer, setEmailResendTimer] = useState(0);
+  const [smsResendTimer, setSmsResendTimer] = useState(0);
 
   useEffect(() => {
-    if (resendTimer > 0) {
-      const timer = setTimeout(() => setResendTimer(resendTimer - 1), 1000);
+    if (emailResendTimer > 0) {
+      const timer = setTimeout(() => setEmailResendTimer(emailResendTimer - 1), 1000);
       return () => clearTimeout(timer);
     }
-  }, [resendTimer]);
+  }, [emailResendTimer]);
 
-  const sendOtp = async () => {
+  useEffect(() => {
+    if (smsResendTimer > 0) {
+      const timer = setTimeout(() => setSmsResendTimer(smsResendTimer - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [smsResendTimer]);
+
+  const sendOtp = async (resendTarget: "both" | "email" | "sms" = "both") => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
-    const cleanPhone = phone.replace(/[^0-9]/g, "");
+    const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
 
-    if (!cleanEmail || !cleanName || !password || cleanPhone.length < 10) {
-      const msg = "Please fill all required fields, including a valid 10-digit mobile number.";
+    if (!cleanEmail || !cleanName || !password || cleanPhone.length !== 10) {
+      const msg = "Please fill all required fields, including a valid email and 10-digit mobile number.";
       setErrorMessage(msg);
       toast.error(msg);
       return;
@@ -108,27 +120,44 @@ export default function Signup() {
       const response = await fetch("/api/auth/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, name: cleanName, phone: cleanPhone }),
+        body: JSON.stringify({
+          email: cleanEmail,
+          name: cleanName,
+          phone: cleanPhone,
+          purpose: "signup_dual",
+          resendTarget,
+        }),
       });
 
       const data = await safeParseJson(response);
 
       if (data.__nonJson || !response.ok) {
-        throw new Error(data.error || "Failed to send verification code.");
+        throw new Error(data.error || "Failed to send verification codes.");
       }
 
-      if (data.otpToken) {
-        setOtpToken(data.otpToken);
+      if (data.emailOtpToken) {
+        setEmailOtpToken(data.emailOtpToken);
+      }
+      if (data.smsOtpToken) {
+        setSmsOtpToken(data.smsOtpToken);
       }
 
-      setOtp("");
-      const successMsg = data.message || `Verification code sent to ${cleanEmail}`;
+      if (resendTarget === "both" || resendTarget === "email") {
+        setEmailOtp("");
+        setEmailResendTimer(60);
+      }
+      if (resendTarget === "both" || resendTarget === "sms") {
+        setSmsOtp("");
+        setSmsResendTimer(60);
+      }
+
+      const successMsg =
+        data.message || `Verification OTPs sent to ${cleanEmail} and +91 ${cleanPhone}`;
       toast.success(successMsg);
 
       setStep("otp");
-      setResendTimer(60);
     } catch (error: any) {
-      const msg = error.message || "Failed to send verification code. Please try again.";
+      const msg = error.message || "Failed to send verification codes. Please try again.";
       setErrorMessage(msg);
       toast.error(msg);
     } finally {
@@ -136,19 +165,22 @@ export default function Signup() {
     }
   };
 
-  const resendOtp = async () => {
-    if (resendTimer > 0) return;
-    await sendOtp();
-  };
-
   const verifyAndSignup = async () => {
-    const cleanOtp = otp.trim();
+    const cleanEmailOtp = emailOtp.trim();
+    const cleanSmsOtp = smsOtp.trim();
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name.trim();
-    const cleanPhone = phone.replace(/[^0-9]/g, "");
+    const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
 
-    if (!cleanOtp || cleanOtp.length !== 6) {
-      const msg = "Please enter the complete 6-digit verification code.";
+    if (cleanEmailOtp.length !== 6) {
+      const msg = "Please enter the complete 6-digit Email OTP.";
+      setErrorMessage(msg);
+      toast.error(msg);
+      return;
+    }
+
+    if (cleanSmsOtp.length !== 6) {
+      const msg = "Please enter the complete 6-digit Mobile SMS OTP.";
       setErrorMessage(msg);
       toast.error(msg);
       return;
@@ -162,21 +194,35 @@ export default function Signup() {
         verifyRes = await fetch("/api/auth/verify-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, phone: cleanPhone, otp: cleanOtp, otpToken }),
+          body: JSON.stringify({
+            email: cleanEmail,
+            phone: cleanPhone,
+            emailOtp: cleanEmailOtp,
+            smsOtp: cleanSmsOtp,
+            emailOtpToken,
+            smsOtpToken,
+          }),
         });
       } catch {
         await new Promise((r) => setTimeout(r, 600));
         verifyRes = await fetch("/api/auth/verify-otp", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, phone: cleanPhone, otp: cleanOtp, otpToken }),
+          body: JSON.stringify({
+            email: cleanEmail,
+            phone: cleanPhone,
+            emailOtp: cleanEmailOtp,
+            smsOtp: cleanSmsOtp,
+            emailOtpToken,
+            smsOtpToken,
+          }),
         });
       }
 
       const verifyData = await safeParseJson(verifyRes);
 
       if (verifyData.__nonJson || !verifyRes.ok) {
-        throw new Error(verifyData.error || "Invalid verification code. Please check and try again.");
+        throw new Error(verifyData.error || "Invalid verification code. Please check both OTPs and try again.");
       }
 
       const verifiedToken = verifyData.verifiedToken;
@@ -248,7 +294,7 @@ export default function Signup() {
       queryClient.setQueryData(["currentUser"], finalUser);
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
-      toast.success("Account created successfully! Welcome to Mingree.");
+      toast.success("Email & Mobile Number verified! Account created successfully.");
 
       setTimeout(() => {
         if (role === "sponsor") {
@@ -276,10 +322,10 @@ export default function Signup() {
         <div className="flex items-center justify-between mb-4 px-1">
           <button
             onClick={() => step === "form" ? setLocation("/login") : setStep("form")}
-            className="text-xs text-muted-foreground hover:text-foreground font-medium"
+            className="text-xs text-muted-foreground hover:text-foreground font-medium cursor-pointer"
             data-testid="button-back"
           >
-            {step === "form" ? "Back to Login" : "Back"}
+            {step === "form" ? "Back to Login" : "← Edit Details"}
           </button>
           <div className="flex items-center gap-2">
             <img src="/assets/aistudio/Glossy_Mingree_Ribbon_App_Icon_847ced8d.png" alt="Mingree Logo" className="w-7 h-7 rounded-lg object-cover shadow-xs" />
@@ -290,12 +336,12 @@ export default function Signup() {
         <Card className="border-border">
           <CardHeader className="text-center pt-6 pb-4">
             <CardTitle className="text-xl font-bold tracking-tight text-foreground">
-              {step === "form" ? "Create Account" : "Verify OTP"}
+              {step === "form" ? "Create Account" : "Verify Email & Mobile Number"}
             </CardTitle>
             <CardDescription className="text-xs text-muted-foreground mt-1">
               {step === "form" 
                 ? "Sign up to join Mingree" 
-                : `Enter the 6-digit code sent via SMS (+91 ${phone.replace(/[^0-9]/g, "").slice(-10)}) & Email (${email.trim().toLowerCase()})`}
+                : "Enter both 6-digit OTPs sent to your Email Address and Mobile Number"}
             </CardDescription>
           </CardHeader>
           
@@ -365,7 +411,7 @@ export default function Signup() {
                     inputMode="email"
                     autoCapitalize="none"
                     autoCorrect="off"
-                    placeholder={role === "sponsor" ? "Business Email *" : "Email"}
+                    placeholder={role === "sponsor" ? "Business Email *" : "Email Address *"}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="text-xs h-9"
@@ -373,13 +419,17 @@ export default function Signup() {
                   />
                 </div>
 
-                <div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-center px-2.5 h-9 rounded-md border border-input bg-muted/60 text-xs font-semibold text-foreground select-none shrink-0">
+                    🇮🇳 +91
+                  </div>
                   <Input
-                    type="text"
-                    inputMode="tel"
-                    placeholder="Phone Number *"
+                    type="tel"
+                    inputMode="numeric"
+                    placeholder="10-Digit Mobile Number *"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => setPhone(e.target.value.replace(/[^0-9]/g, "").slice(0, 10))}
+                    maxLength={10}
                     className="text-xs h-9"
                     required
                     data-testid="input-phone"
@@ -524,59 +574,157 @@ export default function Signup() {
 
                 <Button
                   type="button"
-                  onClick={sendOtp}
-                  className="w-full text-xs font-semibold h-9"
-                  disabled={isLoading || !name || !email || !password || !ageConfirmed || (role === "sponsor" && !companyName)}
+                  onClick={() => sendOtp("both")}
+                  className="w-full text-xs font-semibold h-9 cursor-pointer"
+                  disabled={
+                    isLoading ||
+                    !name ||
+                    !email ||
+                    phone.replace(/[^0-9]/g, "").length !== 10 ||
+                    !password ||
+                    !ageConfirmed ||
+                    (role === "sponsor" && !companyName)
+                  }
                   data-testid="button-signup"
                 >
-                  {isLoading ? "Please wait..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
+                  {isLoading ? "Sending Email & SMS OTPs..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
                 </Button>
 
-                    <div className="border-t border-border pt-3 mt-3">
-                      <p className="text-center text-muted-foreground text-xs">
-                        Have an account?{" "}
-                        <button
-                          onClick={() => setLocation("/login")}
-                          className="text-foreground font-semibold hover:underline"
-                          data-testid="link-login"
-                        >
-                          Log in
-                        </button>
-                      </p>
-                    </div>
+                <div className="border-t border-border pt-3 mt-3">
+                  <p className="text-center text-muted-foreground text-xs">
+                    Have an account?{" "}
+                    <button
+                      onClick={() => setLocation("/login")}
+                      className="text-foreground font-semibold hover:underline cursor-pointer"
+                      data-testid="link-login"
+                    >
+                      Log in
+                    </button>
+                  </p>
+                </div>
               </div>
             )}
 
             {step === "otp" && (
               <div className="space-y-4">
-                <div className="rounded-lg bg-muted/50 p-3 text-center border border-border">
-                  <p className="text-xs text-muted-foreground">
-                    Enter the 6-digit verification code sent via SMS to{" "}
-                    <strong className="text-foreground font-mono">+91 {phone.replace(/[^0-9]/g, "").slice(-10)}</strong>{" "}
-                    and Email to{" "}
-                    <strong className="text-foreground font-mono">{email.trim().toLowerCase()}</strong>
-                  </p>
+                {/* 1. Email OTP Section */}
+                <div className="rounded-xl border border-border bg-muted/30 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                        <Mail className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-foreground">1. Email OTP Verification</p>
+                        <p className="text-[11px] text-muted-foreground truncate font-mono">
+                          {email.trim().toLowerCase()}
+                        </p>
+                      </div>
+                    </div>
+                    {emailOtp.length === 6 && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Entered
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-center py-1">
+                    <InputOTP
+                      maxLength={6}
+                      value={emailOtp}
+                      onChange={(val) => {
+                        setEmailOtp(val);
+                        if (errorMessage) setErrorMessage(null);
+                      }}
+                      data-testid="input-email-otp"
+                    >
+                      <InputOTPGroup className="gap-1.5">
+                        <InputOTPSlot index={0} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={1} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={2} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={3} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={4} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={5} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                      </InputOTPGroup>
+                    </InputOTP>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
+                    <span>Sent to your email inbox</span>
+                    <button
+                      type="button"
+                      onClick={() => sendOtp("email")}
+                      disabled={emailResendTimer > 0 || isLoading}
+                      className={`font-semibold ${
+                        emailResendTimer > 0
+                          ? "text-muted-foreground cursor-not-allowed"
+                          : "text-primary hover:underline cursor-pointer"
+                      }`}
+                      data-testid="button-resend-email-otp"
+                    >
+                      {emailResendTimer > 0 ? `Resend Email OTP in ${emailResendTimer}s` : "Resend Email OTP"}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex flex-col items-center gap-3 py-2">
-                  <InputOTP 
-                    maxLength={6} 
-                    value={otp} 
-                    onChange={(val) => {
-                      setOtp(val);
-                      if (errorMessage) setErrorMessage(null);
-                    }}
-                    data-testid="input-otp"
-                  >
-                    <InputOTPGroup>
-                      <InputOTPSlot index={0} className="text-base w-10 h-10 font-bold" />
-                      <InputOTPSlot index={1} className="text-base w-10 h-10 font-bold" />
-                      <InputOTPSlot index={2} className="text-base w-10 h-10 font-bold" />
-                      <InputOTPSlot index={3} className="text-base w-10 h-10 font-bold" />
-                      <InputOTPSlot index={4} className="text-base w-10 h-10 font-bold" />
-                      <InputOTPSlot index={5} className="text-base w-10 h-10 font-bold" />
-                    </InputOTPGroup>
-                  </InputOTP>
+                {/* 2. Mobile SMS OTP Section */}
+                <div className="rounded-xl border border-border bg-muted/30 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                        <Smartphone className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-foreground">2. Mobile SMS OTP Verification</p>
+                        <p className="text-[11px] text-muted-foreground truncate font-mono">
+                          +91 {phone.replace(/[^0-9]/g, "").slice(-10)}
+                        </p>
+                      </div>
+                    </div>
+                    {smsOtp.length === 6 && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Entered
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-center py-1">
+                    <InputOTP
+                      maxLength={6}
+                      value={smsOtp}
+                      onChange={(val) => {
+                        setSmsOtp(val);
+                        if (errorMessage) setErrorMessage(null);
+                      }}
+                      data-testid="input-sms-otp"
+                    >
+                      <InputOTPGroup className="gap-1.5">
+                        <InputOTPSlot index={0} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={1} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={2} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={3} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={4} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                        <InputOTPSlot index={5} className="text-sm w-9 h-10 font-bold rounded-md border" />
+                      </InputOTPGroup>
+                    </InputOTP>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
+                    <span>Sent via SMS to your mobile</span>
+                    <button
+                      type="button"
+                      onClick={() => sendOtp("sms")}
+                      disabled={smsResendTimer > 0 || isLoading}
+                      className={`font-semibold ${
+                        smsResendTimer > 0
+                          ? "text-muted-foreground cursor-not-allowed"
+                          : "text-primary hover:underline cursor-pointer"
+                      }`}
+                      data-testid="button-resend-sms-otp"
+                    >
+                      {smsResendTimer > 0 ? `Resend SMS OTP in ${smsResendTimer}s` : "Resend SMS OTP"}
+                    </button>
+                  </div>
                 </div>
 
                 {errorMessage && (
@@ -589,24 +737,13 @@ export default function Signup() {
                 <Button
                   type="button"
                   onClick={verifyAndSignup}
-                  className="w-full text-xs font-semibold h-10"
-                  disabled={isLoading || otp.length !== 6}
+                  className="w-full text-xs font-semibold h-10 flex items-center justify-center gap-1.5 cursor-pointer"
+                  disabled={isLoading || emailOtp.length !== 6 || smsOtp.length !== 6}
                   data-testid="button-verify"
                 >
-                  {isLoading ? "Verifying & Creating Account..." : "Verify & Create Account"}
+                  <ShieldCheck className="w-4 h-4" />
+                  {isLoading ? "Verifying Both OTPs & Creating Account..." : "Verify Email & Mobile & Create Account"}
                 </Button>
-
-                <p className="text-center text-xs text-muted-foreground">
-                  Didn't receive code?{" "}
-                  <button
-                    onClick={resendOtp}
-                    disabled={resendTimer > 0 || isLoading}
-                    className={`font-semibold ${resendTimer > 0 ? "text-muted-foreground" : "text-foreground hover:underline cursor-pointer"}`}
-                    data-testid="button-resend"
-                  >
-                    {resendTimer > 0 ? `Resend in ${resendTimer}s` : "Resend Code"}
-                  </button>
-                </p>
               </div>
             )}
           </CardContent>
@@ -615,4 +752,3 @@ export default function Signup() {
     </div>
   );
 }
-

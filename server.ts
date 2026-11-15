@@ -1115,10 +1115,10 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
   return { success: true };
 }
 
-// Send OTP (Supports both SMS OTP via Mobile Number and Email OTP)
+// Send OTP (Supports selectable SMS or Email channel, plus Dual Email + SMS OTP for Signup)
 app.post("/api/auth/send-otp", async (req, res) => {
   try {
-    const { email, name, phone, purpose } = req.body || {};
+    const { email, name, phone, purpose, channel, resendTarget } = req.body || {};
     const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
     const rawEmail = email && typeof email === "string" ? email.toLowerCase().trim() : (cleanPhone ? `${cleanPhone}@phone.mingree.com` : "");
 
@@ -1130,6 +1130,99 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const isPhoneSyntheticEmail = cleanEmail.endsWith("@phone.mingree.com");
     let userName = name || "there";
     let linkedRealEmail = !isPhoneSyntheticEmail ? cleanEmail : "";
+
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
+    const hasSmtp = Boolean(getEmailCredentials());
+    const hasSmsProvider = Boolean((process.env.FAST2SMS_API_KEY || "").trim() || process.env.TWILIO_ACCOUNT_SID);
+
+    // Dual OTP flow for Signup: sends 1 OTP to Email and 1 separate OTP to Mobile SMS
+    if (purpose === "signup_dual") {
+      if (!cleanEmail || isPhoneSyntheticEmail || !cleanEmail.includes(".")) {
+        return res.status(400).json({ error: "Valid email address is required for signup verification." });
+      }
+      if (!cleanPhone || cleanPhone.length !== 10) {
+        return res.status(400).json({ error: "Valid 10-digit mobile number is required for signup verification." });
+      }
+
+      const sendEmailNow = !resendTarget || resendTarget === "both" || resendTarget === "email";
+      const sendSmsNow = !resendTarget || resendTarget === "both" || resendTarget === "sms";
+
+      let emailOtpToken: string | undefined;
+      let smsOtpToken: string | undefined;
+      let rawEmailOtp: string | undefined;
+      let rawSmsOtp: string | undefined;
+
+      const tasks: Promise<void>[] = [];
+
+      if (sendEmailNow) {
+        rawEmailOtp = generateOtp();
+        const emailOtpHash = crypto.createHash("sha256").update(rawEmailOtp).digest("hex");
+        await setOtpRecord(cleanEmail, { otpHash: emailOtpHash, expiresAt, attempts: 0, name: userName });
+        emailOtpToken = createSignedOtpToken(cleanEmail, emailOtpHash, expiresAt);
+
+        const codeToSend = rawEmailOtp;
+        tasks.push(
+          Promise.race([
+            sendEmailOtp(cleanEmail, codeToSend, userName, "signup"),
+            new Promise<{ success: boolean; error: string }>((resolve) =>
+              setTimeout(() => resolve({ success: true, error: "Email queued" }), 4500)
+            ),
+          ])
+            .then(() => {})
+            .catch((err: any) => {
+              console.warn("[SIGNUP EMAIL OTP WARN]", err?.message || err);
+            })
+        );
+      }
+
+      if (sendSmsNow) {
+        rawSmsOtp = generateOtp();
+        // Ensure SMS OTP is distinct from Email OTP so user verifies both channels
+        if (rawEmailOtp && rawSmsOtp === rawEmailOtp) {
+          rawSmsOtp = String(((Number(rawSmsOtp) + 135791) % 900000) + 100000);
+        }
+        const smsOtpHash = crypto.createHash("sha256").update(rawSmsOtp).digest("hex");
+        await setOtpRecord(cleanPhone, { otpHash: smsOtpHash, expiresAt, attempts: 0, name: userName });
+        smsOtpToken = createSignedOtpToken(cleanPhone, smsOtpHash, expiresAt);
+
+        const smsCodeToSend = rawSmsOtp;
+        tasks.push(
+          Promise.race([
+            sendSmsOtp(cleanPhone, smsCodeToSend, userName),
+            new Promise<{ success: boolean; error?: string }>((resolve) =>
+              setTimeout(() => resolve({ success: true, error: "SMS queued" }), 4500)
+            ),
+          ])
+            .then(() => {})
+            .catch((err: any) => {
+              console.warn("[SIGNUP SMS OTP WARN]", err?.message || err);
+            })
+        );
+      }
+
+      await Promise.allSettled(tasks);
+
+      const message =
+        resendTarget === "email"
+          ? `New Email OTP sent to ${cleanEmail}`
+          : resendTarget === "sms"
+          ? `New SMS OTP sent to +91 ${cleanPhone}`
+          : `Verification OTPs sent to both Email (${cleanEmail}) and SMS (+91 ${cleanPhone})`;
+
+      return res.json({
+        message,
+        dualVerification: true,
+        smsSent: sendSmsNow,
+        emailSent: sendEmailNow,
+        emailConfigured: hasSmtp,
+        emailOtpToken,
+        smsOtpToken,
+        otpToken: emailOtpToken,
+        devEmailOtp: !hasSmtp && rawEmailOtp ? rawEmailOtp : undefined,
+        devSmsOtp: !hasSmsProvider && rawSmsOtp ? rawSmsOtp : undefined,
+        expiresIn: 600,
+      });
+    }
 
     if (purpose === "forgot_password") {
       let accountExists = false;
@@ -1214,7 +1307,6 @@ app.post("/api/auth/send-otp", async (req, res) => {
 
     const rawOtp = generateOtp();
     const otpHash = crypto.createHash("sha256").update(rawOtp).digest("hex");
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
 
     await setOtpRecord(cleanEmail, { otpHash, expiresAt, attempts: 0, name: userName });
     if (cleanPhone) {
@@ -1229,9 +1321,17 @@ app.post("/api/auth/send-otp", async (req, res) => {
     let smsSent = false;
     let emailSent = false;
 
+    const requestedChannel = String(channel || "").toLowerCase().trim();
+    const shouldSendSms =
+      Boolean(cleanPhone && cleanPhone.length === 10) &&
+      (requestedChannel === "sms" || requestedChannel === "both" || !requestedChannel);
+    const shouldSendEmail =
+      Boolean(linkedRealEmail && linkedRealEmail.includes("@") && !linkedRealEmail.endsWith("@phone.mingree.com")) &&
+      (requestedChannel === "email" || requestedChannel === "both" || (!requestedChannel && !isPhoneSyntheticEmail));
+
     const deliveryPromises: Promise<void>[] = [];
 
-    if (cleanPhone && cleanPhone.length === 10) {
+    if (shouldSendSms) {
       deliveryPromises.push(
         Promise.race([
           sendSmsOtp(cleanPhone, rawOtp, userName),
@@ -1248,7 +1348,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
       );
     }
 
-    if (linkedRealEmail && linkedRealEmail.includes("@") && !linkedRealEmail.endsWith("@phone.mingree.com")) {
+    if (shouldSendEmail) {
       deliveryPromises.push(
         Promise.race([
           sendEmailOtp(
@@ -1275,18 +1375,15 @@ app.post("/api/auth/send-otp", async (req, res) => {
 
     await Promise.allSettled(deliveryPromises);
 
-    const hasSmtp = Boolean(getEmailCredentials());
-    const hasSmsProvider = Boolean((process.env.FAST2SMS_API_KEY || "").trim() || process.env.TWILIO_ACCOUNT_SID);
-
     return res.json({
       message:
-        cleanPhone && linkedRealEmail
+        shouldSendSms && shouldSendEmail
           ? `Verification code sent via SMS (+91 ${cleanPhone}) and email (${linkedRealEmail})`
-          : cleanPhone
-          ? `Verification code sent to +91 ${cleanPhone}`
-          : `Verification code sent to ${cleanEmail}`,
-      smsSent: smsSent || Boolean(cleanPhone),
-      emailSent: emailSent || Boolean(linkedRealEmail),
+          : shouldSendSms
+          ? `Verification code sent via SMS to +91 ${cleanPhone}`
+          : `Verification code sent via Email to ${linkedRealEmail || cleanEmail}`,
+      smsSent: smsSent || shouldSendSms,
+      emailSent: emailSent || shouldSendEmail,
       emailConfigured: hasSmtp,
       otpToken,
       devOtp: !hasSmtp && !hasSmsProvider ? rawOtp : undefined,
@@ -1298,16 +1395,127 @@ app.post("/api/auth/send-otp", async (req, res) => {
   }
 });
 
-// Verify OTP (single-use + distributed brute-force lockout protection + PostgreSQL cross-isolate persistence)
+// Verify OTP (Supports Dual Email + Mobile SMS Verification at Signup as well as single OTP verification)
 app.post("/api/auth/verify-otp", async (req, res) => {
   try {
-    const { email, phone, otp, otpToken } = req.body || {};
-    if (!email || !otp) {
+    const { email, phone, otp, otpToken, emailOtp, smsOtp, emailOtpToken, smsOtpToken } = req.body || {};
+    const cleanEmail = email ? String(email).toLowerCase().trim() : "";
+    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
+
+    // Dual Verification Flow (Signup: verifies both Email OTP and Mobile SMS OTP)
+    if (emailOtp !== undefined || smsOtp !== undefined) {
+      if (!cleanEmail || !cleanPhone || cleanPhone.length !== 10) {
+        return res.status(400).json({ error: "Both email address and 10-digit mobile number are required." });
+      }
+      const cleanEmailOtp = String(emailOtp || "").trim();
+      const cleanSmsOtp = String(smsOtp || "").trim();
+
+      if (cleanEmailOtp.length !== 6) {
+        return res.status(400).json({ error: "Please enter the complete 6-digit Email OTP." });
+      }
+      if (cleanSmsOtp.length !== 6) {
+        return res.status(400).json({ error: "Please enter the complete 6-digit Mobile SMS OTP." });
+      }
+
+      const dualLockKey = `verify:dual:${cleanEmail}:${cleanPhone}`;
+      const lockCheck = await checkOtpAttemptLock(dualLockKey);
+      if (!lockCheck.allowed) {
+        return res.status(429).json({
+          error: `Too many failed verification attempts. Please try again in ${lockCheck.retryAfterSec} seconds or request new OTPs.`,
+        });
+      }
+
+      // 1. Verify Email OTP
+      const emailTokenCheck = verifySignedOtpToken(emailOtpToken || otpToken, cleanEmail, cleanEmailOtp);
+      if (emailTokenCheck.expired) {
+        return res.status(400).json({ error: "Email OTP has expired. Please click 'Resend Email OTP'." });
+      }
+
+      let isEmailOtpValid = emailTokenCheck.valid;
+      const emailRecord = await getOtpRecord(cleanEmail);
+      if (!isEmailOtpValid && emailRecord) {
+        if (Date.now() > emailRecord.expiresAt) {
+          await deleteOtpRecord(cleanEmail);
+          return res.status(400).json({ error: "Email OTP has expired. Please click 'Resend Email OTP'." });
+        }
+        const submittedEmailHash = crypto.createHash("sha256").update(cleanEmailOtp).digest("hex");
+        if (submittedEmailHash === emailRecord.otpHash) {
+          isEmailOtpValid = true;
+        } else {
+          emailRecord.attempts += 1;
+          await setOtpRecord(cleanEmail, emailRecord);
+        }
+      }
+
+      if (!isEmailOtpValid) {
+        await recordOtpFailedAttempt(dualLockKey, 6);
+        return res.status(400).json({
+          error: `Invalid Email OTP. Please check the 6-digit code sent to ${cleanEmail}.`,
+          failedField: "email",
+        });
+      }
+
+      // 2. Verify Mobile SMS OTP
+      const smsTokenCheck = verifySignedOtpToken(smsOtpToken, cleanPhone, cleanSmsOtp);
+      if (smsTokenCheck.expired) {
+        return res.status(400).json({ error: "Mobile SMS OTP has expired. Please click 'Resend SMS OTP'." });
+      }
+
+      let isSmsOtpValid = smsTokenCheck.valid;
+      const smsRecord = await getOtpRecord(cleanPhone);
+      if (!isSmsOtpValid && smsRecord) {
+        if (Date.now() > smsRecord.expiresAt) {
+          await deleteOtpRecord(cleanPhone);
+          return res.status(400).json({ error: "Mobile SMS OTP has expired. Please click 'Resend SMS OTP'." });
+        }
+        const submittedSmsHash = crypto.createHash("sha256").update(cleanSmsOtp).digest("hex");
+        if (submittedSmsHash === smsRecord.otpHash) {
+          isSmsOtpValid = true;
+        } else {
+          smsRecord.attempts += 1;
+          await setOtpRecord(cleanPhone, smsRecord);
+        }
+      }
+
+      if (!isSmsOtpValid) {
+        await recordOtpFailedAttempt(dualLockKey, 6);
+        return res.status(400).json({
+          error: `Invalid Mobile SMS OTP. Please check the 6-digit code sent to +91 ${cleanPhone}.`,
+          failedField: "sms",
+        });
+      }
+
+      // Consume single-use JTIs now that both Email and SMS OTPs are confirmed valid
+      if (emailTokenCheck.valid && emailTokenCheck.jti) {
+        await consumeSingleUseJti(emailTokenCheck.jti, "otp_email_dual", 15 * 60 * 1000);
+      }
+      if (smsTokenCheck.valid && smsTokenCheck.jti) {
+        await consumeSingleUseJti(smsTokenCheck.jti, "otp_sms_dual", 15 * 60 * 1000);
+      }
+
+      await clearOtpAttempts(dualLockKey);
+      await deleteOtpRecord(cleanEmail);
+      await deleteOtpRecord(cleanPhone);
+
+      if (isInMemoryFallbackAllowed()) {
+        verifiedSignupEmails.add(cleanEmail);
+      }
+      const verifiedToken = createVerifiedEmailToken(cleanEmail);
+
+      return res.json({
+        success: true,
+        emailVerified: true,
+        phoneVerified: true,
+        verifiedToken,
+        message: "Both Email and Mobile Number verified successfully!",
+      });
+    }
+
+    // Single OTP Verification Flow
+    if (!cleanEmail || !otp) {
       return res.status(400).json({ error: "Email and OTP are required" });
     }
 
-    const cleanEmail = String(email).toLowerCase().trim();
-    const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
     const cleanOtp = String(otp).trim();
 
     const tokenLockKey = otpToken ? `verify:token:${crypto.createHash("sha256").update(String(otpToken)).digest("hex")}` : `verify:email:${cleanEmail}`;

@@ -80,6 +80,7 @@ export default function ForgotPassword() {
             email: `${cleanPhone}@phone.mingree.com`,
             name: "Mingree User",
             purpose: "forgot_password",
+            channel: "sms",
           }),
         });
         const srvData = await srvRes.json().catch(() => ({}));
