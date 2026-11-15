@@ -15,8 +15,15 @@ function handleCronError(taskName: string, err: any) {
     err?.message?.includes("ECONNREFUSED") ||
     err?.message?.includes("connect ECONNREFUSED");
 
+  const isTableMissing =
+    err?.code === "42P01" ||
+    err?.message?.includes("relation \"deals\" does not exist") ||
+    err?.message?.includes("does not exist");
+
   if (isConnError) {
     console.log(`[CRON] ${taskName} skipped: Database connection offline (ECONNREFUSED).`);
+  } else if (isTableMissing) {
+    console.log(`[CRON] ${taskName} skipped: Table not yet created or migrated.`);
   } else {
     console.warn(`[CRON WARNING] ${taskName}:`, err?.message || err);
   }

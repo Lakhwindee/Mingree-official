@@ -7,9 +7,13 @@ import { cn } from "@/lib/utils"
 const InputOTP = React.forwardRef<
   React.ElementRef<typeof OTPInput>,
   React.ComponentPropsWithoutRef<typeof OTPInput>
->(({ className, containerClassName, ...props }, ref) => (
+>(({ className, containerClassName, autoComplete = "off", pushPasswordManagerStrategy = "none", ...props }, ref) => (
   <OTPInput
     ref={ref}
+    autoComplete={autoComplete}
+    pushPasswordManagerStrategy={pushPasswordManagerStrategy}
+    data-lpignore="true"
+    data-form-type="other"
     containerClassName={cn(
       "flex items-center gap-2 has-[:disabled]:opacity-50",
       containerClassName

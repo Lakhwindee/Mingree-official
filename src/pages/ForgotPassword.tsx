@@ -513,7 +513,7 @@ export default function ForgotPassword() {
                 </div>
 
                 <div className="flex flex-col items-center gap-3 py-1">
-                  <InputOTP maxLength={6} value={otp} onChange={setOtp} data-testid="input-otp">
+                  <InputOTP maxLength={6} value={otp} onChange={setOtp} autoComplete="off" data-lpignore="true" data-testid="input-otp">
                     <InputOTPGroup className="gap-1 sm:gap-2">
                       <InputOTPSlot index={0} className="w-9 h-11 sm:w-10 sm:h-12 text-base font-bold rounded-lg border" />
                       <InputOTPSlot index={1} className="w-9 h-11 sm:w-10 sm:h-12 text-base font-bold rounded-lg border" />

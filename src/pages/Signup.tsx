@@ -637,6 +637,8 @@ export default function Signup() {
                         setEmailOtp(val);
                         if (errorMessage) setErrorMessage(null);
                       }}
+                      autoComplete="off"
+                      data-lpignore="true"
                       data-testid="input-email-otp"
                     >
                       <InputOTPGroup className="gap-1.5">
@@ -699,6 +701,8 @@ export default function Signup() {
                         setSmsOtp(val);
                         if (errorMessage) setErrorMessage(null);
                       }}
+                      autoComplete="off"
+                      data-lpignore="true"
                       data-testid="input-sms-otp"
                     >
                       <InputOTPGroup className="gap-1.5">
