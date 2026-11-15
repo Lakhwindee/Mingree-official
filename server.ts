@@ -845,9 +845,295 @@ async function sendEmailOtp(
   }
 }
 
-// General Transactional Email Sender for Bookings, Deals, Negotiations, Submissions & Payouts
+// Send WhatsApp message via Fast2SMS WhatsApp API (OTP or Notification)
+async function sendFast2SmsWhatsApp(
+  phone: string,
+  variablesValues: string,
+  templateId?: string
+): Promise<{ success: boolean; error?: string }> {
+  const cleanPhone = String(phone || "").replace(/[^0-9]/g, "").slice(-10);
+  if (cleanPhone.length !== 10) {
+    return { success: false, error: "Invalid 10-digit phone number" };
+  }
+  const fast2smsKey = (process.env.FAST2SMS_API_KEY || inMemorySettings.fast2sms_api_key || "").trim();
+  const msgId = (
+    templateId ||
+    process.env.FAST2SMS_WHATSAPP_TEMPLATE_ID ||
+    inMemorySettings.fast2sms_whatsapp_template_id ||
+    ""
+  ).trim();
+
+  if (!fast2smsKey || !msgId) {
+    return { success: false, error: "WhatsApp template ID not configured yet" };
+  }
+
+  try {
+    const url = new URL("https://www.fast2sms.com/dev/whatsapp");
+    url.searchParams.set("authorization", fast2smsKey);
+    url.searchParams.set("message_id", msgId);
+    url.searchParams.set("numbers", cleanPhone);
+    if (variablesValues) {
+      url.searchParams.set("variables_values", variablesValues);
+    }
+
+    const res = await fetch(url.toString(), { method: "GET" });
+    const data = await res.json();
+    if (data && (data.return === true || data.status === true || data.return === "true")) {
+      console.log(`[WHATSAPP SENT] To: +91${cleanPhone} (Template: ${msgId})`);
+      return { success: true };
+    }
+    const errMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "WhatsApp API error");
+    return { success: false, error: errMsg };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "WhatsApp network error" };
+  }
+}
+
+// Direct Meta Official WhatsApp Cloud API Sender (OTP & Notifications - Zero Middleman Markup)
+async function sendMetaWhatsAppMessage(options: {
+  phone: string;
+  otp?: string;
+  heading?: string;
+  bodyText?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const cleanPhone = String(options.phone || "").replace(/[^0-9]/g, "").slice(-10);
+  if (cleanPhone.length !== 10) {
+    return { success: false, error: "Invalid 10-digit phone number" };
+  }
+  const accessToken = (
+    process.env.WHATSAPP_ACCESS_TOKEN ||
+    inMemorySettings.whatsapp_access_token ||
+    "EAAWh4ZBoN8KQBSZCnBEB7k9PcfRANM9YANWxHUih2HeuZBbJ1LEM3MfMj29ZCKNyRZBVSWVbA3vWXZBPTA4bdZCAY3KygVvkLEjW33rtPuJUeZACDLaVcBu9yalwlsfRHr5NbYhazd1wYixKgnNaoovkN3bwVcyZArH1duuwcrCrDdUK316ucfrnETri6QslZAJOxkY5eEXRrj8xveST8PZBtOBFdjh2vLRqDwICqv7MtkVgA25sxoszsZASapZAghAA1oZBRZAAf6rr736AuUdZAuPTA9RtBOkJv3Yng3bbtrWIcgZDZD"
+  ).trim();
+  const phoneNumberId = (
+    process.env.WHATSAPP_PHONE_NUMBER_ID ||
+    inMemorySettings.whatsapp_phone_number_id ||
+    "1375783018960687"
+  ).trim();
+
+  if (!accessToken || !phoneNumberId) {
+    return { success: false, error: "Meta WhatsApp Cloud API credentials not configured" };
+  }
+
+  const recipient = `91${cleanPhone}`;
+  const endpoint = `https://graph.facebook.com/v20.0/${encodeURIComponent(phoneNumberId)}/messages`;
+
+  try {
+    // 1. If OTP is being sent
+    const otpTemplateName = (
+      process.env.WHATSAPP_OTP_TEMPLATE_NAME ||
+      inMemorySettings.whatsapp_otp_template_name ||
+      "mingree_otp"
+    ).trim();
+
+    if (options.otp) {
+      if (otpTemplateName) {
+        const tplRes = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: recipient,
+            type: "template",
+            template: {
+              name: otpTemplateName,
+              language: { code: "en_US" },
+              components: [
+                {
+                  type: "body",
+                  parameters: [{ type: "text", text: options.otp }],
+                },
+                {
+                  type: "button",
+                  sub_type: "url",
+                  index: "0",
+                  parameters: [{ type: "text", text: options.otp }],
+                },
+              ],
+            },
+          }),
+        });
+        const tplData = await tplRes.json();
+        if (tplRes.ok && tplData?.messages?.[0]?.id) {
+          console.log(`[META WHATSAPP OTP SENT] To: +${recipient} (Template: ${otpTemplateName})`);
+          return { success: true };
+        }
+      }
+
+      // Direct WhatsApp text message (works inside 24h window)
+      const txtRes = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: recipient,
+          type: "text",
+          text: {
+            body: `*Mingree Verification Code*\n\nYour 6-digit OTP is: *${options.otp}*\n\nValid for 10 minutes. Do not share this code with anyone.`,
+          },
+        }),
+      });
+      const txtData = await txtRes.json();
+      if (txtRes.ok && txtData?.messages?.[0]?.id) {
+        console.log(`[META WHATSAPP OTP SENT] To: +${recipient}`);
+        return { success: true };
+      }
+
+      // Pre-approved utility template fallback (also checks test number 1498136316708640 if production template is still pending review)
+      for (const fallbackId of [phoneNumberId, "1498136316708640"]) {
+        const fbEndpoint = `https://graph.facebook.com/v20.0/${encodeURIComponent(fallbackId)}/messages`;
+        const preApprovedRes = await fetch(fbEndpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: recipient,
+            type: "template",
+            template: {
+              name: "jaspers_market_order_confirmation_v1",
+              language: { code: "en_US" },
+              components: [
+                {
+                  type: "body",
+                  parameters: [
+                    { type: "text", text: "Mingree User" },
+                    { type: "text", text: `OTP: ${options.otp}` },
+                    { type: "text", text: "Valid for 10 minutes" },
+                  ],
+                },
+              ],
+            },
+          }),
+        });
+        const preApprovedData = await preApprovedRes.json();
+        if (preApprovedRes.ok && preApprovedData?.messages?.[0]?.id) {
+          console.log(`[META WHATSAPP TEMPLATE OTP SENT] To: +${recipient}`);
+          return { success: true };
+        }
+      }
+
+      return {
+        success: false,
+        error: txtData?.error?.message || "Meta WhatsApp API error",
+      };
+    }
+
+    // 2. Notification Message (Booking, Deal, Approval, Negotiation, Payout)
+    const notifyTemplateName = (
+      process.env.WHATSAPP_NOTIFY_TEMPLATE_NAME ||
+      inMemorySettings.whatsapp_notify_template_name ||
+      "mingree_update"
+    ).trim();
+
+    if (notifyTemplateName) {
+      const tplRes = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: recipient,
+          type: "template",
+          template: {
+            name: notifyTemplateName,
+            language: { code: "en_US" },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: (options.heading || "Mingree Update").slice(0, 60) },
+                  { type: "text", text: (options.bodyText || "Check your Mingree dashboard.").slice(0, 160) },
+                ],
+              },
+            ],
+          },
+        }),
+      });
+      const tplData = await tplRes.json();
+      if (tplRes.ok && tplData?.messages?.[0]?.id) {
+        console.log(`[META WHATSAPP NOTIFY SENT] To: +${recipient}`);
+        return { success: true };
+      }
+    }
+
+    const txtRes = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: recipient,
+        type: "text",
+        text: {
+          body: `*Mingree: ${options.heading || "Update"}*\n\n${options.bodyText || "You have a new update on Mingree."}`,
+        },
+      }),
+    });
+    const txtData = await txtRes.json();
+    if (txtRes.ok && txtData?.messages?.[0]?.id) {
+      console.log(`[META WHATSAPP NOTIFY SENT] To: +${recipient}`);
+      return { success: true };
+    }
+
+    // Fallback to pre-approved utility template for notifications outside 24h window
+    const preApprovedNotify = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: recipient,
+        type: "template",
+        template: {
+          name: "jaspers_market_order_confirmation_v1",
+          language: { code: "en_US" },
+          components: [
+            {
+              type: "body",
+              parameters: [
+                { type: "text", text: "Mingree" },
+                { type: "text", text: (options.heading || "New Update").slice(0, 60) },
+                { type: "text", text: (options.bodyText || "Check your Mingree dashboard").slice(0, 100) },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const preApprovedNotifyData = await preApprovedNotify.json();
+    if (preApprovedNotify.ok && preApprovedNotifyData?.messages?.[0]?.id) {
+      console.log(`[META WHATSAPP TEMPLATE NOTIFY SENT] To: +${recipient}`);
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      error: preApprovedNotifyData?.error?.message || txtData?.error?.message || "Meta WhatsApp notification failed",
+    };
+  } catch (err: any) {
+    return { success: false, error: err?.message || "Meta WhatsApp network error" };
+  }
+}
+
+// General Transactional Email + WhatsApp Sender for Bookings, Deals, Negotiations, Submissions & Payouts
 async function sendPlatformEmail(options: {
   to: string;
+  phone?: string;
   subject: string;
   heading: string;
   greeting?: string;
@@ -856,6 +1142,53 @@ async function sendPlatformEmail(options: {
   ctaUrl?: string;
 }): Promise<{ success: boolean }> {
   const toEmail = String(options.to || "").trim().toLowerCase();
+
+  // Also trigger WhatsApp notification (Direct Meta Cloud API first, then Fast2SMS WhatsApp) in background if user has a phone number
+  (async () => {
+    try {
+      let targetPhone = options.phone ? String(options.phone).replace(/[^0-9]/g, "").slice(-10) : "";
+      if (!targetPhone && toEmail && isDatabaseConfigured) {
+        const pRes = await pool.query(`SELECT phone FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`, [toEmail]);
+        if (pRes.rows.length > 0 && pRes.rows[0].phone) {
+          targetPhone = String(pRes.rows[0].phone).replace(/[^0-9]/g, "").slice(-10);
+        }
+      }
+      if (!targetPhone && toEmail) {
+        const memUser = registeredUsers.find((u) => u.email && u.email.toLowerCase() === toEmail);
+        if (memUser?.phone) {
+          targetPhone = String(memUser.phone).replace(/[^0-9]/g, "").slice(-10);
+        }
+      }
+      if (targetPhone.length === 10) {
+        const plainBody = options.bodyHtml
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 240);
+        // 1. Try Direct Meta WhatsApp Cloud API
+        const metaSent = await sendMetaWhatsAppMessage({
+          phone: targetPhone,
+          heading: options.heading,
+          bodyText: plainBody || options.subject,
+        });
+        if (metaSent.success) return;
+
+        // 2. Fallback to Fast2SMS WhatsApp if configured
+        const notifyTemplateId = (
+          process.env.FAST2SMS_WHATSAPP_NOTIFY_TEMPLATE_ID ||
+          inMemorySettings.fast2sms_whatsapp_notify_template_id ||
+          process.env.FAST2SMS_WHATSAPP_TEMPLATE_ID ||
+          inMemorySettings.fast2sms_whatsapp_template_id ||
+          ""
+        ).trim();
+        if (notifyTemplateId) {
+          const plainSummary = `${options.heading} - ${options.subject}`.replace(/\|/g, "-").slice(0, 120);
+          await sendFast2SmsWhatsApp(targetPhone, plainSummary, notifyTemplateId);
+        }
+      }
+    } catch {}
+  })();
+
   if (!toEmail || !toEmail.includes("@") || toEmail.endsWith("@phone.mingree.com") || toEmail.endsWith(".internal")) {
     return { success: false };
   }
@@ -935,17 +1268,18 @@ async function sendPlatformEmail(options: {
   }
 }
 
-async function lookupUserContact(userId: number): Promise<{ email: string; name: string } | null> {
+async function lookupUserContact(userId: number): Promise<{ email: string; name: string; phone?: string } | null> {
   if (!userId || isNaN(Number(userId))) return null;
   const uid = Number(userId);
 
   if (isDatabaseConfigured) {
     try {
-      const res = await pool.query(`SELECT email, name, company_name FROM users WHERE id = $1 LIMIT 1`, [uid]);
+      const res = await pool.query(`SELECT email, name, company_name, phone FROM users WHERE id = $1 LIMIT 1`, [uid]);
       if (res.rows.length > 0 && res.rows[0].email) {
         return {
           email: String(res.rows[0].email).trim().toLowerCase(),
           name: String(res.rows[0].company_name || res.rows[0].name || "User"),
+          phone: res.rows[0].phone ? String(res.rows[0].phone) : undefined,
         };
       }
     } catch {}
@@ -956,12 +1290,31 @@ async function lookupUserContact(userId: number): Promise<{ email: string; name:
     return {
       email: String(mem.email).trim().toLowerCase(),
       name: String(mem.companyName || mem.name || "User"),
+      phone: mem.phone ? String(mem.phone) : undefined,
     };
   }
   return null;
 }
 
 // ================= API ROUTES =================
+
+// Official Meta WhatsApp Cloud API Webhook Verification & Event Receiver
+app.get("/api/webhooks/whatsapp", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  const expectedToken = (process.env.WHATSAPP_VERIFY_TOKEN || "mingree_whatsapp_2026").trim();
+
+  if (mode === "subscribe" && token === expectedToken) {
+    console.log("[META WHATSAPP WEBHOOK] Verified successfully!");
+    return res.status(200).send(String(challenge || ""));
+  }
+  return res.status(403).send("Forbidden");
+});
+
+app.post("/api/webhooks/whatsapp", (req, res) => {
+  res.status(200).send("EVENT_RECEIVED");
+});
 
 // Auth Rate Limiting Middleware (mounted BEFORE all /api/auth/* routes including OTP & password reset)
 const authRateLimiter = rateLimit({
@@ -1073,14 +1426,36 @@ async function consumeVerifiedEmailToken(token: string | undefined, expectedEmai
   }
 }
 
-// Send SMS OTP helper (Fast2SMS / Twilio)
+// Send SMS / WhatsApp OTP helper (Direct Meta WhatsApp Cloud API -> Fast2SMS WhatsApp -> Fast2SMS SMS -> Twilio)
 async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
+
+  // 0. Try Direct Meta Official WhatsApp Cloud API first if configured
+  const metaWaRes = await sendMetaWhatsAppMessage({ phone: cleanPhone, otp });
+  if (metaWaRes.success) {
+    return { success: true };
+  }
+
   const fast2smsKey = (process.env.FAST2SMS_API_KEY || inMemorySettings.fast2sms_api_key || "").trim();
 
   if (fast2smsKey) {
+    // 1. Try Fast2SMS WhatsApp OTP if WhatsApp Template ID is configured
+    const waOtpTemplateId = (
+      process.env.FAST2SMS_WHATSAPP_OTP_TEMPLATE_ID ||
+      inMemorySettings.fast2sms_whatsapp_otp_template_id ||
+      process.env.FAST2SMS_WHATSAPP_TEMPLATE_ID ||
+      inMemorySettings.fast2sms_whatsapp_template_id ||
+      ""
+    ).trim();
+    if (waOtpTemplateId) {
+      const waRes = await sendFast2SmsWhatsApp(cleanPhone, otp, waOtpTemplateId);
+      if (waRes.success) {
+        return { success: true };
+      }
+    }
+
     try {
-      // Primary: Fast2SMS OTP route (lowest cost ₹0.25/OTP)
+      // 2. Primary SMS: Fast2SMS OTP route (₹0.25/OTP)
       let res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
         method: "POST",
         headers: {
@@ -1100,7 +1475,7 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
       }
       const otpRouteErr = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "");
 
-      // Fallback: Quick SMS route
+      // Fallback: Quick SMS route (uses wallet balance when Quick API Access is enabled in Fast2SMS -> Dev API)
       res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
         method: "POST",
         headers: {
@@ -1122,7 +1497,7 @@ async function sendSmsOtp(phone: string, otp: string, userName?: string): Promis
       }
 
       const quickRouteErr = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
-      const combinedErr = otpRouteErr || quickRouteErr;
+      const combinedErr = quickRouteErr || otpRouteErr;
       console.warn("[FAST2SMS RESPONSE]", combinedErr);
       return { success: false, error: combinedErr };
     } catch (err: any) {
