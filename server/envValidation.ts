@@ -121,7 +121,7 @@ export function validateProductionEnvironment(workerEnv?: Record<string, any>): 
     warnings.push("INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET are not set. Official Instagram OAuth linking will be unavailable.");
   }
 
-  // 7. EMAIL (GMAIL) & SMS (FAST2SMS / TWILIO) — presence check only
+  // 7. EMAIL (GMAIL) & WHATSAPP (META CLOUD API) — presence check only
   const gmailUser = String(workerEnv?.GMAIL_USER || process.env.GMAIL_USER || "").trim();
   const gmailPass = String(workerEnv?.GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").trim();
   const emailConfigured = Boolean(gmailUser && gmailPass);
@@ -129,15 +129,13 @@ export function validateProductionEnvironment(workerEnv?: Record<string, any>): 
     warnings.push("GMAIL_USER / GMAIL_APP_PASSWORD not set. Email OTP delivery is unavailable.");
   }
 
-  const fast2smsKey = String(workerEnv?.FAST2SMS_API_KEY || process.env.FAST2SMS_API_KEY || "").trim();
-  const twilioConfigured = Boolean(
-    (workerEnv?.TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID) &&
-    (workerEnv?.TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN) &&
-    (workerEnv?.TWILIO_PHONE_NUMBER || process.env.TWILIO_PHONE_NUMBER)
+  const whatsappConfigured = Boolean(
+    (workerEnv?.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN) &&
+    (workerEnv?.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID)
   );
-  const smsConfigured = Boolean(fast2smsKey || twilioConfigured);
+  const smsConfigured = whatsappConfigured;
   if (isProduction && !smsConfigured) {
-    warnings.push("FAST2SMS_API_KEY (or Twilio SMS credentials) not set. SMS OTP delivery will fail.");
+    warnings.push("WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not set. WhatsApp OTP delivery will fail.");
   }
 
   // 8. APP_URL

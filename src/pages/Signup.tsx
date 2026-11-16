@@ -204,25 +204,25 @@ export default function Signup() {
       if (resendTarget === "both" || resendTarget === "sms") {
         setSmsOtp("");
         setSmsResendTimer(60);
-        setSmsDeliveryError(data.smsSent === false ? (data.smsError || "SMS OTP delivery failed") : null);
+        setSmsDeliveryError(data.smsSent === false ? (data.smsError || "WhatsApp OTP delivery failed") : null);
       }
 
       const emailFailed = (resendTarget === "both" || resendTarget === "email") && data.emailSent === false;
       const smsFailed = (resendTarget === "both" || resendTarget === "sms") && data.smsSent === false;
 
       if (emailFailed && smsFailed) {
-        const msg = data.emailError || data.smsError || "Could not deliver Email or SMS OTP. Please try again.";
+        const msg = data.emailError || data.smsError || "Could not deliver Email or WhatsApp OTP. Please try again.";
         setErrorMessage(msg);
         toast.error(msg);
       } else if (emailFailed) {
         const msg = `Email OTP could not be sent: ${data.emailError || "SMTP error"}`;
         toast.error(msg);
       } else if (smsFailed) {
-        const msg = `SMS OTP could not be sent: ${data.smsError || "SMS gateway error"}`;
+        const msg = `WhatsApp OTP could not be sent: ${data.smsError || "WhatsApp gateway error"}`;
         toast.error(msg);
       } else {
         const successMsg =
-          data.message || `Verification OTPs sent to ${cleanEmail} and +91 ${cleanPhone}`;
+          data.message || `Verification OTPs sent to ${cleanEmail} and WhatsApp +91 ${cleanPhone}`;
         toast.success(successMsg);
       }
 
@@ -251,7 +251,7 @@ export default function Signup() {
     }
 
     if (cleanSmsOtp.length !== 6) {
-      const msg = "Please enter the complete 6-digit Mobile SMS OTP.";
+      const msg = "Please enter the complete 6-digit WhatsApp OTP.";
       setErrorMessage(msg);
       toast.error(msg);
       return;
@@ -658,7 +658,7 @@ export default function Signup() {
                   }
                   data-testid="button-signup"
                 >
-                  {isLoading ? "Sending Email & SMS OTPs..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
+                  {isLoading ? "Sending Email & WhatsApp OTPs..." : role === "sponsor" ? "Register Brand" : "Sign Up"}
                 </Button>
 
                 <div className="border-t border-border pt-3 mt-3">
@@ -732,7 +732,7 @@ export default function Signup() {
                   </div>
                 </div>
 
-                {/* 2. Mobile SMS OTP Section */}
+                {/* 2. WhatsApp OTP Section */}
                 <div className="rounded-xl border border-border bg-muted/30 p-3.5 space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
@@ -740,7 +740,7 @@ export default function Signup() {
                         <Smartphone className="w-3.5 h-3.5" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-foreground">2. Mobile SMS OTP Verification</p>
+                        <p className="text-xs font-bold text-foreground">2. WhatsApp OTP Verification</p>
                         <p className="text-[11px] text-muted-foreground truncate font-mono">
                           +91 {phone.replace(/[^0-9]/g, "").slice(-10)}
                         </p>
@@ -768,7 +768,7 @@ export default function Signup() {
 
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
                     <span className={smsDeliveryError ? "text-destructive font-medium" : ""}>
-                      {smsDeliveryError ? `Failed: ${smsDeliveryError}` : "Sent via SMS to your mobile"}
+                      {smsDeliveryError ? `Failed: ${smsDeliveryError}` : "Sent to your WhatsApp number"}
                     </span>
                     <button
                       type="button"
@@ -781,7 +781,7 @@ export default function Signup() {
                       }`}
                       data-testid="button-resend-sms-otp"
                     >
-                      {smsResendTimer > 0 ? `Resend SMS OTP in ${smsResendTimer}s` : "Resend SMS OTP"}
+                      {smsResendTimer > 0 ? `Resend WhatsApp OTP in ${smsResendTimer}s` : "Resend WhatsApp OTP"}
                     </button>
                   </div>
                 </div>

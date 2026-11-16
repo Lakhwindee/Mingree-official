@@ -377,7 +377,7 @@ export default function ForgotPassword() {
             <CardDescription className="text-xs sm:text-sm text-muted-foreground mt-1">
               {step === "input" &&
                 (mode === "phone"
-                  ? "Enter your registered mobile number to receive a secure SMS OTP code"
+                  ? "Enter your registered WhatsApp / mobile number to receive a 6-digit OTP"
                   : "Enter your registered email address to receive a 6-digit verification code")}
               {step === "otp" &&
                 (mode === "phone"
@@ -411,7 +411,7 @@ export default function ForgotPassword() {
                     }`}
                   >
                     <Smartphone className="w-3.5 h-3.5 text-primary" />
-                    Mobile SMS OTP
+                    WhatsApp OTP
                   </button>
                   <button
                     type="button"
@@ -451,7 +451,7 @@ export default function ForgotPassword() {
                       />
                     </div>
                     <p className="text-[11px] text-muted-foreground">
-                      Your phone number is used for SMS OTP verification to locate all associated Creator and Brand accounts.
+                      Your number is used for WhatsApp OTP verification to locate all associated Creator and Brand accounts.
                     </p>
                   </div>
                 ) : (

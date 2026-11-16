@@ -1,6 +1,7 @@
 import http from "node:http";
 import app from "../server";
 import { httpServerHandler } from "cloudflare:node";
+import { connect as cfSocketConnect } from "cloudflare:sockets";
 import {
   reconfigureDatabase,
   isDatabaseConfigured,
@@ -8,6 +9,7 @@ import {
   ensureDatabaseSchema,
 } from "./db";
 import { setWorkerR2Bucket } from "./storage";
+import { setCloudflareSocketConnect } from "./cfSmtp";
 import { validateWorkerProductionLifecycle } from "./envValidation";
 import {
   runDealExpirationCheck,
@@ -34,7 +36,8 @@ function syncWorkerBindings(env: CloudflareEnv): string {
     }
   }
 
-  // 2. Bind Cloudflare R2 bucket for persistent object storage
+  // 2. Bind Cloudflare R2 bucket and native TLS socket connector
+  setCloudflareSocketConnect(cfSocketConnect);
   if (env?.R2_BUCKET) {
     setWorkerR2Bucket(env.R2_BUCKET);
   }

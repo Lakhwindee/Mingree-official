@@ -30,6 +30,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { getTierNameByFollowers, getTierBannerText, TIERS } from "./shared/tiers";
 import { uploadToStorage } from "./server/storage";
+import { hasCloudflareSocketConnect, sendMailViaCloudflareSocket } from "./server/cfSmtp";
 import { enforceProductionEnvironment } from "./server/envValidation";
 import {
   escapeHtml,
@@ -861,6 +862,27 @@ async function sendEmailOtp(
     </html>
   `;
 
+  const html = buildHtml();
+
+  if (hasCloudflareSocketConnect()) {
+    try {
+      await sendMailViaCloudflareSocket({
+        user: creds.user,
+        pass: creds.pass,
+        to: toEmail,
+        subject,
+        html,
+        fromName: "Mingree",
+      });
+      console.log(`[EMAIL OTP CF-SOCKET] Sent (${purpose}) to ${toEmail} via ${creds.user}`);
+      return { success: true };
+    } catch (cfErr) {
+      const errorMsg = cfErr instanceof Error ? cfErr.message : String(cfErr);
+      console.error(`[EMAIL OTP CF-SOCKET ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
+      return { success: false, error: errorMsg };
+    }
+  }
+
   const sendMailAttempt = async (useStartTls: boolean) => {
     const transporter = createSmtpTransporter(creds, useStartTls);
     try {
@@ -868,7 +890,7 @@ async function sendEmailOtp(
         from: `"Mingree" <${creds.user}>`,
         to: toEmail,
         subject,
-        html: buildHtml(),
+        html,
       });
     } finally {
       try {
@@ -887,59 +909,16 @@ async function sendEmailOtp(
       console.log(`[EMAIL OTP] Sent (${purpose}) on retry to ${toEmail} via ${creds.user}`);
       return { success: true };
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+      const secondMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = firstMsg !== secondMsg ? `${firstMsg} | ${secondMsg}` : secondMsg;
       console.error(`[EMAIL OTP ERROR] Failed to send OTP to ${toEmail}:`, errorMsg);
-      console.log(`[DEV EMAIL OTP FALLBACK] To: ${toEmail} | Code: ${otp}`);
       return { success: false, error: errorMsg };
     }
   }
 }
 
-// Send WhatsApp message via Fast2SMS WhatsApp API (OTP or Notification)
-async function sendFast2SmsWhatsApp(
-  phone: string,
-  variablesValues: string,
-  templateId?: string
-): Promise<{ success: boolean; error?: string }> {
-  const cleanPhone = String(phone || "").replace(/[^0-9]/g, "").slice(-10);
-  if (cleanPhone.length !== 10) {
-    return { success: false, error: "Invalid 10-digit phone number" };
-  }
-  const fast2smsKey = (process.env.FAST2SMS_API_KEY || inMemorySettings.fast2sms_api_key || "").trim();
-  const msgId = (
-    templateId ||
-    process.env.FAST2SMS_WHATSAPP_TEMPLATE_ID ||
-    inMemorySettings.fast2sms_whatsapp_template_id ||
-    ""
-  ).trim();
-
-  if (!fast2smsKey || !msgId) {
-    return { success: false, error: "WhatsApp template ID not configured yet" };
-  }
-
-  try {
-    const url = new URL("https://www.fast2sms.com/dev/whatsapp");
-    url.searchParams.set("authorization", fast2smsKey);
-    url.searchParams.set("message_id", msgId);
-    url.searchParams.set("numbers", cleanPhone);
-    if (variablesValues) {
-      url.searchParams.set("variables_values", variablesValues);
-    }
-
-    const res = await fetch(url.toString(), { method: "GET" });
-    const data = await res.json();
-    if (data && (data.return === true || data.status === true || data.return === "true")) {
-      console.log(`[WHATSAPP SENT] To: +91${cleanPhone} (Template: ${msgId})`);
-      return { success: true };
-    }
-    const errMsg = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "WhatsApp API error");
-    return { success: false, error: errMsg };
-  } catch (err: any) {
-    return { success: false, error: err?.message || "WhatsApp network error" };
-  }
-}
-
-// Direct Meta Official WhatsApp Cloud API Sender (OTP & Notifications - Zero Middleman Markup)
+// Direct Meta Official WhatsApp Cloud API Sender (OTP & Notifications)
 async function sendMetaWhatsAppMessage(options: {
   phone: string;
   otp?: string;
@@ -948,12 +927,12 @@ async function sendMetaWhatsAppMessage(options: {
 }): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = String(options.phone || "").replace(/[^0-9]/g, "").slice(-10);
   if (cleanPhone.length !== 10) {
-    return { success: false, error: "Invalid 10-digit phone number" };
+    return { success: false, error: "Invalid 10-digit WhatsApp mobile number" };
   }
   const accessToken = (
     process.env.WHATSAPP_ACCESS_TOKEN ||
     inMemorySettings.whatsapp_access_token ||
-    "EAAWh4ZBoN8KQBSZCnBEB7k9PcfRANM9YANWxHUih2HeuZBbJ1LEM3MfMj29ZCKNyRZBVSWVbA3vWXZBPTA4bdZCAY3KygVvkLEjW33rtPuJUeZACDLaVcBu9yalwlsfRHr5NbYhazd1wYixKgnNaoovkN3bwVcyZArH1duuwcrCrDdUK316ucfrnETri6QslZAJOxkY5eEXRrj8xveST8PZBtOBFdjh2vLRqDwICqv7MtkVgA25sxoszsZASapZAghAA1oZBRZAAf6rr736AuUdZAuPTA9RtBOkJv3Yng3bbtrWIcgZDZD"
+    ""
   ).trim();
   const phoneNumberId = (
     process.env.WHATSAPP_PHONE_NUMBER_ID ||
@@ -962,11 +941,24 @@ async function sendMetaWhatsAppMessage(options: {
   ).trim();
 
   if (!accessToken || !phoneNumberId) {
-    return { success: false, error: "Meta WhatsApp Cloud API credentials not configured" };
+    return { success: false, error: "Meta WhatsApp Cloud API credentials (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID) not configured" };
   }
 
   const recipient = `91${cleanPhone}`;
   const endpoint = `https://graph.facebook.com/v20.0/${encodeURIComponent(phoneNumberId)}/messages`;
+
+  const postMeta = async (targetEndpoint: string, bodyObj: unknown) => {
+    const res = await fetch(targetEndpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(bodyObj),
+    });
+    const data: any = await res.json().catch(() => null);
+    return { ok: res.ok, data };
+  };
 
   try {
     // 1. If OTP is being sent
@@ -977,95 +969,95 @@ async function sendMetaWhatsAppMessage(options: {
     ).trim();
 
     if (options.otp) {
+      let lastMetaError = "";
+
       if (otpTemplateName) {
-        const tplRes = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
+        const otpAttempts = [
+          {
+            lang: "en_US",
+            components: [
+              { type: "body", parameters: [{ type: "text", text: options.otp }] },
+              { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: options.otp }] },
+            ],
           },
-          body: JSON.stringify({
+          {
+            lang: "en_US",
+            components: [{ type: "body", parameters: [{ type: "text", text: options.otp }] }],
+          },
+          {
+            lang: "en",
+            components: [
+              { type: "body", parameters: [{ type: "text", text: options.otp }] },
+              { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: options.otp }] },
+            ],
+          },
+        ];
+
+        for (const attempt of otpAttempts) {
+          const tpl = await postMeta(endpoint, {
             messaging_product: "whatsapp",
             to: recipient,
             type: "template",
             template: {
               name: otpTemplateName,
-              language: { code: "en_US" },
-              components: [
-                {
-                  type: "body",
-                  parameters: [{ type: "text", text: options.otp }],
-                },
-                {
-                  type: "button",
-                  sub_type: "url",
-                  index: "0",
-                  parameters: [{ type: "text", text: options.otp }],
-                },
-              ],
+              language: { code: attempt.lang },
+              components: attempt.components,
             },
-          }),
-        });
-        const tplData = await tplRes.json();
-        if (tplRes.ok && tplData?.messages?.[0]?.id) {
-          console.log(`[META WHATSAPP OTP SENT] To: +${recipient} (Template: ${otpTemplateName})`);
-          return { success: true };
+          });
+          if (tpl.ok && tpl.data?.messages?.[0]?.id) {
+            console.log(`[META WHATSAPP OTP SENT] To: +${recipient} (Template: ${otpTemplateName}, ${attempt.lang})`);
+            return { success: true };
+          }
+          if (tpl.data?.error?.message) {
+            lastMetaError = tpl.data.error.message;
+          }
+          // Token expired / invalid OAuth (code 190) — fail fast without extra requests
+          if (tpl.data?.error?.code === 190) {
+            return { success: false, error: lastMetaError || "Meta WhatsApp access token invalid or expired" };
+          }
         }
       }
 
-      // Direct WhatsApp text message (works inside 24h window)
-      const txtRes = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
+      // Direct WhatsApp text message (works inside 24h customer service window)
+      const txt = await postMeta(endpoint, {
+        messaging_product: "whatsapp",
+        to: recipient,
+        type: "text",
+        text: {
+          body: `*Mingree Verification Code*\n\nYour 6-digit OTP is: *${options.otp}*\n\nValid for 10 minutes. Do not share this code with anyone.`,
         },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to: recipient,
-          type: "text",
-          text: {
-            body: `*Mingree Verification Code*\n\nYour 6-digit OTP is: *${options.otp}*\n\nValid for 10 minutes. Do not share this code with anyone.`,
-          },
-        }),
       });
-      const txtData = await txtRes.json();
-      if (txtRes.ok && txtData?.messages?.[0]?.id) {
+      if (txt.ok && txt.data?.messages?.[0]?.id) {
         console.log(`[META WHATSAPP OTP SENT] To: +${recipient}`);
         return { success: true };
       }
+      if (txt.data?.error?.code === 190) {
+        return { success: false, error: txt.data.error.message || "Meta WhatsApp access token invalid or expired" };
+      }
 
-      // Pre-approved utility template fallback (also checks test number 1498136316708640 if production template is still pending review)
+      // Pre-approved utility template fallback (only if custom template is pending review)
       for (const fallbackId of [phoneNumberId, "1498136316708640"]) {
         const fbEndpoint = `https://graph.facebook.com/v20.0/${encodeURIComponent(fallbackId)}/messages`;
-        const preApprovedRes = await fetch(fbEndpoint, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
+        const preApproved = await postMeta(fbEndpoint, {
+          messaging_product: "whatsapp",
+          to: recipient,
+          type: "template",
+          template: {
+            name: "jaspers_market_order_confirmation_v1",
+            language: { code: "en_US" },
+            components: [
+              {
+                type: "body",
+                parameters: [
+                  { type: "text", text: "Mingree User" },
+                  { type: "text", text: `OTP: ${options.otp}` },
+                  { type: "text", text: "Valid for 10 minutes" },
+                ],
+              },
+            ],
           },
-          body: JSON.stringify({
-            messaging_product: "whatsapp",
-            to: recipient,
-            type: "template",
-            template: {
-              name: "jaspers_market_order_confirmation_v1",
-              language: { code: "en_US" },
-              components: [
-                {
-                  type: "body",
-                  parameters: [
-                    { type: "text", text: "Mingree User" },
-                    { type: "text", text: `OTP: ${options.otp}` },
-                    { type: "text", text: "Valid for 10 minutes" },
-                  ],
-                },
-              ],
-            },
-          }),
         });
-        const preApprovedData = await preApprovedRes.json();
-        if (preApprovedRes.ok && preApprovedData?.messages?.[0]?.id) {
+        if (preApproved.ok && preApproved.data?.messages?.[0]?.id) {
           console.log(`[META WHATSAPP TEMPLATE OTP SENT] To: +${recipient}`);
           return { success: true };
         }
@@ -1073,7 +1065,7 @@ async function sendMetaWhatsAppMessage(options: {
 
       return {
         success: false,
-        error: txtData?.error?.message || "Meta WhatsApp API error",
+        error: lastMetaError || txt.data?.error?.message || "Meta WhatsApp API error",
       };
     }
 
@@ -1193,7 +1185,7 @@ async function sendPlatformEmail(options: {
 }): Promise<{ success: boolean }> {
   const toEmail = String(options.to || "").trim().toLowerCase();
 
-  // Also trigger WhatsApp notification (Direct Meta Cloud API first, then Fast2SMS WhatsApp) in background if user has a phone number
+  // Also trigger WhatsApp notification via Direct Meta Official WhatsApp Cloud API in background if user has a phone number
   (async () => {
     try {
       let targetPhone = options.phone ? String(options.phone).replace(/[^0-9]/g, "").slice(-10) : "";
@@ -1215,26 +1207,11 @@ async function sendPlatformEmail(options: {
           .replace(/\s+/g, " ")
           .trim()
           .slice(0, 240);
-        // 1. Try Direct Meta WhatsApp Cloud API
-        const metaSent = await sendMetaWhatsAppMessage({
+        await sendMetaWhatsAppMessage({
           phone: targetPhone,
           heading: options.heading,
           bodyText: plainBody || options.subject,
         });
-        if (metaSent.success) return;
-
-        // 2. Fallback to Fast2SMS WhatsApp if configured
-        const notifyTemplateId = (
-          process.env.FAST2SMS_WHATSAPP_NOTIFY_TEMPLATE_ID ||
-          inMemorySettings.fast2sms_whatsapp_notify_template_id ||
-          process.env.FAST2SMS_WHATSAPP_TEMPLATE_ID ||
-          inMemorySettings.fast2sms_whatsapp_template_id ||
-          ""
-        ).trim();
-        if (notifyTemplateId) {
-          const plainSummary = `${options.heading} - ${options.subject}`.replace(/\|/g, "-").slice(0, 120);
-          await sendFast2SmsWhatsApp(targetPhone, plainSummary, notifyTemplateId);
-        }
       }
     } catch {}
   })();
@@ -1278,6 +1255,24 @@ async function sendPlatformEmail(options: {
       </div>
     </div>
   `;
+
+  if (hasCloudflareSocketConnect()) {
+    try {
+      await sendMailViaCloudflareSocket({
+        user: creds.user,
+        pass: creds.pass,
+        to: toEmail,
+        subject: options.subject,
+        html,
+        fromName: "Mingree",
+      });
+      console.log(`[EMAIL SENT CF-SOCKET] To: ${toEmail} | Subject: ${options.subject}`);
+      return { success: true };
+    } catch (cfErr: any) {
+      console.warn(`[EMAIL WARN CF-SOCKET] Could not send email to ${toEmail}:`, cfErr?.message || cfErr);
+      return { success: false };
+    }
+  }
 
   const trySendNotification = async (useStartTls: boolean) => {
     const transporter = createSmtpTransporter(creds, useStartTls);
@@ -1469,116 +1464,14 @@ async function consumeVerifiedEmailToken(token: string | undefined, expectedEmai
   }
 }
 
-// Send SMS / WhatsApp OTP helper (Direct Meta WhatsApp Cloud API -> Fast2SMS WhatsApp -> Fast2SMS SMS -> Twilio)
-async function sendSmsOtp(phone: string, otp: string, userName?: string): Promise<{ success: boolean; error?: string }> {
+// Send WhatsApp OTP helper (Direct Meta Official WhatsApp Cloud API)
+async function sendSmsOtp(phone: string, otp: string, _userName?: string): Promise<{ success: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, "").slice(-10);
-
-  // 0. Try Direct Meta Official WhatsApp Cloud API first if configured
-  const metaWaRes = await sendMetaWhatsAppMessage({ phone: cleanPhone, otp });
-  if (metaWaRes.success) {
-    return { success: true };
+  if (cleanPhone.length !== 10) {
+    return { success: false, error: "Invalid 10-digit WhatsApp mobile number" };
   }
 
-  const fast2smsKey = (process.env.FAST2SMS_API_KEY || inMemorySettings.fast2sms_api_key || "").trim();
-
-  if (fast2smsKey) {
-    // 1. Try Fast2SMS WhatsApp OTP if WhatsApp Template ID is configured
-    const waOtpTemplateId = (
-      process.env.FAST2SMS_WHATSAPP_OTP_TEMPLATE_ID ||
-      inMemorySettings.fast2sms_whatsapp_otp_template_id ||
-      process.env.FAST2SMS_WHATSAPP_TEMPLATE_ID ||
-      inMemorySettings.fast2sms_whatsapp_template_id ||
-      ""
-    ).trim();
-    if (waOtpTemplateId) {
-      const waRes = await sendFast2SmsWhatsApp(cleanPhone, otp, waOtpTemplateId);
-      if (waRes.success) {
-        return { success: true };
-      }
-    }
-
-    try {
-      // 2. Primary SMS: Fast2SMS OTP route (₹0.25/OTP)
-      let res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-        method: "POST",
-        headers: {
-          "authorization": fast2smsKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          variables_values: otp,
-          route: "otp",
-          numbers: cleanPhone
-        })
-      });
-      let data = await res.json();
-      if (data && (data.return === true || data.status === true || data.return === "true")) {
-        console.log(`[FAST2SMS OTP SENT] To: +91${cleanPhone}`);
-        return { success: true };
-      }
-      const otpRouteErr = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "");
-
-      // Fallback: Quick SMS route (uses wallet balance when Quick API Access is enabled in Fast2SMS -> Dev API)
-      res = await fetch("https://www.fast2sms.com/dev/bulkV2", {
-        method: "POST",
-        headers: {
-          "authorization": fast2smsKey,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          route: "q",
-          message: `Your Mingree verification OTP is ${otp}. Valid for 10 minutes.`,
-          language: "english",
-          flash: 0,
-          numbers: cleanPhone
-        })
-      });
-      data = await res.json();
-      if (data && (data.return === true || data.status === true || data.return === "true")) {
-        console.log(`[FAST2SMS QUICK SENT] To: +91${cleanPhone}`);
-        return { success: true };
-      }
-
-      const quickRouteErr = Array.isArray(data?.message) ? data.message.join(", ") : (data?.message || "SMS API gateway error");
-      const combinedErr = quickRouteErr || otpRouteErr;
-      console.warn("[FAST2SMS RESPONSE]", combinedErr);
-      return { success: false, error: combinedErr };
-    } catch (err: any) {
-      console.error("[FAST2SMS ERROR]", err.message);
-      return { success: false, error: err.message || "SMS network failure" };
-    }
-  }
-
-  const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-  const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-  const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
-  if (twilioSid && twilioToken && twilioPhone) {
-    try {
-      const auth = Buffer.from(`${twilioSid}:${twilioToken}`).toString("base64");
-      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Basic ${auth}`,
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          To: `+91${cleanPhone}`,
-          From: twilioPhone,
-          Body: `Your Mingree verification OTP is ${otp}. Valid for 10 minutes.`
-        })
-      });
-      if (res.ok) {
-        return { success: true };
-      }
-      const errData = await res.json();
-      return { success: false, error: errData.message || "Twilio SMS failed" };
-    } catch (err: any) {
-      return { success: false, error: err.message || "Twilio error" };
-    }
-  }
-
-  console.log(`[DEV SMS OTP FALLBACK] To: +91${cleanPhone} | Code: ${otp}`);
-  return { success: false, error: "SMS gateway not configured" };
+  return await sendMetaWhatsAppMessage({ phone: cleanPhone, otp });
 }
 
 // Send OTP (Supports selectable SMS or Email channel, plus Dual Email + SMS OTP for Signup)
@@ -1666,7 +1559,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
           Promise.race([
             sendSmsOtp(cleanPhone, smsCodeToSend, userName),
             new Promise<{ success: boolean; error?: string }>((resolve) =>
-              setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 12000)
+              setTimeout(() => resolve({ success: false, error: "WhatsApp gateway timeout" }), 12000)
             ),
           ])
             .then((r) => {
@@ -1674,7 +1567,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
               if (!r?.success) smsError = r?.error;
             })
             .catch((err: any) => {
-              smsError = err?.message || "SMS error";
+              smsError = err?.message || "WhatsApp error";
             })
         );
       }
@@ -1685,8 +1578,8 @@ app.post("/api/auth/send-otp", async (req, res) => {
         resendTarget === "email"
           ? `New Email OTP sent to ${cleanEmail}`
           : resendTarget === "sms"
-          ? `New SMS OTP sent to +91 ${cleanPhone}`
-          : `Verification OTPs generated for Email (${cleanEmail}) and Mobile (+91 ${cleanPhone})`;
+          ? `New WhatsApp OTP sent to +91 ${cleanPhone}`
+          : `Verification OTPs generated for Email (${cleanEmail}) and WhatsApp (+91 ${cleanPhone})`;
 
       return res.json({
         message,
@@ -1817,7 +1710,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
         Promise.race([
           sendSmsOtp(cleanPhone, rawOtp, userName),
           new Promise<{ success: boolean; error?: string }>((resolve) =>
-            setTimeout(() => resolve({ success: false, error: "SMS gateway timeout" }), 12000)
+            setTimeout(() => resolve({ success: false, error: "WhatsApp gateway timeout" }), 12000)
           ),
         ])
           .then((smsRes) => {
@@ -1825,7 +1718,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
             if (!smsRes?.success) smsError = smsRes?.error;
           })
           .catch((smsErr: any) => {
-            smsError = smsErr?.message || "SMS error";
+            smsError = smsErr?.message || "WhatsApp error";
           })
       );
     }
@@ -1855,7 +1748,7 @@ app.post("/api/auth/send-otp", async (req, res) => {
 
     await Promise.allSettled(deliveryPromises);
 
-    // If SMS was requested for Forgot Password and Fast2SMS failed, also send backup email if user has a linked real email
+    // If WhatsApp was requested for Forgot Password and failed, also send backup email if user has a linked real email
     if (shouldSendSms && !smsDelivered && !shouldSendEmail && linkedRealEmail && !linkedRealEmail.endsWith("@phone.mingree.com")) {
       try {
         const backupRes = await sendEmailOtp(linkedRealEmail, rawOtp, userName, "forgot_password");
@@ -1868,9 +1761,9 @@ app.post("/api/auth/send-otp", async (req, res) => {
     return res.json({
       message:
         smsDelivered && emailDelivered
-          ? `Verification code sent via SMS (+91 ${cleanPhone}) and email (${linkedRealEmail})`
+          ? `Verification code sent via WhatsApp (+91 ${cleanPhone}) and email (${linkedRealEmail})`
           : smsDelivered
-          ? `Verification code sent via SMS to +91 ${cleanPhone}`
+          ? `Verification code sent via WhatsApp to +91 ${cleanPhone}`
           : emailDelivered
           ? `Verification code sent via Email to ${linkedRealEmail || cleanEmail}`
           : `Verification code generated for ${shouldSendSms ? `+91 ${cleanPhone}` : cleanEmail}`,
@@ -1908,7 +1801,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
         return res.status(400).json({ error: "Please enter the complete 6-digit Email OTP." });
       }
       if (cleanSmsOtp.length !== 6) {
-        return res.status(400).json({ error: "Please enter the complete 6-digit Mobile SMS OTP." });
+        return res.status(400).json({ error: "Please enter the complete 6-digit WhatsApp OTP." });
       }
 
       const dualLockKey = `verify:dual:${cleanEmail}:${cleanPhone}`;
@@ -1949,10 +1842,10 @@ app.post("/api/auth/verify-otp", async (req, res) => {
         });
       }
 
-      // 2. Verify Mobile SMS OTP
+      // 2. Verify WhatsApp OTP
       const smsTokenCheck = verifySignedOtpToken(smsOtpToken, cleanPhone, cleanSmsOtp);
       if (smsTokenCheck.expired) {
-        return res.status(400).json({ error: "Mobile SMS OTP has expired. Please click 'Resend SMS OTP'." });
+        return res.status(400).json({ error: "WhatsApp OTP has expired. Please click 'Resend WhatsApp OTP'." });
       }
 
       let isSmsOtpValid = smsTokenCheck.valid;
@@ -1960,7 +1853,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
       if (!isSmsOtpValid && smsRecord) {
         if (Date.now() > smsRecord.expiresAt) {
           await deleteOtpRecord(cleanPhone);
-          return res.status(400).json({ error: "Mobile SMS OTP has expired. Please click 'Resend SMS OTP'." });
+          return res.status(400).json({ error: "WhatsApp OTP has expired. Please click 'Resend WhatsApp OTP'." });
         }
         const submittedSmsHash = crypto.createHash("sha256").update(cleanSmsOtp).digest("hex");
         if (submittedSmsHash === smsRecord.otpHash) {
@@ -1974,7 +1867,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
       if (!isSmsOtpValid) {
         await recordOtpFailedAttempt(dualLockKey, 6);
         return res.status(400).json({
-          error: `Invalid Mobile SMS OTP. Please check the 6-digit code sent to +91 ${cleanPhone}.`,
+          error: `Invalid WhatsApp OTP. Please check the 6-digit code sent to +91 ${cleanPhone}.`,
           failedField: "sms",
         });
       }
