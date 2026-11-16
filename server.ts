@@ -676,6 +676,9 @@ function getSharedSmtpTransporter(creds: { user: string; pass: string }, forceNe
         user: creds.user,
         pass: creds.pass,
       },
+      tls: {
+        rejectUnauthorized: false,
+      },
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 14000,
@@ -1713,7 +1716,8 @@ app.post("/api/auth/send-otp", async (req, res) => {
         emailOtpToken,
         smsOtpToken,
         otpToken: emailOtpToken,
-
+        devEmailOtp: rawEmailOtp,
+        devSmsOtp: rawSmsOtp,
         expiresIn: 600,
       });
     }

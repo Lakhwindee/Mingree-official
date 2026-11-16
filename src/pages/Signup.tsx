@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { queryClient } from "@/lib/queryClient";
 import { getCitiesByCountry } from "@shared/cities";
@@ -17,6 +16,58 @@ const COUNTRIES = [
 ];
 
 type UserRole = "creator" | "sponsor";
+
+function PinInput({ value, onChange, testIdPrefix }: { value: string; onChange: (val: string) => void; testIdPrefix: string }) {
+  const digits = value.padEnd(6, "").slice(0, 6).split("");
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const handleInputChange = (idx: number, char: string) => {
+    const cleanChar = char.replace(/[^0-9]/g, "").slice(-1);
+    const newDigits = [...digits];
+    newDigits[idx] = cleanChar;
+    onChange(newDigits.join("").trim());
+
+    if (cleanChar && idx < 5) {
+      inputRefs.current[idx + 1]?.focus();
+    }
+  };
+
+  const handleKeyDown = (idx: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && !digits[idx] && idx > 0) {
+      inputRefs.current[idx - 1]?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasteData = e.clipboardData.getData("text").replace(/[^0-9]/g, "").slice(0, 6);
+    onChange(pasteData);
+    const targetIdx = Math.min(pasteData.length, 5);
+    inputRefs.current[targetIdx]?.focus();
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 justify-center" onPaste={handlePaste}>
+      {[0, 1, 2, 3, 4, 5].map((idx) => (
+        <input
+          key={idx}
+          ref={(el) => { inputRefs.current[idx] = el; }}
+          type="text"
+          inputMode="numeric"
+          maxLength={1}
+          value={digits[idx] || ""}
+          onChange={(e) => handleInputChange(idx, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(idx, e)}
+          autoComplete="off"
+          data-lpignore="true"
+          data-form-type="other"
+          data-testid={`${testIdPrefix}-${idx}`}
+          className="w-9 h-10 text-center text-sm font-bold rounded-md border border-input bg-background shadow-xs focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      ))}
+    </div>
+  );
+}
 
 async function safeParseJson(response: Response): Promise<Record<string, any>> {
   try {
@@ -64,6 +115,8 @@ export default function Signup() {
   const [smsOtp, setSmsOtp] = useState("");
   const [emailOtpToken, setEmailOtpToken] = useState<string | undefined>(undefined);
   const [smsOtpToken, setSmsOtpToken] = useState<string | undefined>(undefined);
+  const [devEmailOtp, setDevEmailOtp] = useState<string | null>(null);
+  const [devSmsOtp, setDevSmsOtp] = useState<string | null>(null);
 
   const [emailResendTimer, setEmailResendTimer] = useState(0);
   const [smsResendTimer, setSmsResendTimer] = useState(0);
@@ -141,6 +194,12 @@ export default function Signup() {
       }
       if (data.smsOtpToken) {
         setSmsOtpToken(data.smsOtpToken);
+      }
+      if (data.devEmailOtp) {
+        setDevEmailOtp(data.devEmailOtp);
+      }
+      if (data.devSmsOtp) {
+        setDevSmsOtp(data.devSmsOtp);
       }
 
       if (resendTarget === "both" || resendTarget === "email") {
@@ -630,26 +689,14 @@ export default function Signup() {
                   </div>
 
                   <div className="flex flex-col items-center py-1">
-                    <InputOTP
-                      maxLength={6}
+                    <PinInput
                       value={emailOtp}
                       onChange={(val) => {
                         setEmailOtp(val);
                         if (errorMessage) setErrorMessage(null);
                       }}
-                      autoComplete="off"
-                      data-lpignore="true"
-                      data-testid="input-email-otp"
-                    >
-                      <InputOTPGroup className="gap-1.5">
-                        <InputOTPSlot index={0} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={1} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={2} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={3} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={4} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={5} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                      </InputOTPGroup>
-                    </InputOTP>
+                      testIdPrefix="input-email-otp"
+                    />
                   </div>
 
 
@@ -694,26 +741,14 @@ export default function Signup() {
                   </div>
 
                   <div className="flex flex-col items-center py-1">
-                    <InputOTP
-                      maxLength={6}
+                    <PinInput
                       value={smsOtp}
                       onChange={(val) => {
                         setSmsOtp(val);
                         if (errorMessage) setErrorMessage(null);
                       }}
-                      autoComplete="off"
-                      data-lpignore="true"
-                      data-testid="input-sms-otp"
-                    >
-                      <InputOTPGroup className="gap-1.5">
-                        <InputOTPSlot index={0} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={1} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={2} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={3} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={4} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                        <InputOTPSlot index={5} className="text-sm w-9 h-10 font-bold rounded-md border" />
-                      </InputOTPGroup>
-                    </InputOTP>
+                      testIdPrefix="input-sms-otp"
+                    />
                   </div>
 
 
