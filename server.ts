@@ -918,7 +918,7 @@ async function sendEmailOtp(
   }
 }
 
-// Direct Meta Official WhatsApp Cloud API Sender (OTP & Notifications)
+// Direct Meta Official WhatsApp Cloud API Sender (OTP & Notifications - Zero Middleman Markup)
 async function sendMetaWhatsAppMessage(options: {
   phone: string;
   otp?: string;
@@ -932,7 +932,7 @@ async function sendMetaWhatsAppMessage(options: {
   const accessToken = (
     process.env.WHATSAPP_ACCESS_TOKEN ||
     inMemorySettings.whatsapp_access_token ||
-    ""
+    "EAAWh4ZBoN8KQBTM3R0vrOKZA41ZCV64N5jdHdggrWgZCNIxScvrSVNpIcSoZAdF4wSQe6I6iZCbc77pHBoprFYSZBYc5AfFHZAhPGmRwZBaBxbTrbEZADbkmsED6eXXIzOkEpiyZBx3PlNGP5Jsj1IxmHpSOjFZAIF9aDSF2nKC03bw9UqWTbOnkt1DQWOFI02dA3kCwCQZDZD"
   ).trim();
   const phoneNumberId = (
     process.env.WHATSAPP_PHONE_NUMBER_ID ||
@@ -941,7 +941,7 @@ async function sendMetaWhatsAppMessage(options: {
   ).trim();
 
   if (!accessToken || !phoneNumberId) {
-    return { success: false, error: "Meta WhatsApp Cloud API credentials (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID) not configured" };
+    return { success: false, error: "Meta WhatsApp Cloud API credentials not configured" };
   }
 
   const recipient = `91${cleanPhone}`;
@@ -991,6 +991,10 @@ async function sendMetaWhatsAppMessage(options: {
               { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: options.otp }] },
             ],
           },
+          {
+            lang: "en",
+            components: [{ type: "body", parameters: [{ type: "text", text: options.otp }] }],
+          },
         ];
 
         for (const attempt of otpAttempts) {
@@ -1011,14 +1015,13 @@ async function sendMetaWhatsAppMessage(options: {
           if (tpl.data?.error?.message) {
             lastMetaError = tpl.data.error.message;
           }
-          // Token expired / invalid OAuth (code 190) — fail fast without extra requests
           if (tpl.data?.error?.code === 190) {
             return { success: false, error: lastMetaError || "Meta WhatsApp access token invalid or expired" };
           }
         }
       }
 
-      // Direct WhatsApp text message (works inside 24h customer service window)
+      // Direct WhatsApp text message (works inside 24h window)
       const txt = await postMeta(endpoint, {
         messaging_product: "whatsapp",
         to: recipient,
@@ -1031,11 +1034,8 @@ async function sendMetaWhatsAppMessage(options: {
         console.log(`[META WHATSAPP OTP SENT] To: +${recipient}`);
         return { success: true };
       }
-      if (txt.data?.error?.code === 190) {
-        return { success: false, error: txt.data.error.message || "Meta WhatsApp access token invalid or expired" };
-      }
 
-      // Pre-approved utility template fallback (only if custom template is pending review)
+      // Pre-approved utility template fallback (also checks test number 1498136316708640 if production template is still pending review)
       for (const fallbackId of [phoneNumberId, "1498136316708640"]) {
         const fbEndpoint = `https://graph.facebook.com/v20.0/${encodeURIComponent(fallbackId)}/messages`;
         const preApproved = await postMeta(fbEndpoint, {
@@ -1065,7 +1065,7 @@ async function sendMetaWhatsAppMessage(options: {
 
       return {
         success: false,
-        error: lastMetaError || txt.data?.error?.message || "Meta WhatsApp API error",
+        error: txt.data?.error?.message || lastMetaError || "Meta WhatsApp API error",
       };
     }
 
@@ -1077,95 +1077,71 @@ async function sendMetaWhatsAppMessage(options: {
     ).trim();
 
     if (notifyTemplateName) {
-      const tplRes = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messaging_product: "whatsapp",
-          to: recipient,
-          type: "template",
-          template: {
-            name: notifyTemplateName,
-            language: { code: "en_US" },
-            components: [
-              {
-                type: "body",
-                parameters: [
-                  { type: "text", text: (options.heading || "Mingree Update").slice(0, 60) },
-                  { type: "text", text: (options.bodyText || "Check your Mingree dashboard.").slice(0, 160) },
-                ],
-              },
-            ],
-          },
-        }),
-      });
-      const tplData = await tplRes.json();
-      if (tplRes.ok && tplData?.messages?.[0]?.id) {
-        console.log(`[META WHATSAPP NOTIFY SENT] To: +${recipient}`);
-        return { success: true };
-      }
-    }
-
-    const txtRes = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: recipient,
-        type: "text",
-        text: {
-          body: `*Mingree: ${options.heading || "Update"}*\n\n${options.bodyText || "You have a new update on Mingree."}`,
-        },
-      }),
-    });
-    const txtData = await txtRes.json();
-    if (txtRes.ok && txtData?.messages?.[0]?.id) {
-      console.log(`[META WHATSAPP NOTIFY SENT] To: +${recipient}`);
-      return { success: true };
-    }
-
-    // Fallback to pre-approved utility template for notifications outside 24h window
-    const preApprovedNotify = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+      const tpl = await postMeta(endpoint, {
         messaging_product: "whatsapp",
         to: recipient,
         type: "template",
         template: {
-          name: "jaspers_market_order_confirmation_v1",
+          name: notifyTemplateName,
           language: { code: "en_US" },
           components: [
             {
               type: "body",
               parameters: [
-                { type: "text", text: "Mingree" },
-                { type: "text", text: (options.heading || "New Update").slice(0, 60) },
-                { type: "text", text: (options.bodyText || "Check your Mingree dashboard").slice(0, 100) },
+                { type: "text", text: (options.heading || "Mingree Update").slice(0, 60) },
+                { type: "text", text: (options.bodyText || "Check your Mingree dashboard.").slice(0, 160) },
               ],
             },
           ],
         },
-      }),
+      });
+      if (tpl.ok && tpl.data?.messages?.[0]?.id) {
+        console.log(`[META WHATSAPP NOTIFY SENT] To: +${recipient}`);
+        return { success: true };
+      }
+    }
+
+    const txt = await postMeta(endpoint, {
+      messaging_product: "whatsapp",
+      to: recipient,
+      type: "text",
+      text: {
+        body: `*Mingree: ${options.heading || "Update"}*\n\n${options.bodyText || "You have a new update on Mingree."}`,
+      },
     });
-    const preApprovedNotifyData = await preApprovedNotify.json();
-    if (preApprovedNotify.ok && preApprovedNotifyData?.messages?.[0]?.id) {
+    if (txt.ok && txt.data?.messages?.[0]?.id) {
+      console.log(`[META WHATSAPP NOTIFY SENT] To: +${recipient}`);
+      return { success: true };
+    }
+
+    // Fallback to pre-approved utility template for notifications outside 24h window
+    const preApprovedNotify = await postMeta(endpoint, {
+      messaging_product: "whatsapp",
+      to: recipient,
+      type: "template",
+      template: {
+        name: "jaspers_market_order_confirmation_v1",
+        language: { code: "en_US" },
+        components: [
+          {
+            type: "body",
+            parameters: [
+              { type: "text", text: "Mingree" },
+              { type: "text", text: (options.heading || "New Update").slice(0, 60) },
+              { type: "text", text: (options.bodyText || "Check your Mingree dashboard").slice(0, 100) },
+            ],
+          },
+        ],
+      },
+    });
+    if (preApprovedNotify.ok && preApprovedNotify.data?.messages?.[0]?.id) {
       console.log(`[META WHATSAPP TEMPLATE NOTIFY SENT] To: +${recipient}`);
       return { success: true };
     }
 
     return {
       success: false,
-      error: preApprovedNotifyData?.error?.message || txtData?.error?.message || "Meta WhatsApp notification failed",
+      error: preApprovedNotify.data?.error?.message || txt.data?.error?.message || "Meta WhatsApp notification failed",
     };
   } catch (err: any) {
     return { success: false, error: err?.message || "Meta WhatsApp network error" };
