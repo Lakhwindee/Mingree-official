@@ -115,8 +115,8 @@ export default function Signup() {
   const [smsOtp, setSmsOtp] = useState("");
   const [emailOtpToken, setEmailOtpToken] = useState<string | undefined>(undefined);
   const [smsOtpToken, setSmsOtpToken] = useState<string | undefined>(undefined);
-  const [devEmailOtp, setDevEmailOtp] = useState<string | null>(null);
-  const [devSmsOtp, setDevSmsOtp] = useState<string | null>(null);
+  const [emailDeliveryError, setEmailDeliveryError] = useState<string | null>(null);
+  const [smsDeliveryError, setSmsDeliveryError] = useState<string | null>(null);
 
   const [emailResendTimer, setEmailResendTimer] = useState(0);
   const [smsResendTimer, setSmsResendTimer] = useState(0);
@@ -195,25 +195,36 @@ export default function Signup() {
       if (data.smsOtpToken) {
         setSmsOtpToken(data.smsOtpToken);
       }
-      if (data.devEmailOtp) {
-        setDevEmailOtp(data.devEmailOtp);
-      }
-      if (data.devSmsOtp) {
-        setDevSmsOtp(data.devSmsOtp);
-      }
 
       if (resendTarget === "both" || resendTarget === "email") {
         setEmailOtp("");
         setEmailResendTimer(60);
+        setEmailDeliveryError(data.emailSent === false ? (data.emailError || "Email OTP delivery failed") : null);
       }
       if (resendTarget === "both" || resendTarget === "sms") {
         setSmsOtp("");
         setSmsResendTimer(60);
+        setSmsDeliveryError(data.smsSent === false ? (data.smsError || "SMS OTP delivery failed") : null);
       }
 
-      const successMsg =
-        data.message || `Verification OTPs sent to ${cleanEmail} and +91 ${cleanPhone}`;
-      toast.success(successMsg);
+      const emailFailed = (resendTarget === "both" || resendTarget === "email") && data.emailSent === false;
+      const smsFailed = (resendTarget === "both" || resendTarget === "sms") && data.smsSent === false;
+
+      if (emailFailed && smsFailed) {
+        const msg = data.emailError || data.smsError || "Could not deliver Email or SMS OTP. Please try again.";
+        setErrorMessage(msg);
+        toast.error(msg);
+      } else if (emailFailed) {
+        const msg = `Email OTP could not be sent: ${data.emailError || "SMTP error"}`;
+        toast.error(msg);
+      } else if (smsFailed) {
+        const msg = `SMS OTP could not be sent: ${data.smsError || "SMS gateway error"}`;
+        toast.error(msg);
+      } else {
+        const successMsg =
+          data.message || `Verification OTPs sent to ${cleanEmail} and +91 ${cleanPhone}`;
+        toast.success(successMsg);
+      }
 
       setStep("otp");
     } catch (error: any) {
@@ -702,7 +713,9 @@ export default function Signup() {
 
 
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
-                    <span>Sent to your email inbox</span>
+                    <span className={emailDeliveryError ? "text-destructive font-medium" : ""}>
+                      {emailDeliveryError ? `Failed: ${emailDeliveryError}` : "Sent to your email inbox"}
+                    </span>
                     <button
                       type="button"
                       onClick={() => sendOtp("email")}
@@ -754,7 +767,9 @@ export default function Signup() {
 
 
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
-                    <span>Sent via SMS to your mobile</span>
+                    <span className={smsDeliveryError ? "text-destructive font-medium" : ""}>
+                      {smsDeliveryError ? `Failed: ${smsDeliveryError}` : "Sent via SMS to your mobile"}
+                    </span>
                     <button
                       type="button"
                       onClick={() => sendOtp("sms")}

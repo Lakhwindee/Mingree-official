@@ -653,50 +653,21 @@ function getEmailCredentials(): { user: string; pass: string } | null {
   return null;
 }
 
-let sharedSmtpTransporter: ReturnType<typeof nodemailer.createTransport> | null = null;
-let sharedSmtpKey = "";
-
-function getSharedSmtpTransporter(creds: { user: string; pass: string }, forceNew = false): ReturnType<typeof nodemailer.createTransport> {
-  const key = `${creds.user}:${creds.pass}`;
-  if (!sharedSmtpTransporter || sharedSmtpKey !== key || forceNew) {
-    if (sharedSmtpTransporter) {
-      try {
-        sharedSmtpTransporter.close();
-      } catch {}
-    }
-    sharedSmtpKey = key;
-    sharedSmtpTransporter = nodemailer.createTransport({
-      pool: true,
-      maxConnections: 3,
-      maxMessages: 200,
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: {
-        user: creds.user,
-        pass: creds.pass,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 14000,
-    } as any);
-  }
-  return sharedSmtpTransporter;
+function createSmtpTransporter(creds: { user: string; pass: string }, useStartTls = false): ReturnType<typeof nodemailer.createTransport> {
+  return nodemailer.createTransport({
+    pool: false,
+    host: "smtp.gmail.com",
+    port: useStartTls ? 587 : 465,
+    secure: !useStartTls,
+    auth: {
+      user: creds.user,
+      pass: creds.pass,
+    },
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 12000,
+  } as any);
 }
-
-// Pre-warm Gmail SMTP connection pool in background on startup
-setTimeout(() => {
-  const creds = getEmailCredentials();
-  if (creds) {
-    getSharedSmtpTransporter(creds)
-      .verify()
-      .then(() => console.log(`[SMTP POOL] Ready for ${creds.user}`))
-      .catch(() => {});
-  }
-}, 500);
 
 // Secure Expiring OTP Store (PostgreSQL email_otps + TTL in-memory cache; never writes /tmp/mingree_otp_store.json)
 interface StoredOtp {
@@ -890,14 +861,20 @@ async function sendEmailOtp(
     </html>
   `;
 
-  const sendMailAttempt = async (forceNewPool: boolean) => {
-    const transporter = getSharedSmtpTransporter(creds, forceNewPool);
-    await transporter.sendMail({
-      from: `"Mingree" <${creds.user}>`,
-      to: toEmail,
-      subject,
-      html: buildHtml(),
-    });
+  const sendMailAttempt = async (useStartTls: boolean) => {
+    const transporter = createSmtpTransporter(creds, useStartTls);
+    try {
+      await transporter.sendMail({
+        from: `"Mingree" <${creds.user}>`,
+        to: toEmail,
+        subject,
+        html: buildHtml(),
+      });
+    } finally {
+      try {
+        transporter.close();
+      } catch {}
+    }
   };
 
   try {
@@ -1302,14 +1279,20 @@ async function sendPlatformEmail(options: {
     </div>
   `;
 
-  const trySendNotification = async (forceNewPool: boolean) => {
-    const transporter = getSharedSmtpTransporter(creds, forceNewPool);
-    await transporter.sendMail({
-      from: `"Mingree" <${creds.user}>`,
-      to: toEmail,
-      subject: options.subject,
-      html,
-    });
+  const trySendNotification = async (useStartTls: boolean) => {
+    const transporter = createSmtpTransporter(creds, useStartTls);
+    try {
+      await transporter.sendMail({
+        from: `"Mingree" <${creds.user}>`,
+        to: toEmail,
+        subject: options.subject,
+        html,
+      });
+    } finally {
+      try {
+        transporter.close();
+      } catch {}
+    }
   };
 
   try {
@@ -1716,8 +1699,6 @@ app.post("/api/auth/send-otp", async (req, res) => {
         emailOtpToken,
         smsOtpToken,
         otpToken: emailOtpToken,
-        devEmailOtp: rawEmailOtp,
-        devSmsOtp: rawSmsOtp,
         expiresIn: 600,
       });
     }
