@@ -83,9 +83,7 @@ export default function SponsorLogin() {
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
       queryClient.invalidateQueries({ queryKey: ["currentSponsor"] });
 
-      setTimeout(() => {
-        window.location.href = "/sponsor";
-      }, 300);
+      setLocation("/sponsor");
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : "Invalid email or password";
       const safeMsg = rawMsg.includes("expected pattern") || rawMsg.includes("SyntaxError")

@@ -368,13 +368,11 @@ export default function Signup() {
 
       toast.success("Email & Mobile Number verified! Account created successfully.");
 
-      setTimeout(() => {
-        if (role === "sponsor") {
-          window.location.href = "/sponsor";
-        } else {
-          window.location.href = "/dashboard";
-        }
-      }, 350);
+      if (role === "sponsor") {
+        setLocation("/sponsor");
+      } else {
+        setLocation("/dashboard");
+      }
     } catch (error: any) {
       const rawMsg = error?.message || "";
       let msg = "Invalid verification code or registration failed. Please try again.";

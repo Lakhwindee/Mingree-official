@@ -62,15 +62,13 @@ export default function Login() {
       login(data);
       queryClient.invalidateQueries({ queryKey: ["currentUser"] });
 
-      setTimeout(() => {
-        if (data.role === "admin") {
-          window.location.href = "/admin";
-        } else if (data.role === "sponsor") {
-          window.location.href = "/sponsor";
-        } else {
-          window.location.href = "/dashboard";
-        }
-      }, 300);
+      if (data.role === "admin") {
+        setLocation("/admin");
+      } else if (data.role === "sponsor") {
+        setLocation("/sponsor");
+      } else {
+        setLocation("/dashboard");
+      }
     } catch (error) {
       const rawMsg = error instanceof Error ? error.message : "Invalid email or password";
       const safeMsg =
