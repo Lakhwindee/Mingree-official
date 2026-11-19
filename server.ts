@@ -4243,11 +4243,12 @@ app.post(["/api/users/:id/subscription/cancel", "/api/subscription/cancel"], req
 
 // ================= STEP 5: RATE CARDS, CREATOR SETTINGS & DIRECTORY =================
 
-type CanonicalDeliverableKey = "reel" | "story" | "collab_post" | "bio_link_story";
+type CanonicalDeliverableKey = "reel" | "story" | "simple_post" | "collab_post" | "bio_link_story";
 
 const DELIVERABLE_KEY_TO_LABEL: Record<CanonicalDeliverableKey, string> = {
   reel: "Instagram Reel",
   story: "Instagram Story",
+  simple_post: "Simple Post",
   collab_post: "Collab Package",
   bio_link_story: "Bio Link & Story",
 };
@@ -4256,8 +4257,32 @@ function normalizeDeliverableKey(raw: string): CanonicalDeliverableKey {
   const s = String(raw || "reel").toLowerCase().trim();
   if (s.includes("bio")) return "bio_link_story";
   if (s.includes("collab")) return "collab_post";
+  if (s.includes("simple") || s === "post") return "simple_post";
   if (s.includes("story")) return "story";
   return "reel";
+}
+
+function resolveCreatorPricingTierId(followers: number, tierLabel?: string): string {
+  const f = Number(followers) || 0;
+  // Always prioritize verified follower count over legacy/default tier_label (e.g. 'Nano')
+  if (f >= 2500000) return "elite";
+  if (f >= 1000000) return "mega";
+  if (f >= 500000) return "large";
+  if (f >= 250000) return "macro";
+  if (f >= 100000) return "upper_mid";
+  if (f >= 50000) return "mid";
+  if (f >= 10000) return "micro";
+  if (f > 0) return "nano";
+
+  const t = (tierLabel || "").toLowerCase().trim().replace(/[-_ ]+/g, "_");
+  if (t === "elite" || t.includes("elite")) return "elite";
+  if (t === "mega" || t.includes("mega")) return "mega";
+  if (t === "large" || t.includes("large")) return "large";
+  if (t === "macro" || t.includes("macro")) return "macro";
+  if (t === "upper_mid" || t.includes("upper")) return "upper_mid";
+  if (t === "mid" || t.includes("mid")) return "mid";
+  if (t === "micro" || t === "small" || t.includes("micro")) return "micro";
+  return "nano";
 }
 
 function getTierDefaultRateCard(tierId: string): Record<CanonicalDeliverableKey, number> {
@@ -4275,6 +4300,7 @@ function getTierDefaultRateCard(tierId: string): Record<CanonicalDeliverableKey,
   return {
     reel: basePrice,
     story: Math.round(basePrice * 0.5),
+    simple_post: Math.round(basePrice * 0.7),
     collab_post: Math.round(basePrice * 1.4),
     bio_link_story: Math.round(basePrice * 0.6),
   };
@@ -4323,26 +4349,34 @@ function buildResolvedRateCard(
   const defaults = getTierDefaultRateCard(tierId);
   const resolved: Record<CanonicalDeliverableKey, number> = { ...defaults };
   let hasCustom = false;
+  let hasCustomSimplePost = false;
 
   const memEntries = memoryRateCards.get(userId);
   if (Array.isArray(memEntries)) {
     for (const entry of memEntries) {
       const priceVal = Math.round(Number(entry.price) || 0);
       if (priceVal > 0) {
-        resolved[normalizeDeliverableKey(entry.deliverableType)] = priceVal;
+        const k = normalizeDeliverableKey(entry.deliverableType);
+        resolved[k] = priceVal;
         hasCustom = true;
+        if (k === "simple_post") hasCustomSimplePost = true;
       }
     }
   }
 
   if (dbRates) {
-    for (const k of ["reel", "story", "collab_post", "bio_link_story"] as CanonicalDeliverableKey[]) {
+    for (const k of ["reel", "story", "simple_post", "collab_post", "bio_link_story"] as CanonicalDeliverableKey[]) {
       const val = dbRates[k];
       if (typeof val === "number" && val > 0) {
         resolved[k] = val;
         hasCustom = true;
+        if (k === "simple_post") hasCustomSimplePost = true;
       }
     }
+  }
+
+  if (hasCustom && !hasCustomSimplePost) {
+    resolved.simple_post = Math.round(resolved.reel * 0.7);
   }
 
   return { rateCard: resolved, hasCustomRateCard: hasCustom };
@@ -6069,6 +6103,7 @@ app.get("/api/users/:userId/rate-cards", requireAuth, async (req: AuthRequest, r
     const defaults: Record<CanonicalDeliverableKey, number> = {
       reel: 2500,
       story: 800,
+      simple_post: 1750,
       collab_post: 5000,
       bio_link_story: 1200,
     };
@@ -9352,28 +9387,8 @@ app.get("/api/campaigns/creator-panel", async (req: express.Request, res: expres
       { id: "elite", minFollowers: 2500000, maxFollowers: 10000000, basePrice: 250000 },
     ];
 
-    const resolveTierId = (followers: number, tierLabel?: string): string => {
-      const t = (tierLabel || "").toLowerCase().trim().replace(/[-_ ]+/g, "_");
-      if (t === "micro" || t === "small") return "micro";
-      if (t === "nano") return "nano";
-      if (t === "mid") return "mid";
-      if (t === "upper_mid" || t.includes("upper")) return "upper_mid";
-      if (t === "macro") return "macro";
-      if (t === "large") return "large";
-      if (t === "mega") return "mega";
-      if (t === "elite") return "elite";
-
-      const f = Number(followers) || 0;
-      if (f >= 2500000) return "elite";
-      if (f >= 1000000) return "mega";
-      if (f >= 500000) return "large";
-      if (f >= 250000) return "macro";
-      if (f >= 100000) return "upper_mid";
-      if (f >= 50000) return "mid";
-      if (f >= 10000) return "micro";
-      if (f >= 5000) return "nano";
-      return "nano";
-    };
+    const resolveTierId = (followers: number, tierLabel?: string): string =>
+      resolveCreatorPricingTierId(followers, tierLabel);
 
     // 1. Collect all real registered creators from memory and database who have an ACTIVE, CONNECTED Instagram account
     const realCreatorsMap = new Map<number, any>();
@@ -9901,68 +9916,56 @@ app.post("/api/campaigns/choose-creators/bill", requireAuth, requireRole("sponso
 
     const defaultDeliv = normalizeDeliverableKey(deliverable || "reel");
 
+    const creatorIdsNum = creatorIds.map((id: any) => Number(id)).filter((n: number) => !isNaN(n) && n > 0);
+    if (creatorIdsNum.length === 0) {
+      return res.status(400).json({ error: "Select at least one valid creator" });
+    }
+
     const creatorMap = new Map<number, { tier?: string; followers?: number }>();
     for (const u of registeredUsers) {
-      creatorMap.set(u.id, { tier: u.tier, followers: u.instagramFollowers || u.followers });
+      creatorMap.set(Number(u.id), { tier: u.tier, followers: Number(u.instagramFollowers || u.followers || 0) });
     }
 
     if (isDatabaseConfigured) {
       try {
+        await ensureDatabaseSchema().catch(() => {});
         const dbRes = await pool.query(
-          `SELECT u.id, u.tier, cp.tier_label, cp.followers
+          `SELECT u.id, u.tier, u.followers AS user_followers, u.instagram_followers,
+                  cp.tier_label, cp.followers AS cp_followers
            FROM users u
            LEFT JOIN creator_profiles cp ON cp.user_id = u.id
            WHERE u.id = ANY($1::bigint[])`,
-          [creatorIds]
+          [creatorIdsNum]
         );
         for (const row of dbRes.rows) {
           creatorMap.set(Number(row.id), {
-            tier: row.tier_label || row.tier,
-            followers: Number(row.followers || 0),
+            tier: row.tier || row.tier_label,
+            followers: Number(row.cp_followers || row.instagram_followers || row.user_followers || 0),
           });
         }
-      } catch {}
+      } catch (dbErr: any) {
+        console.warn("[CHOOSE CREATORS BILL DB WARNING]", dbErr?.message || dbErr);
+      }
     }
 
-    const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIds.map(Number));
+    const dbRateCardsMap = await fetchDbRateCardsByUsers(creatorIdsNum);
 
-    const lines = creatorIds.map((id: number) => {
+    const lines = creatorIdsNum.map((id: number) => {
       const creator = creatorMap.get(id);
-      let tierKey = "nano";
-      if (creator) {
-        const rawTier = (creator.tier || "").toLowerCase().trim();
-        if (rawTier === "micro" || rawTier === "small") tierKey = "micro";
-        else if (rawTier === "nano") tierKey = "nano";
-        else if (rawTier === "mid") tierKey = "mid";
-        else if (rawTier.includes("upper")) tierKey = "upper_mid";
-        else if (rawTier === "macro") tierKey = "macro";
-        else if (rawTier === "large") tierKey = "large";
-        else if (rawTier === "mega") tierKey = "mega";
-        else if (rawTier === "elite") tierKey = "elite";
-        else {
-          const f = Number(creator.followers) || 0;
-          if (f >= 2500000) tierKey = "elite";
-          else if (f >= 1000000) tierKey = "mega";
-          else if (f >= 500000) tierKey = "large";
-          else if (f >= 250000) tierKey = "macro";
-          else if (f >= 100000) tierKey = "upper_mid";
-          else if (f >= 50000) tierKey = "mid";
-          else if (f >= 10000) tierKey = "micro";
-          else tierKey = "nano";
-        }
-      }
+      const tierKey = resolveCreatorPricingTierId(creator?.followers || 0, creator?.tier);
 
-      const perCreatorDeliv = creatorDeliverables && creatorDeliverables[id]
-        ? normalizeDeliverableKey(creatorDeliverables[id])
+      const perCreatorDeliv = creatorDeliverables && (creatorDeliverables[id] ?? creatorDeliverables[String(id)])
+        ? normalizeDeliverableKey(creatorDeliverables[id] ?? creatorDeliverables[String(id)])
         : defaultDeliv;
 
-      const { rateCard } = buildResolvedRateCard(Number(id), tierKey, dbRateCardsMap.get(Number(id)));
+      const { rateCard } = buildResolvedRateCard(id, tierKey, dbRateCardsMap.get(id));
       const basePrice = rateCard[perCreatorDeliv] || rateCard.reel;
 
+      const rawCustomRate = customRates ? (customRates[id] ?? customRates[String(id)]) : undefined;
       let price = basePrice;
       let isCustomOffer = false;
-      if (customRates && typeof customRates[id] === "number" && customRates[id] > 0) {
-        price = Math.round(customRates[id]);
+      if (typeof rawCustomRate === "number" && rawCustomRate > 0) {
+        price = Math.round(rawCustomRate);
         isCustomOffer = price !== basePrice;
       }
       const feeArtist = Math.round(price * 0.075 * 100) / 100;
@@ -10086,29 +10089,19 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
 
     // Build hydrated creator participant objects
     const hydratedParticipants = await Promise.all(creatorIds.map(async (cid: number) => {
-      let memoryUser = registeredUsers.find((u) => u.id === cid);
+      let memoryUser = registeredUsers.find((u) => Number(u.id) === Number(cid));
       let creatorName = memoryUser?.name;
       let creatorHandle = memoryUser?.instagramUsername || memoryUser?.handle;
       let creatorAvatar = memoryUser?.avatar;
-      let creatorFollowers = memoryUser?.instagramFollowers || memoryUser?.followers;
+      let creatorFollowers = Number(memoryUser?.instagramFollowers || memoryUser?.followers || 0);
       let creatorMedianViews = memoryUser?.medianViews;
-      let tierKey = "nano";
-
-      if (memoryUser) {
-        const rawTier = (memoryUser.tier || "").toLowerCase().trim();
-        if (rawTier === "micro" || rawTier === "small") tierKey = "micro";
-        else if (rawTier === "mid") tierKey = "mid";
-        else if (rawTier.includes("upper")) tierKey = "upper_mid";
-        else if (rawTier === "macro") tierKey = "macro";
-        else if (rawTier === "large") tierKey = "large";
-        else if (rawTier === "mega") tierKey = "mega";
-        else if (rawTier === "elite") tierKey = "elite";
-      }
+      let rawTierLabel = memoryUser?.tier;
 
       if (isDatabaseConfigured) {
         try {
           const dbRes = await pool.query(
-            `SELECT u.id, u.name, u.email, u.handle, u.avatar, u.avatar_url, cp.username as instagram_username, cp.followers, cp.median_views, cp.avatar_url as cp_avatar_url, cp.tier_label
+            `SELECT u.id, u.name, u.email, u.handle, u.avatar, u.avatar_url, u.tier, u.followers AS user_followers, u.instagram_followers,
+                    cp.username as instagram_username, cp.followers, cp.median_views, cp.avatar_url as cp_avatar_url, cp.tier_label
              FROM users u
              LEFT JOIN creator_profiles cp ON cp.user_id = u.id
              WHERE u.id = $1`,
@@ -10119,21 +10112,14 @@ app.post("/api/campaigns/choose-creators", requireAuth, requireRole("sponsor", "
             creatorName = row.name || creatorName || `Creator #${cid}`;
             creatorHandle = row.instagram_username ? `@${row.instagram_username}` : (row.handle || creatorHandle || `@creator${cid}`);
             creatorAvatar = row.cp_avatar_url || row.avatar_url || row.avatar || creatorAvatar || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150";
-            creatorFollowers = Number(row.followers || creatorFollowers || 10000);
+            creatorFollowers = Number(row.followers || row.instagram_followers || row.user_followers || creatorFollowers || 0);
             creatorMedianViews = Number(row.median_views || creatorMedianViews || 4000);
-            if (row.tier_label) {
-              const tl = row.tier_label.toLowerCase();
-              if (tl.includes("micro")) tierKey = "micro";
-              else if (tl.includes("mid")) tierKey = "mid";
-              else if (tl.includes("upper")) tierKey = "upper_mid";
-              else if (tl.includes("macro")) tierKey = "macro";
-              else if (tl.includes("large")) tierKey = "large";
-              else if (tl.includes("mega")) tierKey = "mega";
-              else if (tl.includes("elite")) tierKey = "elite";
-            }
+            rawTierLabel = row.tier || row.tier_label || rawTierLabel;
           }
         } catch {}
       }
+
+      const tierKey = resolveCreatorPricingTierId(creatorFollowers, rawTierLabel);
 
       const perCreatorDeliv = effectiveCreatorDeliverables[cid]
         ? normalizeDeliverableKey(effectiveCreatorDeliverables[cid])
