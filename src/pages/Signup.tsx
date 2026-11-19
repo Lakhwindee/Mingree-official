@@ -178,6 +178,7 @@ export default function Signup() {
           email: cleanEmail,
           name: cleanName,
           phone: cleanPhone,
+          role,
           purpose: "signup_dual",
           resendTarget,
         }),

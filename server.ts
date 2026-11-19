@@ -1453,7 +1453,7 @@ async function sendSmsOtp(phone: string, otp: string, _userName?: string): Promi
 // Send OTP (Supports selectable SMS or Email channel, plus Dual Email + SMS OTP for Signup)
 app.post("/api/auth/send-otp", async (req, res) => {
   try {
-    const { email, name, phone, purpose, channel, resendTarget } = req.body || {};
+    const { email, name, phone, purpose, channel, resendTarget, role } = req.body || {};
     const cleanPhone = phone ? String(phone).replace(/[^0-9]/g, "").slice(-10) : "";
     const rawEmail = email && typeof email === "string" ? email.toLowerCase().trim() : (cleanPhone ? `${cleanPhone}@phone.mingree.com` : "");
 
@@ -1469,13 +1469,73 @@ app.post("/api/auth/send-otp", async (req, res) => {
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
     const hasSmtp = Boolean(getEmailCredentials());
 
-    // Dual OTP flow for Signup: sends 1 OTP to Email and 1 separate OTP to Mobile SMS
+    // Dual OTP flow for Signup: sends 1 OTP to Email and 1 separate OTP to Mobile WhatsApp
     if (purpose === "signup_dual") {
       if (!cleanEmail || isPhoneSyntheticEmail || !cleanEmail.includes(".")) {
         return res.status(400).json({ error: "Valid email address is required for signup verification." });
       }
       if (!cleanPhone || cleanPhone.length !== 10) {
         return res.status(400).json({ error: "Valid 10-digit mobile number is required for signup verification." });
+      }
+
+      const requestedRole = String(role || "").toLowerCase().trim();
+      const formattedPhone = `+91${cleanPhone}`;
+      if (isDatabaseConfigured || process.env.NODE_ENV === "production") {
+        if (!isDatabaseConfigured) {
+          return res.status(503).json({ error: "Database service unavailable" });
+        }
+        try {
+          const existingEmailCheck = await pool.query(
+            "SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1",
+            [cleanEmail]
+          );
+          if (existingEmailCheck.rows.length > 0) {
+            return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
+          }
+
+          if (requestedRole === "creator" || requestedRole === "sponsor") {
+            const phoneRoleCheck = await pool.query(
+              `SELECT id FROM users
+               WHERE (
+                 phone = $1 OR phone = $2
+                 OR RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $2
+                 OR LOWER(email) LIKE $3
+               ) AND role = $4
+               LIMIT 1`,
+              [formattedPhone, cleanPhone, `%${cleanPhone}@phone.mingree.com%`, requestedRole]
+            );
+            if (phoneRoleCheck.rows.length > 0) {
+              const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
+              const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
+              return res.status(400).json({
+                error: `A ${roleLabel} account is already registered with this mobile number. You can use this number for a ${altRole} account, or log in to your existing ${roleLabel} account.`,
+              });
+            }
+          }
+        } catch (dbErr: any) {
+          console.error("[SEND OTP PRECHECK DB ERROR]", dbErr?.message || dbErr);
+          return res.status(503).json({ error: "Database temporarily unavailable. Please try again shortly." });
+        }
+      } else if (isInMemoryFallbackAllowed()) {
+        const existingMemEmail = registeredUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        if (existingMemEmail) {
+          return res.status(400).json({ error: "An account already exists with this email address. Please log in." });
+        }
+        if (requestedRole === "creator" || requestedRole === "sponsor") {
+          const memoryRoleUser = registeredUsers.find(
+            (u) =>
+              u.role === requestedRole &&
+              ((u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.replace(/[^0-9]/g, "").slice(-10) === cleanPhone)) ||
+                (u.email && u.email.toLowerCase().includes(`${cleanPhone}@phone.mingree.com`)))
+          );
+          if (memoryRoleUser) {
+            const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
+            const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
+            return res.status(400).json({
+              error: `A ${roleLabel} account is already registered with this mobile number. You can use this number for a ${altRole} account, or log in to your existing ${roleLabel} account.`,
+            });
+          }
+        }
       }
 
       const sendEmailNow = !resendTarget || resendTarget === "both" || resendTarget === "email";
@@ -3115,16 +3175,19 @@ app.post("/api/auth/signup", async (req, res) => {
 
         if (cleanPhone) {
           const phoneRoleCheck = await pool.query(
-            `SELECT id, email, role FROM users 
-             WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) AND role = $4 LIMIT 1`,
-            [formattedPhone, cleanPhone, `%${cleanPhone}%`, requestedRole]
+            `SELECT id, role FROM users 
+             WHERE (
+               phone = $1 OR phone = $2
+               OR RIGHT(REGEXP_REPLACE(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $2
+               OR LOWER(email) LIKE $3
+             ) AND role = $4 LIMIT 1`,
+            [formattedPhone, cleanPhone, `%${cleanPhone}@phone.mingree.com%`, requestedRole]
           );
           if (phoneRoleCheck.rows.length > 0) {
-            const existingRoleUser = phoneRoleCheck.rows[0];
             const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
             const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
             return res.status(400).json({
-              error: `A ${roleLabel} account is already registered with this mobile number (${existingRoleUser.email}). You can link this number to a ${altRole} account, or log in to your existing account.`,
+              error: `A ${roleLabel} account is already registered with this mobile number. You can use this number for a ${altRole} account, or log in to your existing ${roleLabel} account.`,
             });
           }
         }
@@ -3137,14 +3200,14 @@ app.post("/api/auth/signup", async (req, res) => {
         const memoryRoleUser = registeredUsers.find(
           (u) =>
             u.role === requestedRole &&
-            ((u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.includes(cleanPhone))) ||
-             (u.email && u.email.includes(`${cleanPhone}@phone.mingree.com`)))
+            ((u.phone && (u.phone === formattedPhone || u.phone === cleanPhone || u.phone.replace(/[^0-9]/g, "").slice(-10) === cleanPhone)) ||
+             (u.email && u.email.toLowerCase().includes(`${cleanPhone}@phone.mingree.com`)))
         );
         if (memoryRoleUser) {
           const roleLabel = requestedRole === "sponsor" ? "Brand Partner" : "Creator";
           const altRole = requestedRole === "sponsor" ? "Creator" : "Brand Partner";
           return res.status(400).json({
-            error: `A ${roleLabel} account is already registered with this mobile number (${memoryRoleUser.email}). You can link this number to a ${altRole} account, or log in to your existing account.`,
+            error: `A ${roleLabel} account is already registered with this mobile number. You can use this number for a ${altRole} account, or log in to your existing ${roleLabel} account.`,
           });
         }
       }
