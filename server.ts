@@ -785,11 +785,24 @@ async function sendEmailOtp(
 
   const isReset = purpose === "forgot_password";
   const subject = isReset
-    ? "Your Password Reset OTP Code - Mingree"
-    : "Your Verification OTP Code - Mingree";
+    ? "Mingree Password Reset Code"
+    : "Mingree Verification Code";
   const introText = isReset
     ? "Use the 6-digit verification code below to reset your Mingree account password:"
     : "Use the 6-digit verification code below to verify your email address on Mingree:";
+
+  const plainText = [
+    `Hello ${userName || "Creator"},`,
+    ``,
+    introText,
+    ``,
+    `Your verification code: ${otp}`,
+    ``,
+    `This code expires in 10 minutes. Do not share it with anyone.`,
+    ``,
+    `If you did not request this code, you can safely ignore this email.`,
+    `- Mingree Team (https://mingree.com)`,
+  ].join("\n");
 
   const buildHtml = () => `
     <!DOCTYPE html>
@@ -799,59 +812,38 @@ async function sendEmailOtp(
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>${escapeHtml(subject)}</title>
     </head>
-    <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="table-layout: fixed; background-color: #f1f5f9; padding: 32px 16px;">
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="table-layout: fixed; background-color: #f8fafc; padding: 32px 16px;">
         <tr>
           <td align="center">
-            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06); overflow: hidden; border: 1px solid #e2e8f0;">
-              <!-- Header -->
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 520px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden;">
               <tr>
-                <td style="padding: 32px 32px 24px 32px; text-align: center; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);">
-                  <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.5px; background: linear-gradient(135deg, #ec4899 0%, #f43f5e 50%, #f59e0b 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Mingree</h1>
-                  <p style="margin: 6px 0 0 0; color: #94a3b8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">Creator &amp; Brand Collaboration</p>
+                <td style="padding: 24px 32px; text-align: center; background-color: #0f172a;">
+                  <div style="margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.4px; color: #ffffff;">Mingree</div>
+                  <p style="margin: 6px 0 0 0; color: #cbd5e1; font-size: 12px; font-weight: 500;">Creator &amp; Brand Collaboration</p>
                 </td>
               </tr>
-              <!-- Body -->
               <tr>
-                <td style="padding: 32px;">
-                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <td style="padding: 28px 32px;">
+                  <p style="margin: 0 0 12px 0; color: #0f172a; font-size: 16px; font-weight: 600;">Hello ${escapeHtml(userName || "Creator")},</p>
+                  <p style="margin: 0 0 22px 0; color: #475569; font-size: 14px; line-height: 1.6;">${introText}</p>
+                  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 22px;">
                     <tr>
-                      <td>
-                        <p style="margin: 0 0 12px 0; color: #1e293b; font-size: 16px; font-weight: 600;">Hello ${escapeHtml(userName || "Creator")},</p>
-                        <p style="margin: 0 0 24px 0; color: #475569; font-size: 14px; line-height: 1.6;">${introText}</p>
-                        
-                        <!-- OTP Box -->
-                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 24px;">
-                          <tr>
-                            <td align="center" style="background: linear-gradient(135deg, #fff1f2 0%, #fffbeb 100%); border: 2px dashed #fda4af; border-radius: 12px; padding: 24px;">
-                              <span style="font-size: 36px; font-weight: 800; letter-spacing: 10px; color: #be123c; font-family: 'Courier New', Courier, monospace;">${escapeHtml(otp)}</span>
-                              <div style="margin-top: 8px; color: #9f1239; font-size: 12px; font-weight: 600;">Secure Verification Code</div>
-                            </td>
-                          </tr>
-                        </table>
-
-
-
-                        <!-- Security Notice -->
-                        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border-radius: 8px; padding: 12px 16px; border-left: 4px solid #3b82f6;">
-                          <tr>
-                            <td>
-                              <p style="margin: 0; color: #334155; font-size: 12px; line-height: 1.5;">
-                                ⏱️ This code expires in <strong>10 minutes</strong>. Never share your OTP with anyone, including Mingree support.
-                              </p>
-                            </td>
-                          </tr>
-                        </table>
+                      <td align="center" style="background-color: #fff1f2; border: 1px solid #fecdd3; border-radius: 10px; padding: 20px;">
+                        <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #be123c; font-family: 'Courier New', Courier, monospace;">${escapeHtml(otp)}</span>
+                        <div style="margin-top: 8px; color: #881337; font-size: 12px; font-weight: 600;">Verification Code</div>
                       </td>
                     </tr>
                   </table>
+                  <p style="margin: 0; color: #475569; font-size: 12px; line-height: 1.5;">
+                    This code expires in <strong>10 minutes</strong>. Never share your OTP with anyone.
+                  </p>
                 </td>
               </tr>
-              <!-- Footer -->
               <tr>
-                <td style="padding: 20px 32px 32px 32px; text-align: center; background-color: #f8fafc; border-top: 1px solid #f1f5f9;">
-                  <p style="margin: 0 0 6px 0; color: #64748b; font-size: 12px;">If you didn't request this verification code, please ignore this email.</p>
-                  <p style="margin: 0; color: #94a3b8; font-size: 11px;">&copy; ${new Date().getFullYear()} Mingree. All rights reserved.</p>
+                <td style="padding: 18px 32px; text-align: center; background-color: #f8fafc; border-top: 1px solid #f1f5f9;">
+                  <p style="margin: 0 0 4px 0; color: #64748b; font-size: 12px;">If you didn't request this verification code, please ignore this email.</p>
+                  <p style="margin: 0; color: #94a3b8; font-size: 11px;">&copy; ${new Date().getFullYear()} Mingree &middot; mingree.com</p>
                 </td>
               </tr>
             </table>
@@ -872,7 +864,9 @@ async function sendEmailOtp(
         to: toEmail,
         subject,
         html,
+        text: plainText,
         fromName: "Mingree",
+        replyTo: creds.user,
       });
       console.log(`[EMAIL OTP CF-SOCKET] Sent (${purpose}) to ${toEmail} via ${creds.user}`);
       return { success: true };
@@ -888,8 +882,10 @@ async function sendEmailOtp(
     try {
       await transporter.sendMail({
         from: `"Mingree" <${creds.user}>`,
+        replyTo: creds.user,
         to: toEmail,
         subject,
+        text: plainText,
         html,
       });
     } finally {

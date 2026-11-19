@@ -35,7 +35,9 @@ export async function sendMailViaCloudflareSocket(options: {
   to: string;
   subject: string;
   html: string;
+  text?: string;
   fromName?: string;
+  replyTo?: string;
 }): Promise<void> {
   if (!cfSocketConnect) {
     throw new Error("Cloudflare sockets API not initialized");
@@ -43,7 +45,17 @@ export async function sendMailViaCloudflareSocket(options: {
 
   const fromEmail = sanitizeHeaderAddr(options.user);
   const toEmail = sanitizeHeaderAddr(options.to);
+  const replyToEmail = sanitizeHeaderAddr(options.replyTo || fromEmail);
   const fromName = String(options.fromName || "Mingree").replace(/[\r\n"]/g, "").trim() || "Mingree";
+  const senderDomain = (fromEmail.split("@")[1] || "mingree.com").replace(/[^a-zA-Z0-9.-]/g, "") || "mingree.com";
+  const plainText = (
+    options.text ||
+    options.html
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  ).trim();
 
   const socket = cfSocketConnect(
     { hostname: "smtp.gmail.com", port: 465 },
@@ -106,7 +118,7 @@ export async function sendMailViaCloudflareSocket(options: {
       throw new Error(`SMTP greeting ${greeting.code}: ${greeting.text}`);
     }
 
-    await sendCommand("EHLO mingree.com", [250]);
+    await sendCommand(`EHLO ${senderDomain}`, [250]);
 
     const authToken = Buffer.from(`\0${fromEmail}\0${options.pass}`, "utf8").toString("base64");
     await sendCommand(`AUTH PLAIN ${authToken}`, [235]);
@@ -116,20 +128,35 @@ export async function sendMailViaCloudflareSocket(options: {
     await sendCommand("DATA", [354]);
 
     const encodedSubject = `=?UTF-8?B?${Buffer.from(options.subject, "utf8").toString("base64")}?=`;
-    const bodyBase64 = wrapBase64Lines(Buffer.from(options.html, "utf8").toString("base64"));
-    const messageId = `<${Date.now()}.${Math.random().toString(36).slice(2, 10)}@mingree.com>`;
+    const textBase64 = wrapBase64Lines(Buffer.from(plainText, "utf8").toString("base64"));
+    const htmlBase64 = wrapBase64Lines(Buffer.from(options.html, "utf8").toString("base64"));
+    const messageId = `<${Date.now()}.${Math.random().toString(36).slice(2, 10)}@${senderDomain}>`;
+    const boundary = `mingree_alt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
     const mimeMessage = [
       `Date: ${new Date().toUTCString()}`,
       `From: "${fromName}" <${fromEmail}>`,
+      `Reply-To: "${fromName}" <${replyToEmail}>`,
       `To: <${toEmail}>`,
       `Subject: ${encodedSubject}`,
       `Message-ID: ${messageId}`,
       `MIME-Version: 1.0`,
+      `X-Auto-Response-Suppress: OOF, AutoReply`,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/plain; charset=UTF-8`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      textBase64,
+      ``,
+      `--${boundary}`,
       `Content-Type: text/html; charset=UTF-8`,
       `Content-Transfer-Encoding: base64`,
       ``,
-      bodyBase64,
+      htmlBase64,
+      ``,
+      `--${boundary}--`,
       `.`,
     ].join("\r\n");
 
