@@ -7561,7 +7561,8 @@ app.get([
     });
   }
 
-  let cleanCode = String(code).split("#")[0].split("%23")[0].replace(/_$/i, "").trim();
+  // Only strip URL fragment (`#_` / `%23_`) if present; NEVER strip a legitimate trailing `_` from a base64url OAuth code
+  let cleanCode = String(code).split("#")[0].split("%23")[0].trim();
   if (cleanCode.includes(" ")) {
     cleanCode = cleanCode.replace(/ /g, "+");
   }
@@ -7659,33 +7660,36 @@ app.get([
   consumedOAuthCodes.set(codeHash, Date.now());
 
   try {
-    // 3. Exchange authorization code for access token: EXACTLY ONE REQUEST to official Instagram endpoint
+    // 3. Exchange authorization code for access token via official Instagram endpoint
     const tokenExchangeDebugPayload = {
       step: "3_TOKEN_EXCHANGE_REQUEST",
       endpoint: "https://api.instagram.com/oauth/access_token",
       client_id: appId,
       redirect_uri: effectiveRedirectUri,
+      callback_path: req.path,
+      code_length: cleanCode.length,
+      code_ends_with_underscore: cleanCode.endsWith("_"),
       grant_type: "authorization_code",
       content_type: "application/x-www-form-urlencoded",
       auth_redirect_uri_matches_token_redirect_uri: effectiveRedirectUri === redirectUri,
       timestamp: new Date().toISOString(),
-      version: "v2.6.6-single-exchange"
+      version: "v2.6.7-code-preserve"
     };
     console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(tokenExchangeDebugPayload));
-
-    const formBody = new URLSearchParams({
-      client_id: appId,
-      client_secret: appSecret,
-      grant_type: "authorization_code",
-      redirect_uri: effectiveRedirectUri,
-      code: cleanCode,
-    }).toString();
 
     let shortLivedAccessToken = "";
     let igUserId = "";
     let igExchangeErrorDetail = "";
 
-    try {
+    const attemptTokenExchange = async (candidateRedirectUri: string, attemptLabel: string) => {
+      const formBody = new URLSearchParams({
+        client_id: appId,
+        client_secret: appSecret,
+        grant_type: "authorization_code",
+        redirect_uri: candidateRedirectUri,
+        code: cleanCode,
+      }).toString();
+
       const igTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
         method: "POST",
         headers: {
@@ -7704,14 +7708,16 @@ app.get([
 
       const responseDebugPayload = {
         step: "4_INSTAGRAM_RESPONSE",
+        attempt: attemptLabel,
         endpoint: "https://api.instagram.com/oauth/access_token",
+        redirect_uri: candidateRedirectUri,
         http_status: igTokenRes.status,
         success: igTokenRes.ok,
         error_type: tokenData?.error?.type || tokenData?.error_type || null,
         error_code: tokenData?.error?.code || tokenData?.code || null,
         error_message: tokenData?.error?.message || tokenData?.error_message || (igTokenRes.ok ? null : rawTokenText.slice(0, 300)),
         timestamp: new Date().toISOString(),
-        version: "v2.6.6-single-exchange"
+        version: "v2.6.7-code-preserve"
       };
       console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(responseDebugPayload));
 
@@ -7719,11 +7725,25 @@ app.get([
         const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
         shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
         igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
-      } else {
-        igExchangeErrorDetail =
-          tokenData?.error?.message ||
-          tokenData?.error_message ||
-          (rawTokenText.length > 0 ? rawTokenText.slice(0, 240) : `HTTP ${igTokenRes.status}`);
+        igExchangeErrorDetail = "";
+        return true;
+      }
+
+      igExchangeErrorDetail =
+        tokenData?.error?.message ||
+        tokenData?.error_message ||
+        (rawTokenText.length > 0 ? rawTokenText.slice(0, 240) : `HTTP ${igTokenRes.status}`);
+      return false;
+    };
+
+    try {
+      const primaryOk = await attemptTokenExchange(effectiveRedirectUri, "primary");
+      // If Meta rejects specifically due to redirect_uri trailing-slash mismatch, retry once with the alternate trailing-slash form
+      if (!primaryOk && /redirect_uri/i.test(igExchangeErrorDetail)) {
+        const altRedirectUri = effectiveRedirectUri.endsWith("/")
+          ? effectiveRedirectUri.slice(0, -1)
+          : `${effectiveRedirectUri}/`;
+        await attemptTokenExchange(altRedirectUri, "trailing_slash_fallback");
       }
     } catch (igErr: any) {
       igExchangeErrorDetail = igErr?.message || String(igErr);
