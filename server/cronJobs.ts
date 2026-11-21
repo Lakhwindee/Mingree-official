@@ -1,4 +1,4 @@
-import { db } from "./db";
+import { db, ensureDatabaseSchema, isDatabaseConfigured, isSchemaEnsured } from "./db";
 import { deals, campaigns, users, notifications, subscriptions, metricSnapshots, creatorProfiles } from "../shared/schema";
 import { eq, and, lte, sql } from "drizzle-orm";
 import { CONFIG } from "../shared/config";
@@ -10,23 +10,36 @@ const sentWarnings = new Set<string>();
 const sentProReminders = new Set<string>();
 
 function handleCronError(taskName: string, err: any) {
+  const rootErr = err?.cause || err;
+  const code = String(rootErr?.code || err?.code || "");
+  const rootMsg = String(rootErr?.message || err?.message || err || "");
+
   const isConnError =
-    err?.code === "ECONNREFUSED" ||
-    err?.message?.includes("ECONNREFUSED") ||
-    err?.message?.includes("connect ECONNREFUSED");
+    code === "ECONNREFUSED" ||
+    rootMsg.includes("ECONNREFUSED") ||
+    rootMsg.includes("connect ECONNREFUSED") ||
+    rootMsg.includes("Database not configured");
 
   const isTableMissing =
-    err?.code === "42P01" ||
-    err?.message?.includes("relation \"deals\" does not exist") ||
-    err?.message?.includes("does not exist");
+    code === "42P01" ||
+    rootMsg.includes('relation "deals" does not exist') ||
+    rootMsg.includes("does not exist");
 
   if (isConnError) {
     console.log(`[CRON] ${taskName} skipped: Database connection offline (ECONNREFUSED).`);
   } else if (isTableMissing) {
     console.log(`[CRON] ${taskName} skipped: Table not yet created or migrated.`);
   } else {
-    console.warn(`[CRON WARNING] ${taskName}:`, err?.message || err);
+    console.warn(`[CRON WARNING] ${taskName}:`, rootMsg);
   }
+}
+
+async function prepareCronDb(): Promise<boolean> {
+  if (!isDatabaseConfigured) return false;
+  if (!isSchemaEnsured()) {
+    await ensureDatabaseSchema();
+  }
+  return true;
 }
 
 /**
@@ -38,6 +51,7 @@ export async function runDealExpirationCheck(): Promise<{ expiredCount: number; 
   const now = new Date();
 
   try {
+    if (!(await prepareCronDb())) return { expiredCount, warningsSent };
     const activeDeals = await db
       .select()
       .from(deals)
@@ -118,6 +132,7 @@ export async function runAutoApproveEngine(): Promise<{ autoApprovedCount: numbe
   const windowMs = CONFIG.REVIEW_WINDOW_HOURS * 60 * 60 * 1000;
 
   try {
+    if (!(await prepareCronDb())) return { autoApprovedCount };
     const postedDeals = await db
       .select()
       .from(deals)
@@ -132,7 +147,6 @@ export async function runAutoApproveEngine(): Promise<{ autoApprovedCount: numbe
         // Auto approve!
         const creatorNetNum = parseFloat(deal.creatorNet || "0");
         const firstRelease = parseFloat((creatorNetNum * (CONFIG.RELEASE_FIRST_PERCENT / 100)).toFixed(2));
-        const nowStr = now.toISOString();
 
         await releaseEscrow(deal.artistId, deal.creatorId, firstRelease, {
           refType: "deal_auto_approved_release",
@@ -143,8 +157,8 @@ export async function runAutoApproveEngine(): Promise<{ autoApprovedCount: numbe
           .update(deals)
           .set({
             status: "approved",
-            approvedAt: nowStr as any,
-            firstReleaseAt: nowStr as any,
+            approvedAt: now,
+            firstReleaseAt: now,
           } as any)
           .where(eq(deals.id, deal.id));
 
@@ -183,6 +197,7 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
   const holdMs = CONFIG.LIVE_HOLD_DAYS * 24 * 60 * 60 * 1000;
 
   try {
+    if (!(await prepareCronDb())) return { releasedCount, refundedCount };
     const approvedDeals = await db
       .select()
       .from(deals)
@@ -199,7 +214,6 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
 
         const creatorNetNum = parseFloat(deal.creatorNet || "0");
         const remainingRelease = parseFloat((creatorNetNum * ((100 - CONFIG.RELEASE_FIRST_PERCENT) / 100)).toFixed(2));
-        const nowStr = now.toISOString();
 
         if (isStillLive) {
           await releaseEscrow(deal.artistId, deal.creatorId, remainingRelease, {
@@ -211,7 +225,7 @@ export async function runFinalReleaseEngine(): Promise<{ releasedCount: number; 
             .update(deals)
             .set({
               status: "released",
-              finalReleaseAt: nowStr as any,
+              finalReleaseAt: now,
             } as any)
             .where(eq(deals.id, deal.id));
 
@@ -251,6 +265,7 @@ export async function runDailyMaintenanceJobs(): Promise<{ metricsRefreshed: num
 
   // A. Refresh Instagram Metrics & Tokens
   try {
+    if (!(await prepareCronDb())) return { metricsRefreshed, proRemindersSent };
     const creators = await db
       .select()
       .from(users)
@@ -342,6 +357,7 @@ export async function runSnapshotJobs(): Promise<{ snapshotsCount: number }> {
   let snapshotsCount = 0;
 
   try {
+    if (!(await prepareCronDb())) return { snapshotsCount };
     const activeDeals = await db
       .select()
       .from(deals)
@@ -354,7 +370,7 @@ export async function runSnapshotJobs(): Promise<{ snapshotsCount: number }> {
         views: Math.floor(Math.random() * 5000) + 10000,
         likes: Math.floor(Math.random() * 500) + 1000,
         comments: Math.floor(Math.random() * 50) + 100,
-        timestamp: new Date(),
+        takenAt: new Date(),
       } as any);
       snapshotsCount++;
     }

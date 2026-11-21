@@ -479,6 +479,149 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           );
           CREATE INDEX IF NOT EXISTS idx_used_jti_expires ON used_jti_tokens (expires_at);
 
+          -- 5e. Core campaign, deals, snapshots, notifications & subscriptions tables for cron & workflows
+          CREATE TABLE IF NOT EXISTS campaigns (
+            id bigserial PRIMARY KEY,
+            artist_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            title text NOT NULL,
+            brand text,
+            brand_logo text,
+            category text NOT NULL DEFAULT 'music_reels',
+            song_url text,
+            audio_url text,
+            reference_video_url text,
+            product_assets jsonb NOT NULL DEFAULT '[]'::jsonb,
+            genre text,
+            language text,
+            description text,
+            deliverable_type text NOT NULL DEFAULT 'reel',
+            content_types text[] NOT NULL DEFAULT ARRAY['Reel']::text[],
+            promotion_style text,
+            budget numeric(12,2) NOT NULL DEFAULT 0.00,
+            budget_remaining numeric(12,2) NOT NULL DEFAULT 0.00,
+            escrow_held numeric(12,2) NOT NULL DEFAULT 0.00,
+            committed_payouts numeric(12,2) NOT NULL DEFAULT 0.00,
+            released_payouts numeric(12,2) NOT NULL DEFAULT 0.00,
+            pricing_mode text NOT NULL DEFAULT 'fixed',
+            booking_model text NOT NULL DEFAULT 'instant',
+            fixed_price numeric(12,2) NOT NULL DEFAULT 0.00,
+            total_spots integer NOT NULL DEFAULT 1,
+            spots_remaining integer NOT NULL DEFAULT 1,
+            reserved_slots integer NOT NULL DEFAULT 0,
+            min_followers integer NOT NULL DEFAULT 1000,
+            min_median_views integer NOT NULL DEFAULT 500,
+            min_duration_secs integer NOT NULL DEFAULT 15,
+            tier text,
+            target_tiers text[] NOT NULL DEFAULT '{}'::text[],
+            target_cities text[] NOT NULL DEFAULT '{}'::text[],
+            target_countries text[] NOT NULL DEFAULT ARRAY['India']::text[],
+            required_tags text[] NOT NULL DEFAULT '{}'::text[],
+            required_mentions text[] NOT NULL DEFAULT '{}'::text[],
+            caption_note text,
+            required_caption_note text,
+            disclosure_instructions text NOT NULL DEFAULT '#ad | Paid Partnership',
+            deal_window_hours integer NOT NULL DEFAULT 48,
+            deadline timestamptz,
+            status text NOT NULL DEFAULT 'active',
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          CREATE TABLE IF NOT EXISTS campaign_offers (
+            id bigserial PRIMARY KEY,
+            campaign_id bigint NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            creator_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            deliverable_type text NOT NULL DEFAULT 'reel',
+            creator_quote numeric(12,2),
+            artist_counter numeric(12,2),
+            agreed_price numeric(12,2),
+            round integer NOT NULL DEFAULT 1,
+            status text NOT NULL DEFAULT 'invited',
+            expires_at timestamptz,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          CREATE TABLE IF NOT EXISTS deals (
+            id bigserial PRIMARY KEY,
+            offer_id bigint REFERENCES campaign_offers(id) ON DELETE SET NULL,
+            campaign_id bigint NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+            artist_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            creator_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            deliverable_type text NOT NULL DEFAULT 'reel',
+            price numeric(12,2) NOT NULL DEFAULT 0.00,
+            artist_cost numeric(12,2) NOT NULL DEFAULT 0.00,
+            fee_artist numeric(12,2) NOT NULL DEFAULT 0.00,
+            fee_creator numeric(12,2) NOT NULL DEFAULT 0.00,
+            creator_net numeric(12,2) NOT NULL DEFAULT 0.00,
+            status text NOT NULL DEFAULT 'accepted',
+            post_url text,
+            post_media_id text,
+            audio_confirmed boolean NOT NULL DEFAULT false,
+            resubmit_count integer NOT NULL DEFAULT 0,
+            rejection_reason text,
+            deadline timestamptz NOT NULL DEFAULT now(),
+            submitted_at timestamptz,
+            approved_at timestamptz,
+            first_release_at timestamptz,
+            final_release_at timestamptz,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS offer_id bigint REFERENCES campaign_offers(id) ON DELETE SET NULL;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS deliverable_type text NOT NULL DEFAULT 'reel';
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS artist_cost numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS fee_artist numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS fee_creator numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS creator_net numeric(12,2) NOT NULL DEFAULT 0.00;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS post_url text;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS post_media_id text;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS audio_confirmed boolean NOT NULL DEFAULT false;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS resubmit_count integer NOT NULL DEFAULT 0;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS rejection_reason text;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS submitted_at timestamptz;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS approved_at timestamptz;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS first_release_at timestamptz;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS final_release_at timestamptz;
+          ALTER TABLE deals ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+
+          CREATE TABLE IF NOT EXISTS metric_snapshots (
+            id bigserial PRIMARY KEY,
+            deal_id bigint NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+            views integer NOT NULL DEFAULT 0,
+            likes integer NOT NULL DEFAULT 0,
+            comments integer NOT NULL DEFAULT 0,
+            shares integer NOT NULL DEFAULT 0,
+            saves integer NOT NULL DEFAULT 0,
+            still_live boolean NOT NULL DEFAULT true,
+            checkpoint text NOT NULL DEFAULT 'auto',
+            taken_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          CREATE TABLE IF NOT EXISTS subscriptions (
+            id bigserial PRIMARY KEY,
+            user_id bigint NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            plan text NOT NULL DEFAULT 'pro_monthly',
+            status text NOT NULL DEFAULT 'active',
+            started_at timestamptz NOT NULL DEFAULT now(),
+            expires_at timestamptz NOT NULL,
+            promo_code_id bigint,
+            payment_order_id text,
+            auto_renew boolean NOT NULL DEFAULT false
+          );
+
+          CREATE TABLE IF NOT EXISTS notifications (
+            id bigserial PRIMARY KEY,
+            user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            type text NOT NULL DEFAULT 'general',
+            title text NOT NULL,
+            body text NOT NULL DEFAULT '',
+            message text NOT NULL DEFAULT '',
+            link text,
+            read boolean NOT NULL DEFAULT false,
+            is_read boolean NOT NULL DEFAULT false,
+            created_at timestamptz NOT NULL DEFAULT now()
+          );
+
           -- 6. Indices
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_username ON creator_profiles (LOWER(username));
           CREATE INDEX IF NOT EXISTS idx_creator_profiles_ig_uid ON creator_profiles (instagram_user_id);
@@ -488,6 +631,9 @@ export async function ensureDatabaseSchema(force = false): Promise<void> {
           CREATE UNIQUE INDEX IF NOT EXISTS idx_rate_cards_user_deliverable ON rate_cards (user_id, deliverable_type);
           CREATE INDEX IF NOT EXISTS idx_ledger_entries_user_created ON ledger_entries (user_id, created_at DESC);
           CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_created ON wallet_transactions (user_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_deals_status_deadline ON deals (status, deadline);
+          CREATE INDEX IF NOT EXISTS idx_metric_snapshots_deal_id ON metric_snapshots (deal_id);
+          CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications (user_id, is_read, created_at DESC);
         END $$;
       `);
       schemaEnsured = true;

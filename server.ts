@@ -7380,8 +7380,11 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
     await Promise.race([dbInsert, new Promise((r) => setTimeout(r, 120))]);
   }
 
-  // Official Instagram Login Authorization URL (without force_reauth=true so logged-in users don't bounce through login loops)
-  const authUrl = `https://www.instagram.com/oauth/authorize?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
+  // Official Instagram Login Authorization URL
+  // IMPORTANT: Both the trailing slash (`/oauth/authorize/`) AND `#weblink` fragment match Instagram's own
+  // Apple App Site Association (AASA) exclusion rules (`"/oauth/authorize/*"` and `"#weblink"`), preventing
+  // iOS Safari from hijacking the OAuth URL into the native Instagram app (which causes "The profile that you're looking for doesn't exist").
+  const authUrl = `https://www.instagram.com/oauth/authorize/?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}#weblink`;
 
   const authDebugPayload = {
     step: "1_AUTH_REQUEST",
