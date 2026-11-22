@@ -2939,7 +2939,8 @@ export async function requireAuth(req: AuthRequest, res: express.Response, next:
 
   // Elevate configured admin email only when it matches ADMIN_EMAIL
   const cleanEmail = (user.email || "").toLowerCase().trim();
-  if (ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL) {
+  const configuredAdminEmail = getAdminEmail();
+  if (configuredAdminEmail && cleanEmail === configuredAdminEmail) {
     user.role = "admin";
     user.tier = "Admin";
     user.isEmailVerified = true;
@@ -2955,7 +2956,8 @@ export function requireRole(...allowedRoles: string[]) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     const cleanEmail = (req.user.email || "").toLowerCase().trim();
-    const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
+    const configuredAdminEmail = getAdminEmail();
+    const isAdminEmail = Boolean(configuredAdminEmail && cleanEmail === configuredAdminEmail);
     if (allowedRoles.includes("admin") && isAdminEmail) {
       req.user.role = "admin";
       return next();
@@ -3012,9 +3014,18 @@ app.post("/api/admin/api-keys", requireAuth, requireRole("admin"), (req, res) =>
 // Configure bcryptjs random fallback for Cloudflare Workers environment
 bcrypt.setRandomFallback((len: number) => Array.from(crypto.randomBytes(len)));
 
-// Registered Users Store (PostgreSQL primary; ephemeral in-memory cache without hardcoded default accounts or passwords)
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "admin@mingree.com").toLowerCase().trim();
-const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || "").trim();
+// Dynamic runtime getters so Cloudflare Workers bindings injected per-request are always respected
+function getAdminEmail(): string {
+  return (process.env.ADMIN_EMAIL || "info.mingree@gmail.com").toLowerCase().trim();
+}
+function getAdminPassword(): string {
+  return (process.env.ADMIN_PASSWORD || "").trim();
+}
+function timingSafeEqualString(a: string, b: string): boolean {
+  const hashA = crypto.createHash("sha256").update(a).digest();
+  const hashB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
 
 function sanitizeUser(user: any) {
   if (!user) return null;
@@ -3040,8 +3051,8 @@ function loadRegisteredUsers() {
     }
   }
 
-  const adminEmail = (process.env.ADMIN_EMAIL || ADMIN_EMAIL || "").toLowerCase().trim();
-  const adminPass = (process.env.ADMIN_PASSWORD || ADMIN_PASSWORD || "").trim();
+  const adminEmail = getAdminEmail();
+  const adminPass = getAdminPassword();
 
   if (adminEmail && adminPass) {
     let adminUser = registeredUsers.find((u) => u.email.toLowerCase() === adminEmail);
@@ -3147,7 +3158,7 @@ app.post("/api/auth/signup", async (req, res) => {
     }
 
     const requestedRole = String(role || "creator").toLowerCase().trim();
-    if (requestedRole === "admin" || cleanEmail === ADMIN_EMAIL) {
+    if (requestedRole === "admin" || cleanEmail === getAdminEmail()) {
       return res.status(400).json({ error: "Admin registration is strictly prohibited." });
     }
     if (requestedRole !== "creator" && requestedRole !== "sponsor") {
@@ -3376,25 +3387,81 @@ app.post("/api/auth/login", async (req, res) => {
       }
     }
 
-    const isAdminEmail = Boolean(ADMIN_EMAIL && cleanEmail === ADMIN_EMAIL);
+    const configuredAdminEmail = getAdminEmail();
+    const configuredAdminPass = getAdminPassword();
+    const isAdminEmail = Boolean(configuredAdminEmail && cleanEmail === configuredAdminEmail);
+    const isEnvAdminPass =
+      isAdminEmail &&
+      Boolean(configuredAdminPass) &&
+      timingSafeEqualString(String(password), configuredAdminPass);
 
-    if (isAdminEmail && ADMIN_PASSWORD) {
-      if (foundUser) {
-        foundUser.role = "admin";
-        foundUser.isEmailVerified = true;
+    if (isAdminEmail && isPortalAdmin && isEnvAdminPass) {
+      const hashedAdminPass = bcrypt.hashSync(configuredAdminPass, 10);
+      if (isDatabaseConfigured) {
+        try {
+          if (foundUser) {
+            await pool.query(
+              `UPDATE users
+                 SET role = 'admin', tier = 'Admin', email_verified = TRUE, status = 'active', password_hash = $2
+               WHERE id = $1`,
+              [foundUser.id, hashedAdminPass]
+            );
+            foundUser.role = "admin";
+            foundUser.tier = "Admin";
+            foundUser.isEmailVerified = true;
+            foundUser.status = "active";
+            foundUser.passwordHash = hashedAdminPass;
+          } else {
+            const insertRes = await pool.query(
+              `INSERT INTO users (email, password_hash, name, role, handle, tier, email_verified, status)
+               VALUES ($1, $2, 'Mingree Administrator', 'admin', '@admin', 'Admin', TRUE, 'active')
+               ON CONFLICT (email) DO UPDATE
+                 SET role = 'admin', tier = 'Admin', email_verified = TRUE, status = 'active', password_hash = EXCLUDED.password_hash
+               RETURNING *`,
+              [cleanEmail, hashedAdminPass]
+            );
+            const row = insertRes.rows[0];
+            foundUser = {
+              id: Number(row.id),
+              email: row.email,
+              passwordHash: row.password_hash,
+              name: row.name,
+              role: row.role,
+              tokenVersion: Number(row.token_version || 1),
+              handle: row.handle || "@admin",
+              avatar: row.avatar,
+              tier: row.tier || "Admin",
+              companyName: row.company_name,
+              isEmailVerified: true,
+              status: row.status || "active",
+              createdAt: row.created_at,
+            };
+          }
+        } catch (err: any) {
+          console.error("[ADMIN PROVISION ERROR]", err?.message || err);
+          return res.status(503).json({ error: "Database temporarily unavailable. Please try again shortly." });
+        }
       } else if (isInMemoryFallbackAllowed()) {
-        foundUser = {
-          id: 99,
-          email: cleanEmail,
-          passwordHash: bcrypt.hashSync(ADMIN_PASSWORD, 10),
-          name: "Mingree Administrator",
-          role: "admin",
-          tokenVersion: 1,
-          handle: "@admin",
-          tier: "Admin",
-          isEmailVerified: true,
-          status: "active",
-        };
+        if (foundUser) {
+          foundUser.role = "admin";
+          foundUser.tier = "Admin";
+          foundUser.isEmailVerified = true;
+          foundUser.passwordHash = hashedAdminPass;
+        } else {
+          foundUser = {
+            id: 99,
+            email: cleanEmail,
+            passwordHash: hashedAdminPass,
+            name: "Mingree Administrator",
+            role: "admin",
+            tokenVersion: 1,
+            handle: "@admin",
+            tier: "Admin",
+            isEmailVerified: true,
+            status: "active",
+          };
+          registeredUsers.push(foundUser);
+        }
       }
     }
 
@@ -3419,8 +3486,10 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password for Admin Portal." });
     }
 
-    const isEnvAdminPass = isAdminEmail && Boolean(ADMIN_PASSWORD) && String(password) === ADMIN_PASSWORD;
-    const isPasswordValid = isEnvAdminPass || bcrypt.compareSync(String(password), foundUser.passwordHash);
+    const isPasswordValid =
+      isAdminEmail && Boolean(configuredAdminPass)
+        ? isEnvAdminPass
+        : bcrypt.compareSync(String(password), foundUser.passwordHash);
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: "Invalid email or password" });
@@ -8629,13 +8698,16 @@ app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req
 
 // Wipe all non-admin test users
 app.post("/api/admin/users/clear-all", requireAuth, requireRole("admin"), async (req: AuthRequest, res) => {
-  registeredUsers = registeredUsers.filter((u) => u.role === "admin" || (ADMIN_EMAIL && u.email && u.email.toLowerCase() === ADMIN_EMAIL));
+  const configuredAdminEmail = getAdminEmail();
+  registeredUsers = registeredUsers.filter(
+    (u) => u.role === "admin" || (configuredAdminEmail && u.email && u.email.toLowerCase() === configuredAdminEmail)
+  );
   (global as any).registeredUsers = registeredUsers;
   await saveRegisteredUsers();
 
   try {
-    if (ADMIN_EMAIL) {
-      await pool.query("DELETE FROM users WHERE role != 'admin' AND LOWER(email) != LOWER($1)", [ADMIN_EMAIL]);
+    if (configuredAdminEmail) {
+      await pool.query("DELETE FROM users WHERE role != 'admin' AND LOWER(email) != LOWER($1)", [configuredAdminEmail]);
     } else {
       await pool.query("DELETE FROM users WHERE role != 'admin'");
     }

@@ -35,6 +35,7 @@
   "vars": {
     "NODE_ENV": "production",
     "APP_URL": "https://mingree.com",
+    "ADMIN_EMAIL": "info.mingree@gmail.com",
     "CASHFREE_MODE": "production",
     "REVIEW_WINDOW_HOURS": "48",
     "STILL_LIVE_HOURS": "24"

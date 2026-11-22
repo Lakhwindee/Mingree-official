@@ -105,7 +105,7 @@ export default function AdminLogin() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@mingree.com"
+                placeholder="info.mingree@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="h-9 text-xs border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
@@ -128,7 +128,7 @@ export default function AdminLogin() {
               />
             </div>
 
-            <div className="pt-1 space-y-2">
+            <div className="pt-1">
               <Button
                 type="submit"
                 className="w-full h-9 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-md text-xs shadow-none"
@@ -136,20 +136,6 @@ export default function AdminLogin() {
                 data-testid="button-admin-login"
               >
                 {loginMutation.isPending ? "Authenticating..." : "Sign In to Admin Console"}
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setEmail("admin@mingree.com");
-                  setPassword("admin123");
-                  loginMutation.mutate({ email: "admin@mingree.com", password: "admin123" });
-                }}
-                disabled={loginMutation.isPending}
-                className="w-full h-8 bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-700 font-medium rounded-md text-xs shadow-none"
-              >
-                1-Tap Demo Admin Sign-In
               </Button>
             </div>
           </form>
