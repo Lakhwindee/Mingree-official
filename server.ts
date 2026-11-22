@@ -7452,17 +7452,17 @@ app.get("/api/instagram/auth-url", async (req: AuthRequest, res: express.Respons
   // Official Instagram Business Login Authorization URL
   // Uses `/oauth/authorize/` (trailing slash matches Instagram's AASA `"/oauth/authorize/*"` exclusion so iOS Safari stays in-browser)
   // without `#weblink` fragment so Safari/Instagram web redirects stay 100% clean, matching Meta's Embed URL format.
-  const authUrl = `https://www.instagram.com/oauth/authorize/?force_reauth=true&client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic,instagram_business_manage_insights")}&state=${encodeURIComponent(state)}`;
+  const authUrl = `https://www.instagram.com/oauth/authorize/?force_reauth=true&client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent("instagram_business_basic")}&state=${encodeURIComponent(state)}`;
 
   const authDebugPayload = {
     step: "1_AUTH_REQUEST",
     client_id: appId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "instagram_business_basic,instagram_business_manage_insights",
+    scope: "instagram_business_basic",
     state_length: state.length,
     timestamp: new Date().toISOString(),
-    version: "v2.6.5-debug"
+    version: "v2.7.0-basic-scope-clean"
   };
   console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(authDebugPayload));
 
@@ -7762,6 +7762,7 @@ app.get([
 
     let shortLivedAccessToken = "";
     let igUserId = "";
+    let igGrantedPermissions: string[] = [];
     let igExchangeErrorDetail = "";
 
     try {
@@ -7791,7 +7792,7 @@ app.get([
         error_code: tokenData?.error?.code || tokenData?.code || null,
         error_message: tokenData?.error?.message || tokenData?.error_message || (igTokenRes.ok ? null : rawTokenText.slice(0, 300)),
         timestamp: new Date().toISOString(),
-        version: "v2.6.8-single-exchange-clean"
+        version: "v2.6.9-profile-fallback-clean"
       };
       console.log("[INSTAGRAM OAUTH LIVE DEBUG]", JSON.stringify(responseDebugPayload));
 
@@ -7799,6 +7800,12 @@ app.get([
         const tokenEntry = Array.isArray(tokenData.data) && tokenData.data.length > 0 ? tokenData.data[0] : tokenData;
         shortLivedAccessToken = String(tokenEntry?.access_token || tokenData?.access_token || "").trim();
         igUserId = String(tokenEntry?.user_id || tokenEntry?.id || tokenData?.user_id || tokenData?.id || "").trim();
+        const rawPerms = tokenEntry?.permissions || tokenData?.permissions;
+        if (Array.isArray(rawPerms)) {
+          igGrantedPermissions = rawPerms.map((p: any) => String(p).trim()).filter(Boolean);
+        } else if (typeof rawPerms === "string" && rawPerms.trim()) {
+          igGrantedPermissions = rawPerms.split(",").map((p) => p.trim()).filter(Boolean);
+        }
       } else {
         const rawErr =
           tokenData?.error?.message ||
@@ -7851,6 +7858,7 @@ app.get([
     let accountType = "BUSINESS";
     let profilePicUrl = "";
     let finalAccessToken = shortLivedAccessToken;
+    let profileFetchErrorDetail = "";
 
     const extractProfileFields = (rawPayload: any) => {
       if (!rawPayload) return;
@@ -7863,29 +7871,65 @@ app.get([
       if (pObj?.account_type) accountType = String(pObj.account_type).trim();
     };
 
+    const tryProfileEndpoint = async (url: string, label: string): Promise<boolean> => {
+      try {
+        const resProfile = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        const rawText = await resProfile.text();
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(rawText);
+        } catch {}
+        if (resProfile.ok && parsed) {
+          extractProfileFields(parsed);
+          if (igUsername) return true;
+        }
+        const errCode = parsed?.error?.code ?? resProfile.status;
+        const errSubcode = parsed?.error?.error_subcode ? `/${parsed.error.error_subcode}` : "";
+        const errMsg = parsed?.error?.message || rawText.slice(0, 180) || `HTTP ${resProfile.status}`;
+        if (!profileFetchErrorDetail) {
+          profileFetchErrorDetail = `${errMsg} (code ${errCode}${errSubcode})`;
+        }
+        console.warn(`[INSTAGRAM OAUTH] Profile attempt '${label}' failed:`, JSON.stringify({
+          status: resProfile.status,
+          code: errCode,
+          subcode: parsed?.error?.error_subcode || null,
+          message: errMsg,
+          permissions: igGrantedPermissions,
+        }));
+      } catch (profileErr: any) {
+        if (!profileFetchErrorDetail) {
+          profileFetchErrorDetail = profileErr?.message || String(profileErr);
+        }
+        console.error(`[INSTAGRAM OAUTH] Profile attempt '${label}' error:`, profileErr?.message || profileErr);
+      }
+      return false;
+    };
+
     await Promise.all([
       (async () => {
-        try {
-          const profileRes = await fetch(
-            `https://graph.instagram.com/me?fields=user_id,username,profile_picture_url,followers_count,media_count,account_type&access_token=${encodeURIComponent(shortLivedAccessToken)}`,
-            { signal: AbortSignal.timeout(6000) }
-          );
-          if (profileRes.ok) {
-            const pData = await profileRes.json();
-            extractProfileFields(pData);
-          }
-          if (!igUsername) {
-            const fallbackRes = await fetch(
-              `https://graph.instagram.com/me?fields=id,username,profile_picture_url,followers_count,media_count&access_token=${encodeURIComponent(shortLivedAccessToken)}`,
-              { signal: AbortSignal.timeout(5000) }
-            );
-            if (fallbackRes.ok) {
-              const fData = await fallbackRes.json();
-              extractProfileFields(fData);
-            }
-          }
-        } catch (profileErr: any) {
-          console.error("[INSTAGRAM OAUTH] Profile fetch error:", profileErr?.message || profileErr);
+        const encToken = encodeURIComponent(shortLivedAccessToken);
+        const attempts: Array<{ url: string; label: string }> = [
+          {
+            label: "v21_full",
+            url: `https://graph.instagram.com/v21.0/me?fields=user_id,username,profile_picture_url,followers_count,media_count,account_type&access_token=${encToken}`,
+          },
+          {
+            label: "v21_basic_metrics",
+            url: `https://graph.instagram.com/v21.0/me?fields=id,username,followers_count,media_count,account_type&access_token=${encToken}`,
+          },
+          {
+            label: "v21_minimal",
+            url: `https://graph.instagram.com/v21.0/me?fields=user_id,username,account_type&access_token=${encToken}`,
+          },
+        ];
+        if (igUserId && /^\d+$/.test(igUserId)) {
+          attempts.push({
+            label: "v21_by_id",
+            url: `https://graph.instagram.com/v21.0/${encodeURIComponent(igUserId)}?fields=id,username,followers_count,media_count,account_type&access_token=${encToken}`,
+          });
+        }
+        for (const attempt of attempts) {
+          if (await tryProfileEndpoint(attempt.url, attempt.label)) break;
         }
       })(),
       (async () => {
@@ -7906,9 +7950,12 @@ app.get([
     ]);
 
     if (!igUsername) {
+      const permsNote = igGrantedPermissions.length > 0 ? ` | granted=${igGrantedPermissions.join(",")}` : "";
       return finishOAuthCallback({
         success: false,
-        error: "Failed to retrieve your Instagram username from Meta Graph API. Please ensure your account is an Instagram Professional (Creator or Business) account.",
+        error: profileFetchErrorDetail
+          ? `Instagram profile fetch failed: ${profileFetchErrorDetail}${permsNote}. Ensure the account is a Professional (Creator/Business) account and authorized for this Meta app.`
+          : "Failed to retrieve your Instagram username from Meta Graph API. Please ensure your account is an Instagram Professional (Creator or Business) account.",
         returnTo: clientReturnTo,
       });
     }
